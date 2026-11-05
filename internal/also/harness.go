@@ -8,153 +8,10 @@ import (
 	"strings"
 )
 
-// Paths are relative to an adapter base (home config dir, project root, or bundle root).
-// An absolute or ~-prefixed value is used as-is.
-type Paths struct {
-	Instr     string
-	Skills    string
-	Commands  string
-	Agents    string
-	Plugins   string
-	Hooks     string
-	Settings  string
-	HooksJSON string
-	MCP       string
-}
-
-type Harness struct {
-	ID      string
-	Display string
-	Aliases []string
-
-	GlobalBase string // relative to home, or absolute
-	Global     Paths
-	Project    Paths    // relative to the project root
-	Bundle     Paths    // relative to a bundle root
-	Roots      []string // bundle subdirectories to inspect for components
-
-	HooksKind string // claude | codex | qwen | none
-	MCPKind   string // claude | opencode | codex | qwen | none
-
-	// SettingsKeys are top-level config keys that can be merged safely when the
-	// source and target harness use the same settings model (same harness).
-	SettingsKeys []string
-	// ExtraDirs are opaque harness directories copied verbatim on same-harness
-	// installs (status lines, output styles, themes, extensions).
-	ExtraDirs []string
-	// ExtraBase is the project-relative directory holding ExtraDirs.
-	ExtraBase string
-
-	HasCommands bool
-	HasAgents   bool
-	HasPlugins  bool
-}
-
-var harnesses = []*Harness{
-	{
-		ID: "claude", Display: "Claude Code", Aliases: []string{"claude-code", "cc"},
-		GlobalBase: "~/.claude",
-		Global: Paths{
-			Instr: "CLAUDE.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: "~/.claude.json",
-		},
-		Project: Paths{
-			Instr: "CLAUDE.md", Skills: ".claude/skills", Commands: ".claude/commands",
-			Agents: ".claude/agents", Hooks: ".claude/hooks", Settings: ".claude/settings.json",
-			MCP: ".mcp.json",
-		},
-		Bundle: Paths{
-			Instr: "CLAUDE.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: ".mcp.json",
-		},
-		Roots:        []string{"", ".claude"},
-		HooksKind:    "claude",
-		MCPKind:      "claude",
-		SettingsKeys: []string{"permissions", "statusLine"},
-		ExtraDirs:    []string{"status_lines", "output-styles", "themes"},
-		ExtraBase:    ".claude",
-		HasCommands:  true,
-		HasAgents:    true,
-	},
-	{
-		ID: "opencode", Display: "OpenCode", Aliases: []string{"oc", "open-code"},
-		GlobalBase: "~/.config/opencode",
-		Global: Paths{
-			Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Plugins: "plugins", Hooks: "hooks", MCP: "opencode.json",
-		},
-		Project: Paths{
-			Instr: "AGENTS.md", Skills: ".opencode/skills", Commands: ".opencode/commands",
-			Agents: ".opencode/agents", Plugins: ".opencode/plugins", Hooks: ".opencode/hooks",
-			MCP: "opencode.json",
-		},
-		Bundle: Paths{
-			Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Plugins: "plugins", Hooks: "hooks", MCP: "opencode.json",
-		},
-		Roots:        []string{"", ".opencode"},
-		HooksKind:    "none",
-		MCPKind:      "opencode",
-		SettingsKeys: []string{"permissions"},
-		ExtraDirs:    []string{"themes"},
-		ExtraBase:    ".opencode",
-		HasCommands:  true,
-		HasAgents:    true,
-		HasPlugins:   true,
-	},
-	{
-		ID: "codex", Display: "Codex CLI", Aliases: []string{"codex-cli"},
-		GlobalBase: "~/.codex",
-		Global: Paths{
-			Instr: "AGENTS.md", Skills: "~/.agents/skills", Hooks: "hooks",
-			HooksJSON: "hooks.json", MCP: "config.toml",
-		},
-		Project: Paths{
-			Instr: "AGENTS.md", Skills: ".agents/skills", Hooks: ".codex/hooks",
-			HooksJSON: ".codex/hooks.json", MCP: ".codex/config.toml",
-		},
-		Bundle: Paths{
-			Instr: "AGENTS.md", Skills: "skills", Hooks: "hooks",
-			HooksJSON: "hooks.json", MCP: "config.toml",
-		},
-		Roots:     []string{"", ".agents", ".codex"},
-		HooksKind: "codex",
-		MCPKind:   "codex",
-		ExtraDirs: []string{"themes"},
-		ExtraBase: ".codex",
-	},
-	{
-		ID: "qwen", Display: "Qwen Code", Aliases: []string{"qwen-code", "qwen3"},
-		GlobalBase: "~/.qwen",
-		Global: Paths{
-			Instr: "QWEN.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: "settings.json",
-		},
-		Project: Paths{
-			Instr: "QWEN.md", Skills: ".qwen/skills", Commands: ".qwen/commands",
-			Agents: ".qwen/agents", Hooks: ".qwen/hooks", Settings: ".qwen/settings.json",
-			MCP: ".qwen/settings.json",
-		},
-		Bundle: Paths{
-			Instr: "QWEN.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: "settings.json",
-		},
-		Roots:        []string{"", ".qwen", ".agents"},
-		HooksKind:    "qwen",
-		MCPKind:      "qwen",
-		SettingsKeys: []string{"permissions"},
-		ExtraDirs:    []string{"status_lines", "extensions", "themes"},
-		ExtraBase:    ".qwen",
-		HasCommands:  true,
-		HasAgents:    true,
-	},
-}
-
-func Harnesses() []*Harness { return harnesses }
-
+// HarnessIDs returns the registered adapter ids.
 func HarnessIDs() []string {
-	ids := make([]string, 0, len(harnesses))
-	for _, h := range harnesses {
+	var ids []string
+	for _, h := range Harnesses() {
 		ids = append(ids, h.ID)
 	}
 	return ids
@@ -209,11 +66,11 @@ func (t Target) ComponentDirs() []string {
 func (t Target) Supports(kind string) bool {
 	switch kind {
 	case "commands":
-		return t.Harness.HasCommands
+		return t.Harness.Commands.Format != ""
 	case "agents":
-		return t.Harness.HasAgents
+		return t.Harness.Agents.Format != ""
 	case "plugins":
-		return t.Harness.HasPlugins
+		return t.Harness.Plugins.Format != ""
 	}
 	return true
 }
@@ -258,8 +115,8 @@ func (h *Harness) TargetPath(scope, project string) Target {
 		MCP:       h.resolve(scope, project, p.MCP),
 		Root:      h.targetBase(scope, project),
 	}
-	if h.ID == "opencode" {
-		t.MCP = pickOpenCodeConfig(scope, project)
+	if h.MCP.Resolve != nil {
+		t.MCP = h.MCP.Resolve(scope, project)
 	}
 	if scope == "global" {
 		t.ExtraDir = t.Root
@@ -267,33 +124,6 @@ func (h *Harness) TargetPath(scope, project string) Target {
 		t.ExtraDir = filepath.Join(project, h.ExtraBase)
 	}
 	return t
-}
-
-func pickOpenCodeConfig(scope, project string) string {
-	var candidates []string
-	if scope == "global" {
-		base := ExpandHome("~/.config/opencode")
-		candidates = []string{
-			filepath.Join(base, "opencode.jsonc"),
-			filepath.Join(base, "opencode.json"),
-		}
-	} else {
-		candidates = []string{
-			filepath.Join(project, ".opencode", "opencode.jsonc"),
-			filepath.Join(project, ".opencode", "opencode.json"),
-			filepath.Join(project, "opencode.jsonc"),
-			filepath.Join(project, "opencode.json"),
-		}
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && st.Mode().IsRegular() {
-			return c
-		}
-	}
-	if scope == "global" {
-		return filepath.Join(ExpandHome("~/.config/opencode"), "opencode.json")
-	}
-	return filepath.Join(project, "opencode.json")
 }
 
 // DetectHarness identifies a harness from a bundle or project directory.
@@ -304,41 +134,15 @@ func DetectHarness(dir string) (string, error) {
 		n  int
 	}
 	scores := map[string]int{}
-	exists := func(rel string) bool {
-		_, err := os.Stat(filepath.Join(dir, rel))
-		return err == nil
-	}
-	add := func(id string, n int) { scores[id] += n }
-
-	if exists("CLAUDE.md") {
-		add("claude", 10)
-	}
-	if exists(".claude") {
-		add("claude", 6)
-	}
-	if exists("QWEN.md") {
-		add("qwen", 10)
-	}
-	if exists(".qwen") {
-		add("qwen", 6)
-	}
-	if exists("opencode.json") || exists("opencode.jsonc") {
-		add("opencode", 10)
-	}
-	if exists(".opencode") {
-		add("opencode", 6)
-	}
-	if exists(".codex") || exists("hooks.json") {
-		add("codex", 8)
-	}
-	if exists("config.toml") {
-		add("codex", 6)
-	}
-	if exists(".agents") {
-		// A shared skills directory; it does not identify one harness.
-		add("codex", 1)
-		add("qwen", 1)
-		add("opencode", 1)
+	for _, h := range harnesses {
+		for _, rule := range h.Detect {
+			for _, rel := range rule.Paths {
+				if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+					scores[h.ID] += rule.Weight
+					break
+				}
+			}
+		}
 	}
 
 	var best []score

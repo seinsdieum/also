@@ -203,9 +203,12 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			}
 			rendered, warns := RenderMCP(targetH, mcpSource, render.MCP)
 			plan.Warnings = append(plan.Warnings, warns...)
+			if !configPathAllowed(render.MCPPath(), target) {
+				return nil, fmt.Errorf("adapter %s points MCP config outside the %s root: %s", targetH.ID, target.Scope, render.MCPPath())
+			}
 			for _, r := range rendered {
-				switch targetH.MCPKind {
-				case "claude", "qwen":
+				switch targetH.MCP.Format {
+				case MCPClaudeJSON, MCPQwenJSON:
 					edit, warn, err := planJSONSet(st, old, render.MCPPath(), []string{"mcpServers", r.Name}, r.Value, opts.Force)
 					if err != nil {
 						return nil, err
@@ -216,7 +219,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 					if edit != nil {
 						plan.Edits = append(plan.Edits, *edit)
 					}
-				case "opencode":
+				case MCPOpenCodeJSON:
 					edit, warn, err := planOpenCodeMCP(st, old, target.MCP, r.Name, r.Value, opts.Force)
 					if err != nil {
 						return nil, err
@@ -227,7 +230,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 					if edit != nil {
 						plan.Edits = append(plan.Edits, *edit)
 					}
-				case "codex":
+				case MCPCodexTOML:
 					edit, warn, err := planTOMLMCP(st, old, target.MCP, r.Name, r.TOML, opts.Force)
 					if err != nil {
 						return nil, err
@@ -246,6 +249,9 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			if file == "" {
 				plan.Warnings = append(plan.Warnings, "hooks cannot be installed for this harness; skipped")
 			} else {
+				if !configPathAllowed(file, target) {
+					return nil, fmt.Errorf("adapter %s points hooks config outside the %s root: %s", targetH.ID, target.Scope, file)
+				}
 				events := make([]string, 0, len(render.Hooks))
 				for ev := range render.Hooks {
 					events = append(events, ev)
@@ -270,6 +276,9 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			if file == "" {
 				plan.Warnings = append(plan.Warnings, "settings keys were preserved in the package but this harness has no mergeable settings file")
 			} else {
+				if !configPathAllowed(file, target) {
+					return nil, fmt.Errorf("adapter %s points settings outside the %s root: %s", targetH.ID, target.Scope, file)
+				}
 				keys := make([]string, 0, len(render.Settings))
 				for k := range render.Settings {
 					keys = append(keys, k)
@@ -310,6 +319,9 @@ func (r *RenderPlan) MCPPath() string {
 }
 
 func fileAllowedRoot(dest string, t Target) bool {
+	if hasReservedSegment(dest) {
+		return false
+	}
 	roots := []string{t.Root, t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks, t.ExtraDir}
 	if t.Scope == "project" && t.Project != "" {
 		roots = append(roots, t.Project)
@@ -320,6 +332,19 @@ func fileAllowedRoot(dest string, t Target) bool {
 		}
 	}
 	return false
+}
+
+// configPathAllowed bounds adapter-chosen config destinations. A community
+// adapter must not be able to write outside the project (or the home dir for
+// global installs) through its MCP/hooks/settings hooks.
+func configPathAllowed(dest string, t Target) bool {
+	if dest == "" {
+		return true
+	}
+	if t.Scope == "project" {
+		return t.Project != "" && isWithin(t.Project, dest)
+	}
+	return isWithin(ExpandHome("~"), dest)
 }
 
 func checkFileConflict(st *State, dest, id string, force bool) error {

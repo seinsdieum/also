@@ -30,7 +30,7 @@ func isConfigBasename(rest string, h *Harness) bool {
 	if strings.Contains(rest, "/") {
 		return false
 	}
-	return h.configNames()[rest]
+	return h.ConfigNames()[rest]
 }
 
 func preserveInLayer(rel string, h *Harness, in Install) bool {
@@ -339,16 +339,17 @@ func ExtractBundle(opts AdoptOptions) (*AdoptResult, error) {
 			return nil, err
 		}
 	}
-	switch h.MCPKind {
-	case "claude", "qwen", "opencode":
-		if target.MCP != "" && target.MCP != target.Settings {
-			if err := copyConfig(target.MCP, filepath.Base(target.MCP)); err != nil {
+	switch h.MCP.Format {
+	case MCPNone:
+	case MCPCodexTOML:
+		if target.MCP != "" {
+			if err := copyConfig(target.MCP, "config.toml"); err != nil {
 				return nil, err
 			}
 		}
-	case "codex":
-		if target.MCP != "" {
-			if err := copyConfig(target.MCP, "config.toml"); err != nil {
+	default:
+		if target.MCP != "" && target.MCP != target.Settings {
+			if err := copyConfig(target.MCP, filepath.Base(target.MCP)); err != nil {
 				return nil, err
 			}
 		}

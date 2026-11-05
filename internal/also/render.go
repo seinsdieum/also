@@ -57,19 +57,6 @@ type bundleParts struct {
 	Warnings []string
 }
 
-func (h *Harness) configNames() map[string]bool {
-	m := map[string]bool{}
-	for _, p := range []string{h.Bundle.Settings, h.Bundle.HooksJSON, h.Bundle.MCP} {
-		if p != "" {
-			m[filepath.Base(p)] = true
-		}
-	}
-	for _, n := range []string{".mcp.json", "settings.json", "hooks.json", "config.toml", "opencode.json", "opencode.jsonc", "claude.json"} {
-		m[n] = true
-	}
-	return m
-}
-
 func isMetaFile(rel string) bool {
 	if strings.HasPrefix(rel, "docs/") || strings.HasPrefix(rel, ".github/") {
 		return true
@@ -100,7 +87,7 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 	// Longest root first so ".claude" wins over "".
 	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) > len(roots[j]) })
 
-	configNames := h.configNames()
+	configNames := h.ConfigNames()
 	instructionCandidates := []string{}
 	skillRoots := map[string]string{} // name -> origin dir
 	flatSkills := map[string]string{} // name -> origin file
@@ -435,7 +422,7 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: converted, Mode: pkg.Files[rel].Mode, Component: "agent", OriginRel: rel})
 	}
 	for _, rel := range parts.Plugins {
-		if !target.Harness.HasPlugins || target.Plugins == "" || source.ID != "opencode" {
+		if !target.Supports("plugins") || target.Plugins == "" || source.Plugins.Format == "" || source.Plugins.Format != target.Harness.Plugins.Format {
 			plan.Skipped = append(plan.Skipped, "plugin:"+rel)
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("plugin %s cannot be translated to %s; skipped", rel, target.Harness.Display))
 			continue
@@ -447,7 +434,7 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 		}
 	}
 	for _, rel := range parts.Hooks {
-		if target.Hooks == "" || source.HooksKind == "none" {
+		if target.Hooks == "" || len(source.Hooks.Configs) == 0 {
 			plan.Skipped = append(plan.Skipped, "hook-script:"+rel)
 			continue
 		}
@@ -457,7 +444,7 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 			return nil, err
 		}
 	}
-	if len(parts.Commands) > 0 && source.ID != target.Harness.ID && target.Harness.HasCommands {
+	if len(parts.Commands) > 0 && source.ID != target.Harness.ID && target.Supports("commands") {
 		plan.Warnings = append(plan.Warnings, "command bodies are copied verbatim; argument placeholders and harness-specific variables may differ in the target harness")
 	}
 	for _, rel := range parts.Extras {
@@ -511,28 +498,21 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 		sort.Strings(names)
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf("settings %s are preserved in the package but not installed cross-harness; review them manually", strings.Join(names, ", ")))
 	}
-	if target.Harness.MCPKind == "none" || target.MCP == "" {
+	if target.Harness.MCP.Format == MCPNone || target.MCP == "" {
 		if len(servers) > 0 {
 			plan.Warnings = append(plan.Warnings, "MCP is not supported for this harness; MCP servers skipped")
 		}
 		plan.MCP = map[string]MCPServer{}
 	}
 	if target.Scope == "project" {
-		switch target.Harness.ID {
-		case "claude":
-			if len(plan.MCP) > 0 {
-				plan.Warnings = append(plan.Warnings, "Claude Code requires explicit approval for project .mcp.json servers; run claude once and approve them")
+		for _, hint := range target.Harness.InstallHints {
+			triggered := true
+			if hint.WhenMCP || hint.WhenSettings {
+				triggered = (hint.WhenMCP && len(plan.MCP) > 0) || (hint.WhenSettings && len(plan.Settings) > 0)
 			}
-		case "qwen":
-			if len(plan.MCP) > 0 {
-				plan.Warnings = append(plan.Warnings, "Qwen Code requires approval for project MCP servers; use /mcp or qwen mcp approve")
+			if triggered {
+				plan.Warnings = append(plan.Warnings, hint.Text)
 			}
-		case "opencode":
-			if len(plan.MCP) > 0 || len(plan.Settings) > 0 {
-				plan.Warnings = append(plan.Warnings, "OpenCode watches project config, but a long-running service may need: opencode reload")
-			}
-		case "codex":
-			plan.Warnings = append(plan.Warnings, "Codex loads project .codex/config.toml and hooks.json only after the project is trusted; trust the directory first")
 		}
 	}
 	return plan, nil

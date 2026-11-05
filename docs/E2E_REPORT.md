@@ -53,6 +53,39 @@
 | 13 | Digest учитывал exec-bit рабочей копии; на Windows его нет, поэтому Unix-пакеты не проходили проверку | режимы файлов берутся из git index (100644/100755), а не из worktree |
 | 14 | На Windows `filepath.Dir` давал `skills\x` вместо `skills/x`; skills попадали в «not a portable component» и не ставились | для путей пакета используется slash-aware `path.Dir` |
 
+## Адаптерная архитектура и повторный E2E
+
+Harness-специфичная логика вынесена из `install/render/mcp/hooks/settings` в
+адаптеры: `internal/also/adapter.go` + `adapters_<id>.go`. Система владеет
+пакетами, digest, установкой, обратимыми правками и границами путей; адаптер
+владеет нативными путями, возможностями, форматами MCP/hooks/settings,
+диалектами команд/агентов, detection-правилами и install-hints.
+
+- `registerAdapter` валидирует адаптер при старте: уникальные id/aliases,
+  безопасные относительные пути, известные форматы, обязательные каталоги,
+  события и target-функции, TOML-конфиги для `codex-toml`.
+- `ValidateAdapters` проверяет весь реестр; `TestAdaptersAreValid`,
+  `TestAdapterValidationRejectsUnsafeSpecs`, `TestAdapterReusesExistingFormats`
+  и `TestConfigPathIsBounded` покрывают контракт.
+- Во время установки система независимо проверяет, что адаптер не вывел файлы
+  за пределы проекта (`fileAllowedRoot`) и конфиги — за пределы проекта/`$HOME`
+  (`configPathAllowed`).
+- Новый harness, совместимый с существующим экосистемным форматом, добавляется
+  одним файлом-адаптером и `init()`; generic-код не меняется.
+
+После рефакторинга полный E2E прогнан заново, включая не только установку, но
+и `adopt` → `push` → обратную установку:
+
+1. Для каждого X собран reference: `X-real` → harness X.
+2. Для каждой пары X→Y: `X-real` → harness Y, затем `adopt` в пакет
+   `rt6-<X>-real-to-<Y>` и `push` в приватный set.
+3. `rt6-<X>-real-to-<Y>` установлен обратно в X (`back6-*`).
+4. Comparator сравнил instructions, skills, commands, agents, plugins, extras,
+   hooks, MCP и permissions/statusLine.
+
+Итог: **16/16 `RESULT OK`** (`compare6.out`), полный цикл adopt/push не потерял
+данные. Дополнительно `make check` (gofmt, `go vet`, `go test`) — чисто.
+
 ## Проверка «на уровне софта»
 
 - **Claude Code**
@@ -114,6 +147,11 @@ Set-репозиторий подключался по shared folder (`\\Mac\Hom
 
 Именно этот прогон выявил дефекты 12–14 (CRLF, exec-bit digest, path separator);
 после исправлений все перечисленные установки проходят.
+
+После адаптерного рефакторинга Windows-проверка повторена: свежий клон set и
+`install rt6-claude-real-to-codex --harness claude` дали 85 файлов, 5 skills,
+3 agents и `.mcp.json`; `also version` подтвердил, что реестр адаптеров
+валиден и на Windows.
 
 Ограничение: в VM нет Claude/Codex/OpenCode/Qwen CLI, поэтому проверка
 «на уровне софта» для них выполнена на macOS (раздел выше). Windows-прогон

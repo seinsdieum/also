@@ -12,22 +12,13 @@ import (
 // merged safely on same-harness installs (permissions, statusLine, ...).
 func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []string) (map[string]any, []string, error) {
 	out := map[string]any{}
-	if len(h.SettingsKeys) == 0 {
-		return out, nil, nil
-	}
-	var candidates []string
-	switch h.ID {
-	case "claude", "qwen":
-		candidates = []string{"settings.json"}
-	case "opencode":
-		candidates = []string{"opencode.jsonc", "opencode.json"}
-	default:
+	if len(h.Settings.Keys) == 0 {
 		return out, nil, nil
 	}
 	var data []byte
 	found := false
 	for _, root := range roots {
-		for _, c := range candidates {
+		for _, c := range h.Settings.Configs {
 			p := c
 			if root != "" {
 				p = root + "/" + c
@@ -49,7 +40,7 @@ func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []s
 		return nil, nil, fmt.Errorf("parse settings: %w", err)
 	}
 	var warnings []string
-	keys := append([]string{}, h.SettingsKeys...)
+	keys := append([]string{}, h.Settings.Keys...)
 	sort.Strings(keys)
 	for _, key := range keys {
 		raw, ok := doc.RawAt(key)
@@ -68,13 +59,7 @@ func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []s
 
 // SettingsTargetFile is the config file that holds SettingsKeys for a target.
 func SettingsTargetFile(t Target) string {
-	switch t.Harness.ID {
-	case "claude", "qwen":
-		return t.Settings
-	case "opencode":
-		return t.MCP
-	}
-	return ""
+	return t.Harness.SettingsTarget(t)
 }
 
 // BundleLayerPrefix is reserved for native harness layers preserved by adopt.

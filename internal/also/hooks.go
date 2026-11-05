@@ -4,45 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // HookSet maps harness event names to matcher groups, kept as raw JSON so
 // fields also does not understand survive translation where event names match.
 type HookSet map[string][]json.RawMessage
 
-var claudeHookEvents = []string{
-	"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest",
-	"UserPromptSubmit", "Notification", "Stop", "SubagentStop", "SubagentStart",
-	"PreCompact", "SessionStart", "SessionEnd", "Setup",
-}
-
-var codexHookEvents = []string{
-	"PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact",
-	"UserPromptSubmit", "SubagentStop", "SubagentStart", "Stop", "SessionStart",
-	"SessionEnd", "PreModelRequest", "PostModelRequest", "Interrupt",
-}
-
 func hookEventsFor(h *Harness) map[string]bool {
-	out := map[string]bool{}
-	var list []string
-	switch h.HooksKind {
-	case "claude", "qwen":
-		list = claudeHookEvents
-		if h.HooksKind == "qwen" {
-			// Qwen also documents Gemini-style hook names in some versions.
-			list = append(append([]string{}, claudeHookEvents...),
-				"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
-				"BeforeModel", "AfterModel", "BeforeToolSelection", "PreCompress")
-		}
-	case "codex":
-		list = codexHookEvents
-	default:
-		return out
-	}
-	for _, e := range list {
-		out[e] = true
-	}
-	return out
+	return h.HookEvents()
 }
 
 func ExtractBundleHooks(h *Harness, files map[string]*SnapshotFile, roots []string) (HookSet, []string, error) {
@@ -69,37 +39,33 @@ func ExtractBundleHooks(h *Harness, files map[string]*SnapshotFile, roots []stri
 		}
 	}
 
-	switch h.HooksKind {
-	case "claude", "qwen":
-		if data, _, ok := find("settings.json"); ok {
-			hs, w, err := hooksFromJSONConfig(data, "hooks")
-			if err != nil {
-				return nil, warnings, err
-			}
-			merge(hs, w)
+	for _, cfg := range h.Hooks.Configs {
+		data, _, ok := find(cfg)
+		if !ok {
+			continue
 		}
-	case "codex":
-		if data, _, ok := find("hooks.json"); ok {
-			hs, w, err := hooksFromJSONConfig(data, "hooks")
-			if err != nil {
-				return nil, warnings, err
-			}
-			merge(hs, w)
-		}
-		if data, _, ok := find("config.toml"); ok {
+		if strings.HasSuffix(strings.ToLower(cfg), ".toml") {
 			root, err := parseTOMLMap(data)
 			if err != nil {
-				return nil, warnings, fmt.Errorf("parse codex config.toml hooks: %w", err)
+				return nil, warnings, fmt.Errorf("parse %s hooks: %w", cfg, err)
 			}
-			if raw, ok := root["hooks"]; ok {
-				b, _ := json.Marshal(raw)
-				hs, w, err := hooksFromJSONConfig(b, "")
-				if err != nil {
-					return nil, warnings, err
-				}
-				merge(hs, w)
+			raw, ok := root["hooks"]
+			if !ok {
+				continue
 			}
+			b, _ := json.Marshal(raw)
+			hs, w, err := hooksFromJSONConfig(b, "")
+			if err != nil {
+				return nil, warnings, err
+			}
+			merge(hs, w)
+			continue
 		}
+		hs, w, err := hooksFromJSONConfig(data, "hooks")
+		if err != nil {
+			return nil, warnings, err
+		}
+		merge(hs, w)
 	}
 	return out, warnings, nil
 }
@@ -140,7 +106,7 @@ func RenderHooks(target *Harness, source *Harness, hs HookSet) (HookSet, []strin
 		}
 		return out, warnings
 	}
-	if target.HooksKind == "none" {
+	if len(target.Hooks.Configs) == 0 {
 		return out, []string{"hooks are not declarative in this harness; hook definitions were skipped"}
 	}
 	supported := hookEventsFor(target)
@@ -163,11 +129,5 @@ func RenderHooks(target *Harness, source *Harness, hs HookSet) (HookSet, []strin
 }
 
 func hooksConfigPath(t Target) (string, string) {
-	switch t.Harness.HooksKind {
-	case "claude", "qwen":
-		return t.Settings, "hooks"
-	case "codex":
-		return t.HooksJSON, "hooks"
-	}
-	return "", ""
+	return t.Harness.HooksTarget(t)
 }

@@ -106,12 +106,8 @@ func toStringList(v any) ([]string, bool) {
 
 // ConvertAgent rewrites agent frontmatter for a different harness.
 func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []string, error) {
-	if from == to {
-		return data, nil, nil
-	}
-	// Claude and Qwen use the same agent frontmatter model. A re-marshal would
-	// only reorder fields.
-	if (from == "claude" && to == "qwen") || (from == "qwen" && to == "claude") {
+	fromFormat, toFormat := agentFormat(from), agentFormat(to)
+	if fromFormat == "" || toFormat == "" || fromFormat == toFormat {
 		return data, nil, nil
 	}
 	fm, body, ok, err := splitFrontmatter(data)
@@ -131,8 +127,8 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 		}
 	}
 
-	switch to {
-	case "opencode":
+	switch toFormat {
+	case AgentOpenCode:
 		if v, ok := fm["tools"]; ok {
 			names, isList := toStringList(v)
 			if isList {
@@ -149,7 +145,7 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 				fm["tools"] = obj
 			}
 		}
-		if from != "opencode" {
+		if fromFormat != AgentOpenCode {
 			// Claude and Qwen agent files describe subagents; do not leak a
 			// missing/legacy mode into OpenCode, where new agents default to primary.
 			fm["mode"] = "subagent"
@@ -157,7 +153,7 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 			fm["mode"] = "subagent"
 		}
 		dropped("name", "permissionMode", "approvalMode", "maxTurns", "disallowedTools", "mcpServers", "hooks")
-	case "claude", "qwen":
+	case AgentClaude:
 		if _, ok := fm["name"]; !ok {
 			name := strings.TrimSuffix(filepath.Base(filename), ".md")
 			if name != "" {
@@ -194,4 +190,11 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 		return nil, warnings, err
 	}
 	return out, warnings, nil
+}
+
+func agentFormat(harness string) string {
+	if h, ok := ResolveHarness(harness); ok {
+		return h.Agents.Format
+	}
+	return ""
 }

@@ -360,7 +360,8 @@ func gitFileModes(dir string) map[string]fs.FileMode {
 	return modes
 }
 
-func humanBytes(n int64) string {	if n < 1024 {
+func humanBytes(n int64) string {
+	if n < 1024 {
 		return fmt.Sprintf("%d B", n)
 	}
 	if n < 1024*1024 {

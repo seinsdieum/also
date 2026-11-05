@@ -154,11 +154,11 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 		return nil, "", false
 	}
 
-	switch h.MCPKind {
-	case "claude", "qwen":
+	switch h.MCP.Format {
+	case MCPClaudeJSON, MCPQwenJSON:
 		var data []byte
 		var ok bool
-		for _, p := range []string{".mcp.json", "settings.json"} {
+		for _, p := range h.MCP.Configs {
 			if d, _, found := find(p); found {
 				data, ok = d, true
 				break
@@ -175,7 +175,7 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 				if err := json.Unmarshal(raw, &m); err != nil {
 					return nil, warnings, err
 				}
-				servers, w, err := mcpServersFromMap(h.MCPKind, m)
+				servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
 				if err != nil {
 					return nil, warnings, err
 				}
@@ -184,8 +184,8 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 				}
 			}
 		}
-	case "opencode":
-		for _, cfgName := range []string{"opencode.json", "opencode.jsonc"} {
+	case MCPOpenCodeJSON:
+		for _, cfgName := range h.MCP.Configs {
 			data, _, ok := find(cfgName)
 			if !ok {
 				continue
@@ -219,7 +219,7 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 					m = sm
 				}
 			}
-			servers, w, err := mcpServersFromMap("opencode", m)
+			servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
 			if err != nil {
 				return nil, warnings, err
 			}
@@ -227,15 +227,18 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 				return nil, warnings, err
 			}
 		}
-	case "codex":
-		data, _, ok := find("config.toml")
-		if ok {
+	case MCPCodexTOML:
+		for _, cfgName := range h.MCP.Configs {
+			data, _, ok := find(cfgName)
+			if !ok {
+				continue
+			}
 			root, err := parseTOMLMap(data)
 			if err != nil {
-				return nil, warnings, fmt.Errorf("parse codex config.toml: %w", err)
+				return nil, warnings, fmt.Errorf("parse %s: %w", cfgName, err)
 			}
 			if m, ok := root["mcp_servers"].(map[string]any); ok {
-				servers, w, err := mcpServersFromMap("codex", m)
+				servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
 				if err != nil {
 					return nil, warnings, err
 				}
@@ -292,7 +295,7 @@ func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRend
 	for _, name := range names {
 		s := servers[name]
 		if source != nil && source.ID == target.ID && s.Raw != nil {
-			if target.MCPKind == "codex" {
+			if target.MCP.Format == MCPCodexTOML {
 				block, err := tomlServerBlock(name, s.Raw)
 				if err == nil {
 					out = append(out, MCPRender{Name: name, TOML: block})
@@ -307,8 +310,8 @@ func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRend
 		if rt, _ := s.Raw["type"].(string); rt == "sse" {
 			warnings = append(warnings, fmt.Sprintf("MCP server %s: transport sse was converted to streamable http", name))
 		}
-		switch target.MCPKind {
-		case "claude":
+		switch target.MCP.Format {
+		case MCPClaudeJSON:
 			if s.Transport == "http" {
 				v := map[string]any{"type": "http", "url": s.URL}
 				if len(s.Headers) > 0 {
@@ -325,7 +328,7 @@ func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRend
 				}
 				out = append(out, MCPRender{Name: name, Value: v})
 			}
-		case "qwen":
+		case MCPQwenJSON:
 			if s.Transport == "http" {
 				v := map[string]any{"httpUrl": s.URL}
 				if len(s.Headers) > 0 {
@@ -342,7 +345,7 @@ func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRend
 				}
 				out = append(out, MCPRender{Name: name, Value: v})
 			}
-		case "opencode":
+		case MCPOpenCodeJSON:
 			if s.Transport == "http" {
 				v := map[string]any{"type": "remote", "url": s.URL}
 				if len(s.Headers) > 0 {
@@ -359,7 +362,7 @@ func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRend
 				}
 				out = append(out, MCPRender{Name: name, Value: v})
 			}
-		case "codex":
+		case MCPCodexTOML:
 			var b strings.Builder
 			b.WriteString("[mcp_servers.")
 			b.WriteString(tomlKey(name))
