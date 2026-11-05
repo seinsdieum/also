@@ -36,6 +36,15 @@ type Harness struct {
 	HooksKind string // claude | codex | qwen | none
 	MCPKind   string // claude | opencode | codex | qwen | none
 
+	// SettingsKeys are top-level config keys that can be merged safely when the
+	// source and target harness use the same settings model (same harness).
+	SettingsKeys []string
+	// ExtraDirs are opaque harness directories copied verbatim on same-harness
+	// installs (status lines, output styles, themes, extensions).
+	ExtraDirs []string
+	// ExtraBase is the project-relative directory holding ExtraDirs.
+	ExtraBase string
+
 	HasCommands bool
 	HasAgents   bool
 	HasPlugins  bool
@@ -58,11 +67,14 @@ var harnesses = []*Harness{
 			Instr: "CLAUDE.md", Skills: "skills", Commands: "commands", Agents: "agents",
 			Hooks: "hooks", Settings: "settings.json", MCP: ".mcp.json",
 		},
-		Roots:       []string{"", ".claude"},
-		HooksKind:   "claude",
-		MCPKind:     "claude",
-		HasCommands: true,
-		HasAgents:   true,
+		Roots:        []string{"", ".claude"},
+		HooksKind:    "claude",
+		MCPKind:      "claude",
+		SettingsKeys: []string{"permissions", "statusLine"},
+		ExtraDirs:    []string{"status_lines", "output-styles", "themes"},
+		ExtraBase:    ".claude",
+		HasCommands:  true,
+		HasAgents:    true,
 	},
 	{
 		ID: "opencode", Display: "OpenCode", Aliases: []string{"oc", "open-code"},
@@ -80,12 +92,15 @@ var harnesses = []*Harness{
 			Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents",
 			Plugins: "plugins", Hooks: "hooks", MCP: "opencode.json",
 		},
-		Roots:       []string{"", ".opencode"},
-		HooksKind:   "none",
-		MCPKind:     "opencode",
-		HasCommands: true,
-		HasAgents:   true,
-		HasPlugins:  true,
+		Roots:        []string{"", ".opencode"},
+		HooksKind:    "none",
+		MCPKind:      "opencode",
+		SettingsKeys: []string{"permissions"},
+		ExtraDirs:    []string{"themes"},
+		ExtraBase:    ".opencode",
+		HasCommands:  true,
+		HasAgents:    true,
+		HasPlugins:   true,
 	},
 	{
 		ID: "codex", Display: "Codex CLI", Aliases: []string{"codex-cli"},
@@ -105,6 +120,8 @@ var harnesses = []*Harness{
 		Roots:     []string{"", ".agents", ".codex"},
 		HooksKind: "codex",
 		MCPKind:   "codex",
+		ExtraDirs: []string{"themes"},
+		ExtraBase: ".codex",
 	},
 	{
 		ID: "qwen", Display: "Qwen Code", Aliases: []string{"qwen-code", "qwen3"},
@@ -122,11 +139,14 @@ var harnesses = []*Harness{
 			Instr: "QWEN.md", Skills: "skills", Commands: "commands", Agents: "agents",
 			Hooks: "hooks", Settings: "settings.json", MCP: "settings.json",
 		},
-		Roots:       []string{"", ".qwen", ".agents"},
-		HooksKind:   "qwen",
-		MCPKind:     "qwen",
-		HasCommands: true,
-		HasAgents:   true,
+		Roots:        []string{"", ".qwen", ".agents"},
+		HooksKind:    "qwen",
+		MCPKind:      "qwen",
+		SettingsKeys: []string{"permissions"},
+		ExtraDirs:    []string{"status_lines", "extensions", "themes"},
+		ExtraBase:    ".qwen",
+		HasCommands:  true,
+		HasAgents:    true,
 	},
 }
 
@@ -178,6 +198,7 @@ type Target struct {
 	Settings  string
 	HooksJSON string
 	MCP       string
+	ExtraDir  string
 	Root      string
 }
 
@@ -239,6 +260,11 @@ func (h *Harness) TargetPath(scope, project string) Target {
 	}
 	if h.ID == "opencode" {
 		t.MCP = pickOpenCodeConfig(scope, project)
+	}
+	if scope == "global" {
+		t.ExtraDir = t.Root
+	} else {
+		t.ExtraDir = filepath.Join(project, h.ExtraBase)
 	}
 	return t
 }

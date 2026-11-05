@@ -197,7 +197,11 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		}
 	} else {
 		if len(render.MCP) > 0 {
-			rendered, warns := RenderMCP(targetH, render.MCP)
+			mcpSource := source
+			if render.MCPNative {
+				mcpSource = targetH
+			}
+			rendered, warns := RenderMCP(targetH, mcpSource, render.MCP)
 			plan.Warnings = append(plan.Warnings, warns...)
 			for _, r := range rendered {
 				switch targetH.MCPKind {
@@ -261,6 +265,26 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				}
 			}
 		}
+		if len(render.Settings) > 0 && (source.ID == targetH.ID || render.SettingsNative) {
+			file := SettingsTargetFile(target)
+			if file == "" {
+				plan.Warnings = append(plan.Warnings, "settings keys were preserved in the package but this harness has no mergeable settings file")
+			} else {
+				keys := make([]string, 0, len(render.Settings))
+				for k := range render.Settings {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					edits, warns, err := planSettingsValue(st, old, file, []string{key}, render.Settings[key], opts.Force)
+					if err != nil {
+						return nil, err
+					}
+					plan.Warnings = append(plan.Warnings, warns...)
+					plan.Edits = append(plan.Edits, edits...)
+				}
+			}
+		}
 	}
 	inst.Warnings = uniqueStrings(plan.Warnings)
 	inst.Skipped = uniqueStrings(plan.Skipped)
@@ -286,7 +310,7 @@ func (r *RenderPlan) MCPPath() string {
 }
 
 func fileAllowedRoot(dest string, t Target) bool {
-	roots := []string{t.Root, t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks}
+	roots := []string{t.Root, t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks, t.ExtraDir}
 	if t.Scope == "project" && t.Project != "" {
 		roots = append(roots, t.Project)
 	}
@@ -492,6 +516,54 @@ func planOpenCodeMCP(st *State, old *Install, file, name string, value any, forc
 		w = warn
 	}
 	return edit, w, err
+}
+
+func planSettingsValue(st *State, old *Install, file string, path []string, value any, force bool) ([]ConfigEdit, []string, error) {
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var edits []ConfigEdit
+		var warns []string
+		for _, k := range keys {
+			e, w, err := planSettingsValue(st, old, file, append(append([]string{}, path...), k), v[k], force)
+			if err != nil {
+				return nil, warns, err
+			}
+			edits = append(edits, e...)
+			warns = append(warns, w...)
+		}
+		return edits, warns, nil
+	case []any:
+		var edits []ConfigEdit
+		for _, el := range v {
+			e, added, err := planJSONAppend(file, path, el, old, force)
+			if err != nil {
+				return nil, nil, err
+			}
+			if added {
+				edits = append(edits, *e)
+			}
+		}
+		return edits, nil, nil
+	case nil:
+		return nil, nil, nil
+	default:
+		e, warn, err := planJSONSet(st, old, file, path, v, force)
+		if err != nil {
+			return nil, nil, err
+		}
+		if e == nil {
+			if warn != "" {
+				return nil, []string{warn}, nil
+			}
+			return nil, nil, nil
+		}
+		return []ConfigEdit{*e}, nil, nil
+	}
 }
 
 func planJSONAppend(file string, path []string, value any, old *Install, force bool) (*ConfigEdit, bool, error) {

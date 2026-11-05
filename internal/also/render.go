@@ -3,6 +3,7 @@ package also
 import (
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ type RenderedFile struct {
 	Data      []byte
 	Mode      fs.FileMode
 	Component string // skill:<name> | command | agent | plugin | hook
+	OriginRel string // path in the package origin that produced this file
 }
 
 type InstructionRender struct {
@@ -21,15 +23,18 @@ type InstructionRender struct {
 }
 
 type RenderPlan struct {
-	Target      Target
-	Source      *Harness
-	Files       []RenderedFile
-	Instr       *InstructionRender
-	MCP         map[string]MCPServer
-	Hooks       HookSet
-	Warnings    []string
-	Skipped     []string
-	ConfigFiles []string
+	Target         Target
+	Source         *Harness
+	Files          []RenderedFile
+	Instr          *InstructionRender
+	MCP            map[string]MCPServer
+	Hooks          HookSet
+	Settings       map[string]any
+	MCPNative      bool
+	SettingsNative bool
+	Warnings       []string
+	Skipped        []string
+	ConfigFiles    []string
 }
 
 type skillRef struct {
@@ -46,6 +51,7 @@ type bundleParts struct {
 	Agents   []string
 	Plugins  []string
 	Hooks    []string
+	Extras   []string
 	Other    []string
 	Configs  []string
 	Warnings []string
@@ -102,6 +108,9 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 	var duplicates []string
 
 	for _, rel := range pkg.Paths() {
+		if strings.HasPrefix(rel, BundleLayerPrefix+"/") {
+			continue
+		}
 		rest := rel
 		for _, r := range roots {
 			if r == "" {
@@ -127,11 +136,11 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 		}
 		if rem, ok := under(h.Bundle.Skills); ok {
 			if filepath.Base(rem) == "SKILL.md" {
-				name := filepath.Base(filepath.Dir(rel))
-				if prev, exists := skillRoots[name]; exists && prev != filepath.Dir(rel) {
-					duplicates = append(duplicates, fmt.Sprintf("skill %q: %s and %s", name, prev, filepath.Dir(rel)))
+				name := path.Base(path.Dir(rel))
+				if prev, exists := skillRoots[name]; exists && prev != path.Dir(rel) {
+					duplicates = append(duplicates, fmt.Sprintf("skill %q: %s and %s", name, prev, path.Dir(rel)))
 				} else {
-					skillRoots[name] = filepath.Dir(rel)
+					skillRoots[name] = path.Dir(rel)
 				}
 			} else if !strings.Contains(rem, "/") && strings.HasSuffix(rem, ".md") {
 				name := strings.TrimSuffix(rem, ".md")
@@ -167,6 +176,17 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 		if rem, ok := under(h.Bundle.Hooks); ok {
 			_ = rem
 			parts.Hooks = append(parts.Hooks, rel)
+			continue
+		}
+		extra := false
+		for _, d := range h.ExtraDirs {
+			if _, ok := under(d); ok {
+				parts.Extras = append(parts.Extras, rel)
+				extra = true
+				break
+			}
+		}
+		if extra {
 			continue
 		}
 		if !strings.Contains(rest, "/") && configNames[rest] {
@@ -264,12 +284,79 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 	sort.Strings(parts.Agents)
 	sort.Strings(parts.Plugins)
 	sort.Strings(parts.Hooks)
+	sort.Strings(parts.Extras)
 	sort.Strings(parts.Other)
 	sort.Strings(parts.Configs)
 	return parts, nil
 }
 
 func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
+	plan, err := renderPackageMain(pkg, source, target)
+	if err != nil {
+		return nil, err
+	}
+	layers := splitLayers(pkg.Files)
+	layer := layers[target.Harness.ID]
+	if layer == nil || source.ID == target.Harness.ID {
+		return plan, nil
+	}
+	layerPkg := &Package{
+		Meta:  PackageMeta{Schema: SchemaPkg, Name: pkg.Meta.Name, SourceHarness: target.Harness.ID},
+		Files: layer, Dir: pkg.Dir,
+	}
+	layerPlan, err := renderPackageMain(layerPkg, target.Harness, target)
+	if err != nil {
+		return nil, fmt.Errorf("render preserved %s layer: %w", target.Harness.ID, err)
+	}
+	merged := *plan
+	merged.Warnings = append(append([]string{}, plan.Warnings...), layerPlan.Warnings...)
+	merged.Skipped = append(append([]string{}, plan.Skipped...), layerPlan.Skipped...)
+	if merged.Instr == nil && layerPlan.Instr != nil {
+		merged.Instr = layerPlan.Instr
+	}
+	if len(layerPlan.ConfigFiles) > 0 {
+		merged.MCP = layerPlan.MCP
+		merged.Hooks = layerPlan.Hooks
+		merged.Settings = layerPlan.Settings
+		merged.MCPNative = true
+		merged.SettingsNative = true
+	}
+	have := map[string]int{}
+	for i, f := range merged.Files {
+		have[f.Dest] = i
+	}
+	baseline := loadLayerManifest(pkg.Files)[target.Harness.ID]
+	for _, f := range layerPlan.Files {
+		if i, ok := have[f.Dest]; ok {
+			main := &merged.Files[i]
+			// Prefer the native layer only when the intermediate harness's
+			// origin file still matches what also installed. A modified copy in
+			// that harness wins. Compare the source file, not the re-rendered
+			// output, because translation is not the identity.
+			unchanged := false
+			if main.OriginRel != "" {
+				if of := pkg.Files[main.OriginRel]; of != nil {
+					unchanged = baseline[f.OriginRel] == ShortHash(of.Data, 64)
+				}
+			} else if sha, ok := baseline[f.OriginRel]; ok {
+				unchanged = sha == ShortHash(main.Data, 64)
+			}
+			if unchanged {
+				main.Data = f.Data
+				main.Mode = f.Mode
+				main.Component = f.Component
+				main.OriginRel = f.OriginRel
+			}
+			continue
+		}
+		merged.Files = append(merged.Files, f)
+		have[f.Dest] = len(merged.Files) - 1
+	}
+	merged.ConfigFiles = append(append([]string{}, plan.ConfigFiles...), layerPlan.ConfigFiles...)
+	return &merged, nil
+}
+
+func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
 	parts, err := ClassifyPackage(pkg, source)
 	if err != nil {
 		return nil, err
@@ -284,7 +371,7 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 		if f == nil {
 			return fmt.Errorf("internal: missing file %s", rel)
 		}
-		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: f.Data, Mode: f.Mode, Component: component})
+		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: f.Data, Mode: f.Mode, Component: component, OriginRel: rel})
 		return nil
 	}
 
@@ -321,9 +408,14 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 		}
 		sub := trimRootPrefix(rel, source)
 		sub = trimComponentPrefix(sub, source.Bundle.Commands)
-		if err := add(filepath.Join(target.Commands, filepath.FromSlash(sub)), rel, "command"); err != nil {
-			return nil, err
+		data := pkg.Files[rel].Data
+		if source.ID != target.Harness.ID {
+			converted, warns := ConvertCommand(data, source.ID, target.Harness.ID, sub)
+			data = converted
+			plan.Warnings = append(plan.Warnings, warns...)
 		}
+		dest := filepath.Join(target.Commands, filepath.FromSlash(sub))
+		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: data, Mode: pkg.Files[rel].Mode, Component: "command", OriginRel: rel})
 	}
 	for _, rel := range parts.Agents {
 		if !target.Supports("agents") || target.Agents == "" {
@@ -340,7 +432,7 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 			return nil, fmt.Errorf("convert agent %s: %w", rel, err)
 		}
 		plan.Warnings = append(plan.Warnings, warns...)
-		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: converted, Mode: pkg.Files[rel].Mode, Component: "agent"})
+		plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: converted, Mode: pkg.Files[rel].Mode, Component: "agent", OriginRel: rel})
 	}
 	for _, rel := range parts.Plugins {
 		if !target.Harness.HasPlugins || target.Plugins == "" || source.ID != "opencode" {
@@ -368,8 +460,19 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 	if len(parts.Commands) > 0 && source.ID != target.Harness.ID && target.Harness.HasCommands {
 		plan.Warnings = append(plan.Warnings, "command bodies are copied verbatim; argument placeholders and harness-specific variables may differ in the target harness")
 	}
+	for _, rel := range parts.Extras {
+		if source.ID != target.Harness.ID || target.ExtraDir == "" {
+			plan.Skipped = append(plan.Skipped, "extra:"+rel)
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is harness-specific and was preserved in the package, but not installed into %s", rel, target.Harness.Display))
+			continue
+		}
+		sub := trimRootPrefix(rel, source)
+		if err := add(filepath.Join(target.ExtraDir, filepath.FromSlash(sub)), rel, "extra"); err != nil {
+			return nil, err
+		}
+	}
 	if len(parts.Configs) > 0 {
-		plan.Warnings = append(plan.Warnings, fmt.Sprintf("config files are translated only for MCP and hooks; other settings in %s are not installed", strings.Join(parts.Configs, ", ")))
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("config files contribute MCP, hooks and portable settings; other keys in %s are preserved but not installed", strings.Join(parts.Configs, ", ")))
 	}
 	if len(parts.Other) > 0 {
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf("not installed (not a portable component): %s", strings.Join(parts.Other, ", ")))
@@ -394,11 +497,43 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 		plan.Warnings = append(plan.Warnings, warn...)
 		plan.Hooks = translated
 	}
+	settings, warn, err := ExtractBundleSettings(source, pkg.Files, roots)
+	if err != nil {
+		return nil, err
+	}
+	plan.Warnings = append(plan.Warnings, warn...)
+	plan.Settings = settings
+	if len(settings) > 0 && source.ID != target.Harness.ID {
+		var names []string
+		for k := range settings {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("settings %s are preserved in the package but not installed cross-harness; review them manually", strings.Join(names, ", ")))
+	}
 	if target.Harness.MCPKind == "none" || target.MCP == "" {
 		if len(servers) > 0 {
 			plan.Warnings = append(plan.Warnings, "MCP is not supported for this harness; MCP servers skipped")
 		}
 		plan.MCP = map[string]MCPServer{}
+	}
+	if target.Scope == "project" {
+		switch target.Harness.ID {
+		case "claude":
+			if len(plan.MCP) > 0 {
+				plan.Warnings = append(plan.Warnings, "Claude Code requires explicit approval for project .mcp.json servers; run claude once and approve them")
+			}
+		case "qwen":
+			if len(plan.MCP) > 0 {
+				plan.Warnings = append(plan.Warnings, "Qwen Code requires approval for project MCP servers; use /mcp or qwen mcp approve")
+			}
+		case "opencode":
+			if len(plan.MCP) > 0 || len(plan.Settings) > 0 {
+				plan.Warnings = append(plan.Warnings, "OpenCode watches project config, but a long-running service may need: opencode reload")
+			}
+		case "codex":
+			plan.Warnings = append(plan.Warnings, "Codex loads project .codex/config.toml and hooks.json only after the project is trusted; trust the directory first")
+		}
 	}
 	return plan, nil
 }

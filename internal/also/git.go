@@ -67,18 +67,71 @@ func cloneOrInit(remote, dir string) (created bool, err error) {
 		if _, err := runGit(dir, "remote", "add", "origin", remote); err != nil {
 			return false, err
 		}
+		if err := setLFConfig(dir); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return false, err
 	}
-	if _, err := runGit("", "clone", "--quiet", remote, dir); err != nil {
+	// Git for Windows defaults to core.autocrlf=true, which rewrites the
+	// worktree to CRLF and breaks content digests. Force LF for set clones.
+	if _, err := runGit("", "clone", "--quiet", "--config", "core.autocrlf=false", "--config", "core.eol=lf", remote, dir); err != nil {
 		if lsErr != nil {
 			return false, fmt.Errorf("cannot reach remote %s: %v", remote, lsErr)
 		}
 		return false, err
 	}
 	return false, nil
+}
+
+func setLFConfig(dir string) error {
+	if _, err := runGit(dir, "config", "core.autocrlf", "false"); err != nil {
+		return err
+	}
+	_, err := runGit(dir, "config", "core.eol", "lf")
+	return err
+}
+
+// ensureLineEndings repairs a clone made with core.autocrlf=true. The digest
+// covers worktree bytes, so CRLF files fail the package integrity check.
+func ensureLineEndings(dir string) error {
+	out, err := runGit(dir, "config", "--get", "core.autocrlf")
+	val := strings.TrimSpace(out)
+	if err == nil && val == "false" {
+		return nil
+	}
+	if err == nil && val == "true" {
+		// Never touch a checkout with user changes.
+		dirty, _, derr := gitDirty(dir)
+		if derr != nil {
+			return derr
+		}
+		if dirty {
+			return nil
+		}
+		if err := setLFConfig(dir); err != nil {
+			return err
+		}
+		// git checkout alone skips files whose stat is unchanged even though
+		// the eol conversion changed, so remove tracked files first.
+		files, err := runGit(dir, "ls-files", "-z")
+		if err != nil {
+			return err
+		}
+		for _, rel := range strings.Split(files, "\x00") {
+			if rel == "" {
+				continue
+			}
+			if err := os.Remove(filepath.Join(dir, filepath.FromSlash(rel))); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		_, err = runGit(dir, "checkout", "--", ".")
+		return err
+	}
+	return setLFConfig(dir)
 }
 
 func pullFF(dir string) error {
@@ -133,23 +186,28 @@ func commitPaths(dir, msg string, paths ...string) (bool, error) {
 	return true, nil
 }
 
-// versionTimes returns the newest commit time per "pkg/version" path.
-func versionTimes(dir string) (map[string]time.Time, error) {
+// versionTimes returns the newest commit time and log order per
+// "pkg/version" path. Git timestamps have second granularity, so log order is
+// the tie-breaker for two versions pushed within the same second.
+func versionTimes(dir string) (map[string]time.Time, map[string]int, error) {
 	out, err := runGit(dir, "log", "--format=%x01%ct", "--name-only")
 	if err != nil {
 		if !hasCommits(dir) {
-			return map[string]time.Time{}, nil
+			return map[string]time.Time{}, map[string]int{}, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	times := map[string]time.Time{}
+	order := map[string]int{}
 	var ts int64
+	seq := -1
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "\x01") {
+			seq++
 			fmt.Sscanf(line[1:], "%d", &ts)
 			continue
 		}
@@ -158,10 +216,11 @@ func versionTimes(dir string) (map[string]time.Time, error) {
 			key := parts[1] + "/" + parts[2]
 			if _, ok := times[key]; !ok {
 				times[key] = time.Unix(ts, 0)
+				order[key] = seq
 			}
 		}
 	}
-	return times, nil
+	return times, order, nil
 }
 
 // committedVersions returns pkg/version keys present at HEAD, derived from the package manifest.

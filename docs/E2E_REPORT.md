@@ -1,0 +1,120 @@
+# also — e2e stress report
+
+Дата: 2026-11-06. Версия `also`: 0.1.0 + исправления из этого прогона.
+
+## Полигон
+
+- Приватный git-репозиторий: `https://github.com/seinsdieum/also-e2e-20261106` (private).
+  В нём лежат пакеты `claude-real`, `codex-real`, `opencode-real`, `qwen-real`
+  и 16 round-trip пакетов `rt*`. Удалить: `gh repo delete seinsdieum/also-e2e-20261106`.
+- Инфраструктура взята AS IS из публичных источников, без ручного переписывания:
+  - `anthropics/skills` — skills (`skill-creator`, `theme-factory`, `webapp-testing`, ...);
+  - `obra/superpowers` — skills, реальный OpenCode plugin (`plugins/superpowers.js`),
+    реальный `hooks/hooks.json` для Codex;
+  - `wshobson/agents` — agents, commands, skills, `AGENTS.md`/`CLAUDE.md`;
+  - `openai/skills` — Codex skills;
+  - `QwenLM/qwen-code` — реальный `AGENTS.md` (использован как `QWEN.md`);
+  - `disler/claude-code-hooks-mastery` — реальные Claude hooks, `settings.json`
+    с permissions/statusLine/hooks, `status_lines`, вложенные agents.
+- Установлены/использованы CLI: Claude Code 2.1.318, Codex CLI 0.163.0,
+  OpenCode 2.2.5, Qwen Code 0.25.2. Модельные запросы шли в локальный stub
+  (`/v1/messages`, `/v1/responses`, `/v1/chat/completions`), без реальной аутентификации.
+
+## Что прогонялось
+
+1. Каждая из 4 инфраструктур закодирована и запушена в приватный set.
+2. Каждая инфраструктура установлена в каждый из 4 harness в **project scope**
+   (16 установок).
+3. Для каждой пары X→Y: проект `Y` забирался через `also adopt` в новый bundle
+   (с native-слоем и манифестом), пушился как `rt-*`, затем ставился обратно в `X`.
+4. Сравнивались reference (X→X) и reverse (X→Y→X) проекты:
+   instructions, skills, commands, agents, plugins, extras, hooks,
+   MCP-серверы и permissions/statusLine.
+
+Итог: **16/16 round-trip полностью совпали** по перечисленным артефактам
+(см. `compare5.out` в e2e-каталоге; каждая строка `RESULT OK`).
+
+## Найденные и исправленные дефекты
+
+| # | Дефект | Исправление |
+|---|---|---|
+| 1 | При установке в тот же harness терялись «неизвестные» hook-события (`PermissionRequest`, `PostToolUseFailure`, `Setup`, `SubagentStart`) | same-harness hooks теперь identity; списки событий расширены |
+| 2 | `permissions` и `statusLine` сохранялись в пакете, но не устанавливались даже в тот же harness | same-harness merge с обратимым state (`json-append`/`json-set`); cross-harness — warning + сохранение |
+| 3 | `status_lines`/`output-styles`/`themes`/`extensions` не попадали в пакет и не ставились | opaque `ExtraDirs`: capture в adopt, установка same-harness, сохранение в universal |
+| 4 | `adopt` удалял managed-блок целиком; проект, состоящий только из установленного блока, терял instructions | блоки разворачиваются (маркеры удаляются, тело сохраняется) |
+| 5 | Round-trip X→Y→X терял permissions/hooks/agents/commands, которые Y не умеет или переводит иначе | `.also-layers/<harness>/` + `.also-layers/manifest.json`: native-слой восстанавливает исходник, если переведённый файл не менялся; изменённый в Y файл имеет приоритет |
+| 6 | MCP при same-harness терял незнакомые поля (`disabled`, `timeout`, ...) | `MCPServer.Raw`: same-harness пишет native-объект; Codex — пере-кодирует TOML |
+| 7 | Несколько Codex MCP-серверов давали повторный `[mcp_servers]` и невалидный TOML | parent-заголовок удаляется из каждого блока |
+| 8 | Qwen command placeholders не переводились (`$ARGUMENTS`, `` !`cmd` ``) | `$ARGUMENTS` ↔ `{{args}}`, `` !`cmd` `` ↔ `!{cmd}`; warning для `$1..$9` |
+| 9 | Два push в одну секунду давали неверный `latest` (git timestamp 1s + лексикографический tie-break) | tie-break по порядку в `git log` |
+| 10 | OpenCode legacy `mcp.<name>` не поддерживался | запись в ту же форму, что уже использует конфиг |
+| 11 | `adopt` не получал доступ к оригинальному пакету для сохранения неподдерживаемых частей | state install → set clone → origin → native layer |
+| 12 | Windows-клон set с `core.autocrlf=true` получал CRLF, из-за чего не сходился content digest | clone с `core.autocrlf=false`/`core.eol=lf`; существующий чистый клон автоматически переписывается в LF |
+| 13 | Digest учитывал exec-bit рабочей копии; на Windows его нет, поэтому Unix-пакеты не проходили проверку | режимы файлов берутся из git index (100644/100755), а не из worktree |
+| 14 | На Windows `filepath.Dir` давал `skills\x` вместо `skills/x`; skills попадали в «not a portable component» и не ставились | для путей пакета используется slash-aware `path.Dir` |
+
+## Проверка «на уровне софта»
+
+- **Claude Code**
+  - `claude mcp list` в установленном проекте:
+    `fetch: uvx mcp-server-fetch - ⏸ Pending approval`, `remote: ... - ⏸ Pending approval`.
+  - `claude -p "Reply with OK"` со stub: `OK`; в теле запроса к модели присутствуют
+    текст `CLAUDE.md`, имена skills, agent `backend-architect`, command
+    `feature-development`.
+  - SessionStart-hook из установленного `settings.json` создал marker-файл.
+- **Codex CLI**
+  - С trusted-проектом (`[projects."<path>"] trust_level = "trusted"`) и stub `CODEX_HOME`:
+    `codex mcp list` показывает `fetch` из project `.codex/config.toml` (и global `ghidra`).
+  - `codex exec` со stub: `OK`; в запросе есть `AGENTS.md` (`seven coding tools`),
+    skills `migrate-to-codex`, `security-threat-model`, `skill-creator`.
+  - SessionStart-hook создал marker-файл.
+- **OpenCode 2.2.5**
+  - `opencode debug agents` показывает установленного `backend-architect`.
+  - `opencode debug config` показывает `mcp.servers.fetch/remote` и `permissions`
+    из project `opencode.json`.
+  - `opencode mcp list` после `opencode reload`: `fetch` connected; `remote` не резолвится
+    (пример URL), `ghidra` — из глобального конфига пользователя.
+  - `opencode --standalone run` со stub: `OK`; в запросе есть `AGENTS.md` и skills
+    `writing-plans`, `receiving-code-review`.
+- **Qwen Code 0.25.2**
+  - `qwen mcp list`: `fetch` и `remote` — Pending approval.
+  - `qwen -p` со stub: `OK`; в запросе есть `QWEN.md` (`Working Principles`,
+    `Simplicity First`), skills, agent `backend-architect`, command `feature-development`.
+  - SessionStart-hook создал marker-файл.
+
+## Политика harness, которую нужно учитывать
+
+- Claude Code и Qwen Code требуют подтверждения project MCP-серверов
+  (`Pending approval`). Это их политика, не ошибка установки.
+- Codex загружает project `.codex/config.toml` и `hooks.json` только в **trusted**
+  проекте. `also install` теперь предупреждает об этом.
+- OpenCode подхватывает project config, но долго работающий service может требовать
+  `opencode reload`.
+- Cross-harness permissions намеренно не транслируются автоматически (риск
+  выдать лишние права). Они сохраняются в universal-пакете и восстанавливаются
+  native-слоем при возврате в исходный harness.
+
+## Parallels / Windows
+
+VM: Parallels `Windows 11`, Windows 10.0.26300, ARM64. В VM не было git, поэтому
+поставлен portable `MinGit 2.56.0.4 arm64` (без установщика) в `C:\git`;
+`also` собран как `windows/arm64` и запускался из `C:\Windows\Temp\also.exe`.
+Set-репозиторий подключался по shared folder (`\\Mac\Home\Downloads\also-e2e.git`),
+т.е. проверялся настоящий `git clone`.
+
+Проверено на Windows:
+
+- `also version`, `--help`, `config get/set` (JSON пишется в `ALSO_HOME`), `tree`;
+- `also set` → clone приватного набора;
+- `also install claude-real --harness claude`: 85 файлов, instructions-блок,
+  hooks/permissions/statusLine/MCP, 5 skills;
+- `also install claude-real --harness codex`: `AGENTS.md`, TOML MCP, hooks, 5 skills;
+- `also install rt2-codex-real-to-claude --harness claude`: 33 файла, 3 skills;
+- `also uninstall claude-real`: установленные файлы и managed config откатились.
+
+Именно этот прогон выявил дефекты 12–14 (CRLF, exec-bit digest, path separator);
+после исправлений все перечисленные установки проходят.
+
+Ограничение: в VM нет Claude/Codex/OpenCode/Qwen CLI, поэтому проверка
+«на уровне софта» для них выполнена на macOS (раздел выше). Windows-прогон
+проверяет сам `also` и его git/config/filesystem-операции.

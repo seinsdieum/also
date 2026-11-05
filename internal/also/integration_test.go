@@ -46,8 +46,9 @@ func sampleBundle(t *testing.T, dir string) {
 	writeFile(t, filepath.Join(dir, "commands", "review.md"), "---\ndescription: d\n---\nReview $ARGUMENTS\n")
 	writeFile(t, filepath.Join(dir, "agents", "critic.md"), "---\nname: critic\ndescription: d\ntools: Read, Grep\n---\nbody\n")
 	writeFile(t, filepath.Join(dir, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo","args":["a"]}}}`)
-	writeFile(t, filepath.Join(dir, "settings.json"), `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hook"}]}]}}`)
+	writeFile(t, filepath.Join(dir, "settings.json"), `{"permissions":{"allow":["Bash(ls:*)"]},"statusLine":{"type":"command","command":"echo status"},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hook"}]}]}}`)
 	writeFile(t, filepath.Join(dir, "hooks", "guard.sh"), "#!/bin/sh\n")
+	writeFile(t, filepath.Join(dir, "status_lines", "line.py"), "# status line\n")
 }
 
 func TestEndToEnd(t *testing.T) {
@@ -281,8 +282,8 @@ func TestExtractBundleStripsManagedBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(res.BundleDir, "CLAUDE.md"))
-	if strings.Contains(string(data), "personal/x") || !strings.Contains(string(data), "user") {
-		t.Fatalf("blocks not stripped: %s", data)
+	if strings.Contains(string(data), "<!-- also:") || !strings.Contains(string(data), "user") || !strings.Contains(string(data), "other") {
+		t.Fatalf("blocks not unwrapped: %s", data)
 	}
 	if _, err := os.Stat(filepath.Join(res.BundleDir, "skills", "s", "SKILL.md")); err != nil {
 		t.Fatal(err)
@@ -302,14 +303,14 @@ func TestMCPRenderRoundTrip(t *testing.T) {
 	}
 	for _, id := range HarnessIDs() {
 		h := MustHarness(id)
-		out, warns := RenderMCP(h, servers)
+		out, warns := RenderMCP(h, nil, servers)
 		if len(out) != 2 {
 			t.Fatalf("%s: %d renders (%v)", id, len(out), warns)
 		}
 	}
 	// Codex output must remain valid TOML.
 	h := MustHarness("codex")
-	out, _ := RenderMCP(h, servers)
+	out, _ := RenderMCP(h, nil, servers)
 	var b strings.Builder
 	for _, r := range out {
 		b.WriteString(r.TOML)
@@ -360,5 +361,141 @@ func TestOpenCodeLegacyMCPShape(t *testing.T) {
 	data, _ = os.ReadFile(filepath.Join(project, "opencode.json"))
 	if !strings.Contains(string(data), "/bin/true") {
 		t.Fatalf("previous legacy value not restored: %s", data)
+	}
+}
+
+func TestRoundTripThroughAdoptLayer(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := repo.LoadPackage("p", mustLatest(t, repo, "p").Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p1 := filepath.Join(tmp, "p1")
+	if err := os.MkdirAll(p1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := &State{Schema: SchemaState}
+	v := mustLatest(t, repo, "p")
+	plan, err := BuildPlan(st, repo, pkg, v, "opencode", "project", p1, InstallOptions{WithConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPlan(st, plan, InstallOptions{WithConfig: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	infra := filepath.Join(tmp, "infra")
+	if _, err := ExtractBundle(AdoptOptions{Name: "rt", Project: p1, Harness: "opencode", Dest: infra}); err != nil {
+		t.Fatal(err)
+	}
+	rtBundle := filepath.Join(infra, "rt")
+	if _, err := os.Stat(filepath.Join(rtBundle, ".also-layers", "manifest.json")); err != nil {
+		t.Fatalf("layer manifest missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rtBundle, ".also-layers", "claude", "agents", "critic.md")); err != nil {
+		t.Fatalf("native agent layer missing: %v", err)
+	}
+	if _, err := repo.Push(rtBundle, PushOptions{Name: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	rtPkg, err := repo.LoadPackage("rt", mustLatest(t, repo, "rt").Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2 := filepath.Join(tmp, "p2")
+	if err := os.MkdirAll(p2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan2, err := BuildPlan(st2, repo, rtPkg, mustLatest(t, repo, "rt"), "claude", "project", p2, InstallOptions{WithConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPlan(st2, plan2, InstallOptions{WithConfig: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotAgent, err := os.ReadFile(filepath.Join(p2, ".claude", "agents", "critic.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAgent, _ := os.ReadFile(filepath.Join(bundle, "agents", "critic.md"))
+	if string(gotAgent) != string(wantAgent) {
+		t.Fatalf("native agent not restored:\n--- want\n%s\n--- got\n%s", wantAgent, gotAgent)
+	}
+	if _, err := os.Stat(filepath.Join(p2, ".claude", "status_lines", "line.py")); err != nil {
+		t.Fatalf("native extra not restored: %v", err)
+	}
+	settings, err := os.ReadFile(filepath.Join(p2, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Bash(ls:*)", "statusLine", "PreToolUse"} {
+		if !strings.Contains(string(settings), want) {
+			t.Fatalf("settings key %q missing:\n%s", want, settings)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(p2, "CLAUDE.md")); err != nil {
+		t.Fatalf("instructions missing: %v", err)
+	}
+}
+
+func TestSettingsAndExtrasSameHarness(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := repo.LoadPackage("p", mustLatest(t, repo, "p").Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(tmp, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := &State{Schema: SchemaState}
+	plan, err := BuildPlan(st, repo, pkg, mustLatest(t, repo, "p"), "claude", "project", proj, InstallOptions{WithConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPlan(st, plan, InstallOptions{WithConfig: true}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(filepath.Join(proj, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Bash(ls:*)", "statusLine", "PreToolUse", "echo status"} {
+		if !strings.Contains(string(settings), want) {
+			t.Fatalf("settings key %q missing:\n%s", want, settings)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".claude", "status_lines", "line.py")); err != nil {
+		t.Fatalf("extra missing: %v", err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".claude", "settings.json")); err == nil {
+		t.Fatal("settings file created by also should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".claude", "status_lines")); err == nil {
+		t.Fatal("extras should be removed")
 	}
 }

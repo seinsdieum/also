@@ -11,8 +11,9 @@ import (
 type HookSet map[string][]json.RawMessage
 
 var claudeHookEvents = []string{
-	"PreToolUse", "PostToolUse", "UserPromptSubmit", "Notification", "Stop",
-	"SubagentStop", "PreCompact", "SessionStart", "SessionEnd",
+	"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest",
+	"UserPromptSubmit", "Notification", "Stop", "SubagentStop", "SubagentStart",
+	"PreCompact", "SessionStart", "SessionEnd", "Setup",
 }
 
 var codexHookEvents = []string{
@@ -130,6 +131,13 @@ func RenderHooks(target *Harness, source *Harness, hs HookSet) (HookSet, []strin
 	out := HookSet{}
 	var warnings []string
 	if len(hs) == 0 {
+		return out, warnings
+	}
+	if source != nil && source.ID == target.ID {
+		// Native identity: never filter the source harness's own events.
+		for ev, groups := range hs {
+			out[ev] = append(out[ev], groups...)
+		}
 		return out, warnings
 	}
 	if target.HooksKind == "none" {

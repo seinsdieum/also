@@ -38,6 +38,9 @@ func OpenSet(name string, cfg SetConfig, refresh bool) (*SetRepo, error) {
 			return nil, fmt.Errorf("open set %q: %w", name, err)
 		}
 	}
+	if err := ensureLineEndings(dir); err != nil {
+		return nil, err
+	}
 	ensureLocalExcludes(dir)
 	repo := &SetRepo{Name: name, Cfg: cfg, Dir: dir}
 	remote, err := runGit(dir, "remote", "get-url", "origin")
@@ -101,12 +104,14 @@ type VersionInfo struct {
 	Version string
 	Label   string
 	Time    time.Time
+	Order   int `json:"-"`
 	Harness string
 }
 
 type versionIndex struct {
 	committed map[string]bool
 	times     map[string]time.Time
+	order     map[string]int
 }
 
 func (s *SetRepo) index() (*versionIndex, error) {
@@ -114,11 +119,11 @@ func (s *SetRepo) index() (*versionIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	times, err := versionTimes(s.Dir)
+	times, order, err := versionTimes(s.Dir)
 	if err != nil {
 		return nil, err
 	}
-	return &versionIndex{committed: committed, times: times}, nil
+	return &versionIndex{committed: committed, times: times, order: order}, nil
 }
 
 func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
@@ -152,12 +157,16 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 			continue
 		}
 		out = append(out, VersionInfo{
-			Version: ver, Label: meta.Label, Harness: meta.SourceHarness, Time: idx.times[key],
+			Version: ver, Label: meta.Label, Harness: meta.SourceHarness,
+			Time: idx.times[key], Order: idx.order[key],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Time.Equal(out[j].Time) {
 			return out[i].Time.After(out[j].Time)
+		}
+		if out[i].Order != out[j].Order {
+			return out[i].Order < out[j].Order
 		}
 		return out[i].Version > out[j].Version
 	})

@@ -130,6 +130,18 @@ func tomlRemoveBlock(src []byte, marker string) ([]byte, bool) {
 	return out, true
 }
 
+func tomlServerBlock(name string, raw map[string]any) (string, error) {
+	var b bytes.Buffer
+	enc := toml.NewEncoder(&b)
+	if err := enc.Encode(map[string]any{"mcp_servers": map[string]any{name: raw}}); err != nil {
+		return "", err
+	}
+	// The encoder may emit the parent table before each server table; repeated
+	// "[mcp_servers]" headers would make the appended block invalid TOML.
+	out := strings.Replace(b.String(), "[mcp_servers]\n", "", 1)
+	return out, nil
+}
+
 func tomlHasMCPServer(src []byte, name string) bool {
 	root, err := parseTOMLMap(src)
 	if err != nil {

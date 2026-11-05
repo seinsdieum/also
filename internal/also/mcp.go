@@ -15,6 +15,10 @@ type MCPServer struct {
 	Cwd       string            `json:"cwd,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
+	// Raw is the native server object from the source harness. It is used
+	// verbatim when installing back into the same harness, preserving fields
+	// also does not understand.
+	Raw map[string]any `json:"-"`
 }
 
 func asStringMap(v any) map[string]string {
@@ -51,7 +55,7 @@ func asStringList(v any) []string {
 
 func parseMCPServer(raw map[string]any) (MCPServer, []string, error) {
 	var warnings []string
-	s := MCPServer{Env: map[string]string{}, Headers: map[string]string{}}
+	s := MCPServer{Env: map[string]string{}, Headers: map[string]string{}, Raw: raw}
 	s.Env = asStringMap(raw["env"])
 	if len(s.Env) == 0 {
 		s.Env = asStringMap(raw["environment"])
@@ -77,7 +81,6 @@ func parseMCPServer(raw map[string]any) (MCPServer, []string, error) {
 	t, _ := raw["type"].(string)
 	switch {
 	case t == "sse":
-		warnings = append(warnings, "MCP transport sse was converted to streamable http")
 		s.Transport = "http"
 	case s.URL != "":
 		s.Transport = "http"
@@ -278,7 +281,7 @@ type MCPRender struct {
 	TOML  string // codex only
 }
 
-func RenderMCP(target *Harness, servers map[string]MCPServer) ([]MCPRender, []string) {
+func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRender, []string) {
 	var out []MCPRender
 	var warnings []string
 	names := make([]string, 0, len(servers))
@@ -288,6 +291,22 @@ func RenderMCP(target *Harness, servers map[string]MCPServer) ([]MCPRender, []st
 	sort.Strings(names)
 	for _, name := range names {
 		s := servers[name]
+		if source != nil && source.ID == target.ID && s.Raw != nil {
+			if target.MCPKind == "codex" {
+				block, err := tomlServerBlock(name, s.Raw)
+				if err == nil {
+					out = append(out, MCPRender{Name: name, TOML: block})
+					continue
+				}
+				warnings = append(warnings, fmt.Sprintf("MCP server %s: could not re-encode native TOML: %v", name, err))
+			} else {
+				out = append(out, MCPRender{Name: name, Value: s.Raw})
+				continue
+			}
+		}
+		if rt, _ := s.Raw["type"].(string); rt == "sse" {
+			warnings = append(warnings, fmt.Sprintf("MCP server %s: transport sse was converted to streamable http", name))
+		}
 		switch target.MCPKind {
 		case "claude":
 			if s.Transport == "http" {

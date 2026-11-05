@@ -44,10 +44,9 @@ type PackageMeta struct {
 }
 
 type Package struct {
-	Meta      PackageMeta
-	Files     map[string]*SnapshotFile // origin files
-	Dir       string
-	pathCache []string
+	Meta  PackageMeta
+	Files map[string]*SnapshotFile // origin files
+	Dir   string
 }
 
 var secretNames = []string{
@@ -178,8 +177,12 @@ func ReadSnapshot(root string, opts SnapshotOptions) (*Snapshot, []string, error
 }
 
 func (p *Package) Paths() []string {
-	sort.Strings(p.pathCache)
-	return p.pathCache
+	out := make([]string, 0, len(p.Files))
+	for rel := range p.Files {
+		out = append(out, rel)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Snapshot) Paths() []string {
@@ -314,8 +317,14 @@ func LoadPackage(dir string) (*Package, error) {
 		return nil, err
 	}
 	p := &Package{Meta: meta, Files: files, Dir: dir}
-	for rel := range files {
-		p.pathCache = append(p.pathCache, rel)
+	if modes := gitFileModes(dir); modes != nil {
+		// The worktree mode is meaningless on Windows (no exec bit), but the
+		// git index preserves it, so keep digests identical across platforms.
+		for rel, f := range files {
+			if m, ok := modes["origin/"+rel]; ok {
+				f.Mode = m
+			}
+		}
 	}
 	if meta.Digest != "" {
 		snap := &Snapshot{Files: files}
@@ -326,8 +335,32 @@ func LoadPackage(dir string) (*Package, error) {
 	return p, nil
 }
 
-func humanBytes(n int64) string {
-	if n < 1024 {
+// gitFileModes returns tracked modes relative to dir, or nil outside git.
+func gitFileModes(dir string) map[string]fs.FileMode {
+	out, err := runGit(dir, "ls-files", "-s", "--", ".")
+	if err != nil {
+		return nil
+	}
+	modes := map[string]fs.FileMode{}
+	for _, line := range strings.Split(out, "\n") {
+		tab := strings.IndexByte(line, '\t')
+		if tab < 0 {
+			continue
+		}
+		fields := strings.Fields(line[:tab])
+		if len(fields) == 0 {
+			continue
+		}
+		mode := fs.FileMode(0o644)
+		if fields[0] == "100755" {
+			mode = 0o755
+		}
+		modes[line[tab+1:]] = mode
+	}
+	return modes
+}
+
+func humanBytes(n int64) string {	if n < 1024 {
 		return fmt.Sprintf("%d B", n)
 	}
 	if n < 1024*1024 {

@@ -3,6 +3,7 @@ package also
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -108,6 +109,11 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 	if from == to {
 		return data, nil, nil
 	}
+	// Claude and Qwen use the same agent frontmatter model. A re-marshal would
+	// only reorder fields.
+	if (from == "claude" && to == "qwen") || (from == "qwen" && to == "claude") {
+		return data, nil, nil
+	}
 	fm, body, ok, err := splitFrontmatter(data)
 	if err != nil {
 		return nil, nil, err
@@ -152,6 +158,12 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 		}
 		dropped("name", "permissionMode", "approvalMode", "maxTurns", "disallowedTools", "mcpServers", "hooks")
 	case "claude", "qwen":
+		if _, ok := fm["name"]; !ok {
+			name := strings.TrimSuffix(filepath.Base(filename), ".md")
+			if name != "" {
+				fm["name"] = name
+			}
+		}
 		if v, ok := fm["tools"]; ok {
 			if m, isMap := v.(map[string]any); isMap {
 				var names []string
