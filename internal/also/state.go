@@ -1,0 +1,164 @@
+package also
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"time"
+)
+
+type InstalledFile struct {
+	Path string `json:"path"`
+	SHA  string `json:"sha"`
+	Mode string `json:"mode"`
+}
+
+// BlockEdit describes the managed instructions block owned by one install.
+type BlockEdit struct {
+	File        string `json:"file"`
+	ID          string `json:"id"`
+	SHA         string `json:"sha"`
+	CreatedFile bool   `json:"created_file"`
+}
+
+// ConfigEdit is one reversible change in a harness config file.
+type ConfigEdit struct {
+	File        string          `json:"file"`
+	Kind        string          `json:"kind"` // json-set | json-append | toml-block
+	Path        []string        `json:"path,omitempty"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Previous    json.RawMessage `json:"previous,omitempty"`
+	HadPrev     bool            `json:"had_previous,omitempty"`
+	Marker      string          `json:"marker,omitempty"`
+	Block       string          `json:"block,omitempty"`
+	CreatedFile bool            `json:"created_file,omitempty"`
+}
+
+type Install struct {
+	ID            string          `json:"id"`
+	Set           string          `json:"set"`
+	SetRemote     string          `json:"set_remote"`
+	Package       string          `json:"package"`
+	Version       string          `json:"version"`
+	Label         string          `json:"label,omitempty"`
+	SourceHarness string          `json:"source_harness"`
+	Harness       string          `json:"harness"`
+	Scope         string          `json:"scope"`
+	Project       string          `json:"project,omitempty"`
+	Root          string          `json:"root"`
+	WithConfig    bool            `json:"with_config"`
+	InstalledAt   time.Time       `json:"installed_at"`
+	Files         []InstalledFile `json:"files"`
+	Block         *BlockEdit      `json:"block,omitempty"`
+	Edits         []ConfigEdit    `json:"edits,omitempty"`
+	Warnings      []string        `json:"warnings,omitempty"`
+	Skipped       []string        `json:"skipped,omitempty"`
+}
+
+func (i Install) Display() string {
+	v := ShortHash([]byte(i.Version), 12)
+	if i.Label != "" {
+		v += " (" + i.Label + ")"
+	}
+	return fmt.Sprintf("%s/%s@%s", i.Set, i.Package, v)
+}
+
+type State struct {
+	Schema   string    `json:"schema"`
+	Installs []Install `json:"installs"`
+}
+
+func LoadState() (*State, error) {
+	st := &State{Schema: SchemaState}
+	data, err := os.ReadFile(StatePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return st, nil
+		}
+		return nil, fmt.Errorf("read state: %w", err)
+	}
+	if err := json.Unmarshal(data, st); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", StatePath(), err)
+	}
+	if st.Schema != SchemaState {
+		return nil, fmt.Errorf("unsupported state schema %q in %s", st.Schema, StatePath())
+	}
+	return st, nil
+}
+
+func SaveState(st *State) error {
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return atomicWrite(StatePath(), data, 0o600)
+}
+
+func (s *State) FindByID(id string) *Install {
+	for idx := range s.Installs {
+		if s.Installs[idx].ID == id {
+			return &s.Installs[idx]
+		}
+	}
+	return nil
+}
+
+func (s *State) InstallsOf(pkg string) []*Install {
+	var out []*Install
+	for idx := range s.Installs {
+		if pkg == "" || s.Installs[idx].Package == pkg {
+			out = append(out, &s.Installs[idx])
+		}
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if out[a].Set != out[b].Set {
+			return out[a].Set < out[b].Set
+		}
+		return out[a].Package < out[b].Package
+	})
+	return out
+}
+
+// ownerOf returns the install that owns a file, if any.
+func (s *State) ownerOf(path string) *Install {
+	for idx := range s.Installs {
+		for _, f := range s.Installs[idx].Files {
+			if f.Path == path {
+				return &s.Installs[idx]
+			}
+		}
+	}
+	return nil
+}
+
+func (s *State) Remove(id string) {
+	out := s.Installs[:0]
+	for _, in := range s.Installs {
+		if in.ID != id {
+			out = append(out, in)
+		}
+	}
+	s.Installs = out
+}
+
+// InstallID is stable across upgrades and reshapes of the same installation slot.
+func InstallID(set, pkg, scope, project string) string {
+	if scope == "global" {
+		project = ""
+	}
+	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + scope + "\x00" + project))
+	return hex.EncodeToString(sum[:8])
+}
+
+func ShortHash(data []byte, n int) string {
+	sum := sha256.Sum256(data)
+	h := hex.EncodeToString(sum[:])
+	if n <= 0 || n > len(h) {
+		return h
+	}
+	return h[:n]
+}
