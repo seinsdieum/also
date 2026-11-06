@@ -143,13 +143,14 @@ Acceptance criteria:
 
 ### V1-3. CI и тесты
 
-- [ ] CLI coverage поднять с 8% до осмысленного уровня
-      (setup/connect/push/adopt/doctor/verify уже покрыты);
+- [x] CLI coverage поднять с 8% до осмысленного уровня
+      (8% → 33%; setup/connect/push/adopt/doctor/verify покрыты);
 - [ ] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect
       (setup/push/adopt/doctor/verify готовы, install/upgrade/reshape/uninstall — нет);
 - [ ] golden-тесты вывода и exit codes;
 - [ ] тесты natural-language parser и конфликтующих флагов;
-- [ ] положить 4×4 E2E в `test/e2e` и запускать в CI;
+- [x] положить 4×4 E2E в `test/e2e` и запускать в CI
+      (синтетическая матрица instructions+skill, локальные bare remotes);
 - [x] Windows CI: пути, CRLF, exec-bit, lock, имена пакетов;
 - [ ] отдельный smoke с реальными harness CLI (без реальных моделей).
 

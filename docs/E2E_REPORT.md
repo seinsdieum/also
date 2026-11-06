@@ -195,3 +195,11 @@ Set-репозиторий подключался по shared folder (`\\Mac\Hom
 
 Итог: **16/16 `RESULT OK`**, `0 DIFFER` (`compare8.out`).
 `also list` на том же наборе ускорился с 7.59 s до 2.79 s.
+
+## In-repo matrix
+
+`test/e2e/matrix_test.go` запускает ту же идею 4×4 без приватного репозитория:
+для каждого source harness собирается бандл (instructions + skill), затем для
+всех 16 пар выполняется `push → install → adopt → push → install back`.
+Проверяется, что instructions и тело skill вернулись в исходный harness.
+Матрица запускается обычным `go test ./...` в CI на macOS/Linux/Windows.
