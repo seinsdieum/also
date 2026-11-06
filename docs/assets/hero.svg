@@ -29,6 +29,8 @@
   <!-- hero statement -->
   <rect x="34" y="34" width="430" height="330" rx="22" fill="#FFFFFF"/>
   <text x="64" y="74" class="mono label">PORTABLE AI INFRASTRUCTURE</text>
+  <rect x="370" y="54" width="64" height="28" rx="14" fill="#0B0B0D"/>
+  <text x="402" y="73" text-anchor="middle" class="mono white" font-size="13" font-weight="700">also</text>
   <text x="64" y="140" class="mono ink" font-size="35" font-weight="700" letter-spacing="-1">ONE PACKAGE.</text>
   <text x="64" y="185" class="mono ink" font-size="35" font-weight="700" letter-spacing="-1">EVERY HARNESS.</text>
   <text x="64" y="228" class="mono body">Version, translate and install the</text>
