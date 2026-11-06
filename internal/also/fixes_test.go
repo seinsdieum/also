@@ -390,3 +390,24 @@ func TestConfigSecretScanning(t *testing.T) {
 		t.Fatalf("environment reference was flagged: %s", got)
 	}
 }
+
+func TestVerifyReportsOrphanTag(t *testing.T) {
+	_, _, setDir, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(setDir, "-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "--allow-empty", "-qm", "empty"); err != nil {
+		t.Fatal(err)
+	}
+	orphan := VersionFromDigest(strings.Repeat("ab", 32))
+	if _, err := runGit(setDir, "update-ref", versionTagRef("p", orphan), "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	checks := Verify(cfg, nil, "personal", false)
+	if !HasFailures(checks) {
+		t.Fatalf("orphan tag was not reported: %+v", checks)
+	}
+}

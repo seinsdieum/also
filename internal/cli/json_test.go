@@ -134,3 +134,61 @@ func TestUsageErrorsExitNonZero(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeAndReshapeJSON(t *testing.T) {
+	tmp := setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(tmp, "bundle")
+	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: d\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("push", bundle, "--name", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := runCLI("install", "demo", "for", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("push", bundle, "--name", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLICapture(t, "upgrade", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := decodeJSON(t, out).([]any)
+	if len(up) != 1 || up[0].(map[string]any)["status"] != "upgraded" {
+		t.Fatalf("unexpected upgrade JSON: %s", out)
+	}
+	out, err = runCLICapture(t, "reshape", "opencode", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := decodeJSON(t, out).([]any)
+	if len(rs) != 1 || rs[0].(map[string]any)["to"] != "opencode" {
+		t.Fatalf("unexpected reshape JSON: %s", out)
+	}
+}

@@ -60,3 +60,17 @@ fixtures. Error messages list key locations, not secret values.
 Namespaces use the system `git` and its credential helper/SSH keys. `also`
 does not store tokens in its config. Clones use `GIT_TERMINAL_PROMPT=0`, so a
 missing credential fails instead of hanging.
+
+## Verifying a release
+
+Release binaries are built in GitHub Actions and get a Sigstore build
+provenance attestation. After downloading a binary or `SHA256SUMS`:
+
+```sh
+gh attestation verify also-darwin-arm64 --repo seinsdieum/also
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+`install.sh` verifies the SHA-256 checksum before installing. The attestation
+binds that binary to the release workflow and commit; it does not audit the
+source for you.

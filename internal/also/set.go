@@ -160,6 +160,9 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 		if !ok {
 			return nil, fmt.Errorf("version tag %s has no package manifest", versionTagName(pkg, version))
 		}
+		if err := checkVersionDigest(pkg, version, meta); err != nil {
+			return nil, err
+		}
 		ci := info[commit]
 		vi := VersionInfo{
 			Version: version, Label: meta.Label, Harness: meta.SourceHarness,
@@ -183,6 +186,9 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 		meta, ok := readManifestAtCommit(s.Dir, pkg, version, "HEAD")
 		if !ok {
 			continue
+		}
+		if err := checkVersionDigest(pkg, version, meta); err != nil {
+			return nil, err
 		}
 		key := pkg + "/" + version
 		out = append(out, VersionInfo{
@@ -268,6 +274,21 @@ func (s *SetRepo) ResolveVersion(pkg, spec string) (VersionInfo, error) {
 	return VersionInfo{}, fmt.Errorf("version %q not found for %q; available: %s", spec, pkg, joinVersions(versions))
 }
 
+// checkVersionDigest rejects a tag or legacy directory that points at another
+// version's manifest. Orphan tags and retagged histories are corruption.
+func checkVersionDigest(pkg, version string, meta PackageMeta) error {
+	if meta.Digest == "" {
+		return fmt.Errorf("package %q version %s has no digest", pkg, version)
+	}
+	if !validDigest(meta.Digest) {
+		return fmt.Errorf("package %q version %s has a malformed digest %q", pkg, version, meta.Digest)
+	}
+	if got := VersionFromDigest(meta.Digest); got != version {
+		return fmt.Errorf("version %s of %q points at manifest digest %s", version, pkg, got)
+	}
+	return nil
+}
+
 func joinVersions(vs []VersionInfo) string {
 	parts := make([]string, 0, len(vs))
 	for _, v := range vs {
@@ -292,6 +313,9 @@ func (s *SetRepo) LoadPackage(pkg, version string) (*Package, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load %s@%s: %w", pkg, version, err)
 		}
+		if err := checkVersionDigest(pkg, version, p.Meta); err != nil {
+			return nil, err
+		}
 		return p, nil
 	}
 	// Legacy layout (no tag yet): packages/<pkg>/<version>/.
@@ -299,6 +323,9 @@ func (s *SetRepo) LoadPackage(pkg, version string) (*Package, error) {
 		p, err := s.loadPackageFromCommit(pkg, version, "HEAD")
 		if err != nil {
 			return nil, fmt.Errorf("load %s@%s: %w", pkg, version, err)
+		}
+		if err := checkVersionDigest(pkg, version, p.Meta); err != nil {
+			return nil, err
 		}
 		return p, nil
 	}

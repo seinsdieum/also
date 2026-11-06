@@ -127,8 +127,8 @@ Acceptance criteria:
 - [x] добавить `LICENSE`;
 - [x] `Version = "1.0.0"` + commit/date в `also version`;
 - [x] `.github/workflows`: gofmt, vet, test, race, Windows/macOS/Linux;
-- [ ] release workflow: darwin/linux/windows amd64/arm64, checksums, подпись
-      (сборка и checksums готовы, подпись — нет);
+- [x] release workflow: darwin/linux/windows amd64/arm64, checksums, подпись
+      (checksums + Sigstore build provenance; локально проверена cross-build матрица);
 - [ ] install script и Homebrew/apt/winget — минимум один пакетный путь
       (install.sh/install.ps1 готовы, пакетного менеджера пока нет);
 - [x] `CHANGELOG.md` и release notes.

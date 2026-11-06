@@ -84,3 +84,26 @@ func readConfigBytesForTest(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+func TestCorruptConfigAndStateAreRejected(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ALSO_HOME", filepath.Join(tmp, "also"))
+	if err := os.MkdirAll(HomeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConfigPath(), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("corrupt config was accepted")
+	}
+	if err := os.Remove(ConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(StatePath(), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadState(); err == nil {
+		t.Fatal("corrupt state was accepted")
+	}
+}
