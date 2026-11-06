@@ -96,6 +96,31 @@ func tomlAppendBlock(src []byte, marker, block string) []byte {
 	return b.Bytes()
 }
 
+func tomlBlockBody(src []byte, marker string) (string, bool) {
+	begin := markerBegin(marker)
+	end := markerEnd(marker)
+	lines := strings.SplitAfter(string(src), "\n")
+	start, stop := -1, -1
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if t == begin && start < 0 {
+			start = i
+		}
+		if t == end && start >= 0 {
+			stop = i
+			break
+		}
+	}
+	if start < 0 || stop < 0 {
+		return "", false
+	}
+	var b strings.Builder
+	for i := start + 1; i < stop; i++ {
+		b.WriteString(lines[i])
+	}
+	return strings.TrimSpace(b.String()), true
+}
+
 func tomlRemoveBlock(src []byte, marker string) ([]byte, bool) {
 	begin := markerBegin(marker)
 	end := markerEnd(marker)

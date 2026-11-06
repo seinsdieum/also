@@ -123,6 +123,9 @@ func TestMigratePreservesVersionOrder(t *testing.T) {
 	if len(versions) != 2 || versions[0].Version != v2 {
 		t.Fatalf("version order after migration: %+v", versions)
 	}
+	if versions[0].Time.Year() != 2020 {
+		t.Fatalf("migration lost the latest version time: %+v", versions[0])
+	}
 	if versions[1].Time.Year() != 2020 {
 		t.Fatalf("migration lost the original version time: %+v", versions[1])
 	}

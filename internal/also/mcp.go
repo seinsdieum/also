@@ -2,6 +2,7 @@ package also
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -158,6 +159,7 @@ func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []
 }
 
 var secretKeyRe = regexp.MustCompile(`(?i)(token|secret|passw|api[-_]?key|authorization|credential|private[-_]?key)`)
+var commandSecretRe = regexp.MustCompile(`(?i)^(token|secret|passw(or)?d|api[-_]?key|authorization|credential|private[-_]?key)$`)
 
 func isEnvRef(v string) bool {
 	v = strings.TrimSpace(v)
@@ -176,6 +178,30 @@ func MCPSuspiciousSecrets(servers map[string]MCPServer) []string {
 		for k, v := range s.Headers {
 			if secretKeyRe.MatchString(k) && v != "" && !isEnvRef(v) {
 				out = append(out, fmt.Sprintf("mcp %s header %s", name, k))
+			}
+		}
+		for i, arg := range s.Command {
+			key, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+			if !commandSecretRe.MatchString(key) {
+				continue
+			}
+			if !hasValue && i+1 < len(s.Command) {
+				value = s.Command[i+1]
+			}
+			if value != "" && !isEnvRef(value) {
+				out = append(out, fmt.Sprintf("mcp %s argument %s", name, key))
+			}
+		}
+		if s.URL != "" {
+			if u, err := url.Parse(s.URL); err == nil {
+				if u.User != nil {
+					out = append(out, fmt.Sprintf("mcp %s url userinfo", name))
+				}
+				for k := range u.Query() {
+					if secretKeyRe.MatchString(k) {
+						out = append(out, fmt.Sprintf("mcp %s url query %s", name, k))
+					}
+				}
 			}
 		}
 	}

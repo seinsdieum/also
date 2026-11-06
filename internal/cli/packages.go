@@ -57,16 +57,27 @@ func newListCmd() *cobra.Command {
 			Versions []also.VersionInfo `json:"versions"`
 		}
 		rows := make([]row, 0, len(pkgs))
+		var readErrs []string
 		for _, p := range pkgs {
 			vs, err := repo.Versions(p)
-			if err != nil || len(vs) == 0 {
+			if err != nil {
+				readErrs = append(readErrs, p+": "+err.Error())
+				continue
+			}
+			if len(vs) == 0 {
+				readErrs = append(readErrs, p+": no versions")
 				continue
 			}
 			rows = append(rows, row{Name: p, Latest: vs[0], Versions: vs})
 		}
 		if jsonOut {
-			return printJSON(map[string]any{"set": name, "remote": sc.Remote, "packages": rows})
+			out := map[string]any{"set": name, "remote": sc.Remote, "packages": rows}
+			if len(readErrs) > 0 {
+				out["errors"] = readErrs
+			}
+			return printJSON(out)
 		}
+		printWarnings("unreadable packages", readErrs)
 		if len(rows) == 0 {
 			fmt.Printf("set %s is empty (remote: %s)\n", name, sc.Remote)
 			return nil

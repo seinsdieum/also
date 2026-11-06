@@ -46,7 +46,7 @@ func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
 		ref.Package = parts[0]
 	case 2:
 		if cfg != nil {
-			if _, ok := cfg.Sets[parts[0]]; ok {
+			if _, ok := cfg.Sets[parts[0]]; ok && !looksLikeVersion(parts[1]) {
 				ref.Namespace, ref.Package = parts[0], parts[1]
 				break
 			}
@@ -64,6 +64,21 @@ func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
 		return pkgRef{}, fmt.Errorf("invalid namespace %q", ref.Namespace)
 	}
 	return ref, nil
+}
+
+func looksLikeVersion(s string) bool {
+	if len(s) == 16 {
+		for _, r := range s {
+			if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+				return false
+			}
+		}
+		return true
+	}
+	if len(s) > 1 && (s[0] == 'v' || s[0] == 'V') && s[1] >= '0' && s[1] <= '9' {
+		return true
+	}
+	return s != "" && s[0] >= '0' && s[0] <= '9'
 }
 
 type installSpec struct {

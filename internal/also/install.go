@@ -16,6 +16,8 @@ type InstallOptions struct {
 	WithConfig bool
 	// Parts selects individual components for a partial install. Empty = all.
 	Parts []string
+	// OldHarness is set by reshape to reuse the install slot of another harness.
+	OldHarness string
 }
 
 type Plan struct {
@@ -30,6 +32,9 @@ type Plan struct {
 	Edits       []ConfigEdit
 	Warnings    []string
 	Skipped     []string
+	// OldInstallID is removed when a legacy slot id or a reshape changes the
+	// install id.
+	OldInstallID string
 }
 
 const blockBeginPrefix = "<!-- also:begin "
@@ -101,9 +106,23 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 	if err != nil {
 		return nil, err
 	}
-	id := InstallID(set.Name, pkg.Meta.Name, scope, project)
-	old := st.FindByID(id)
+	id := InstallID(set.Name, pkg.Meta.Name, targetH.ID, scope, project)
+	oldID := id
+	if opts.OldHarness != "" && opts.OldHarness != targetH.ID {
+		oldID = InstallID(set.Name, pkg.Meta.Name, opts.OldHarness, scope, project)
+	}
+	old := st.FindByID(oldID)
+	if old == nil {
+		// Adopt state written before harnesses were part of the slot id.
+		candidate := st.FindByID(legacyInstallID(set.Name, pkg.Meta.Name, scope, project))
+		if candidate != nil && candidate.Harness == sourceHarnessForOld(opts, targetH.ID) {
+			old = candidate
+		}
+	}
 	plan := &Plan{Target: target, Render: render}
+	if old != nil && old.ID != id {
+		plan.OldInstallID = old.ID
+	}
 	plan.Warnings = append(plan.Warnings, render.Warnings...)
 	plan.Skipped = append(plan.Skipped, render.Skipped...)
 
@@ -135,7 +154,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			if destSet[of.Path] {
 				continue
 			}
-			safe, warn, err := checkRemove(st, of, id, opts.Force)
+			safe, warn, err := checkRemove(st, of, id, plan.OldInstallID, opts.Force)
 			if err != nil {
 				return nil, err
 			}
@@ -282,6 +301,13 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 	return plan, nil
 }
 
+func sourceHarnessForOld(opts InstallOptions, target string) string {
+	if opts.OldHarness != "" {
+		return opts.OldHarness
+	}
+	return target
+}
+
 func uniqueStrings(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -362,7 +388,7 @@ func checkFileConflict(st *State, dest, id string, force bool) error {
 	return fmt.Errorf("%s already exists and is not managed by also; use --force to replace it (a backup will be kept)", dest)
 }
 
-func checkRemove(st *State, of InstalledFile, id string, force bool) (bool, string, error) {
+func checkRemove(st *State, of InstalledFile, id, oldID string, force bool) (bool, string, error) {
 	fi, err := os.Lstat(of.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -383,7 +409,7 @@ func checkRemove(st *State, of InstalledFile, id string, force bool) (bool, stri
 		}
 	}
 	owner := st.ownerOf(of.Path)
-	if owner != nil && owner.ID != id {
+	if owner != nil && owner.ID != id && owner.ID != oldID {
 		return false, fmt.Sprintf("%s is also owned by another install; left in place", of.Path), nil
 	}
 	return true, "", nil
@@ -827,6 +853,9 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	if err := t.snapshot(StatePath()); err != nil {
 		return err
 	}
+	if plan.OldInstallID != "" && plan.OldInstallID != id {
+		st.Remove(plan.OldInstallID)
+	}
 	st.Remove(id)
 	st.Installs = append(st.Installs, inst)
 	sort.Slice(st.Installs, func(i, j int) bool {
@@ -1039,6 +1068,11 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 		}
 		return true, "", t.write(e.File, out, mode)
 	case "toml-block":
+		if e.Block != "" {
+			if body, ok := tomlBlockBody(data, e.Marker); ok && strings.TrimSpace(body) != strings.TrimSpace(e.Block) {
+				return false, "", nil
+			}
+		}
 		out, found := tomlRemoveBlock(data, e.Marker)
 		if !found {
 			return false, "", nil

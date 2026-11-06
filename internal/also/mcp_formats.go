@@ -30,7 +30,7 @@ func (c mcpServersCodec) Extract(configs []string, files map[string]*SnapshotFil
 		}
 		raw, _ := doc.RawAt("mcpServers")
 		if len(raw) == 0 {
-			return map[string]MCPServer{}, nil, nil
+			continue
 		}
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
@@ -109,9 +109,23 @@ func (openCodeMCPCodec) Extract(configs []string, files map[string]*SnapshotFile
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, warnings, err
 		}
-		if _, hasServers := m["servers"]; hasServers {
-			if sm, ok := m["servers"].(map[string]any); ok {
+		legacy := true
+		if serversValue, hasServers := m["servers"]; hasServers {
+			if sm, ok := serversValue.(map[string]any); ok {
 				m = sm
+				legacy = false
+			}
+		}
+		if legacy {
+			// The legacy mcp object can also contain non-server keys such as
+			// timeout. Skip those instead of failing the whole package.
+			for name, value := range m {
+				obj, ok := value.(map[string]any)
+				if ok && (obj["command"] != nil || obj["url"] != nil || obj["httpUrl"] != nil) {
+					continue
+				}
+				warnings = append(warnings, fmt.Sprintf("opencode MCP key %q is not a server; skipped", name))
+				delete(m, name)
 			}
 		}
 		servers, w, err := mcpServersFromMap("", m)

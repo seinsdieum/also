@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -14,9 +15,19 @@ type SetRepo struct {
 	Name string
 	Cfg  SetConfig
 	Dir  string
+
+	versionOnce sync.Once
+	commits     map[string]commitInfo
+	legacyTimes map[string]time.Time
+	legacyOrder map[string]int
+	versionErr  error
 }
 
 func OpenSet(name string, cfg SetConfig, refresh bool) (*SetRepo, error) {
+	return openSet(name, cfg, refresh, false)
+}
+
+func openSet(name string, cfg SetConfig, refresh, offline bool) (*SetRepo, error) {
 	dir := cfg.Path
 	if dir == "" {
 		dir = SettingSetPath(name)
@@ -33,6 +44,9 @@ func OpenSet(name string, cfg SetConfig, refresh bool) (*SetRepo, error) {
 	if !isGitRepo(dir) {
 		if _, err := os.Stat(dir); err == nil {
 			return nil, fmt.Errorf("%s exists but is not a git repository", dir)
+		}
+		if offline {
+			return nil, fmt.Errorf("offline: no local clone for set %q at %s", name, dir)
 		}
 		if _, err := cloneOrInit(cfg.Remote, dir); err != nil {
 			return nil, fmt.Errorf("open set %q: %w", name, err)
@@ -59,9 +73,13 @@ func OpenSet(name string, cfg SetConfig, refresh bool) (*SetRepo, error) {
 }
 
 func OpenRemote(remote string, refresh bool) (*SetRepo, error) {
+	return openRemote(remote, refresh, false)
+}
+
+func openRemote(remote string, refresh, offline bool) (*SetRepo, error) {
 	dir := SetCachePath(remote)
 	cfg := SetConfig{Remote: remote, Path: dir}
-	return OpenSet("remote-"+ShortHash([]byte(remote), 6), cfg, refresh)
+	return openSet("remote-"+ShortHash([]byte(remote), 6), cfg, refresh, offline)
 }
 
 func (s *SetRepo) Refresh() error {
@@ -75,29 +93,33 @@ func (s *SetRepo) Refresh() error {
 	if dirty {
 		return fmt.Errorf("the local also clone is dirty:\n%s\nresolve it in %s", status, s.Dir)
 	}
-	return pullFF(s.Dir)
+	if err := pullFF(s.Dir); err != nil {
+		return err
+	}
+	s.invalidateVersionData()
+	return nil
+}
+
+func (s *SetRepo) versionData() (map[string]commitInfo, map[string]time.Time, map[string]int, error) {
+	s.versionOnce.Do(func() {
+		s.commits, s.versionErr = commitTimes(s.Dir)
+		if s.versionErr == nil {
+			s.legacyTimes, s.legacyOrder, s.versionErr = versionTimes(s.Dir)
+		}
+	})
+	return s.commits, s.legacyTimes, s.legacyOrder, s.versionErr
+}
+
+func (s *SetRepo) invalidateVersionData() {
+	s.versionOnce = sync.Once{}
+	s.commits = nil
+	s.legacyTimes = nil
+	s.legacyOrder = nil
+	s.versionErr = nil
 }
 
 func (s *SetRepo) PackageTreeDir(pkg string) string {
 	return filepath.Join(s.Dir, "packages", pkg)
-}
-
-func ReadPackageMeta(dir string) (PackageMeta, error) {
-	var meta PackageMeta
-	data, err := os.ReadFile(filepath.Join(dir, PackageManifestFile))
-	if err != nil {
-		return meta, err
-	}
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return meta, err
-	}
-	if meta.Schema != SchemaPkg {
-		return meta, fmt.Errorf("unsupported package schema %q", meta.Schema)
-	}
-	if !ValidName(meta.Name) {
-		return meta, fmt.Errorf("invalid package name %q", meta.Name)
-	}
-	return meta, nil
 }
 
 type VersionInfo struct {
@@ -116,26 +138,31 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := legacyVersionDirs(s.Dir, pkg)
-	if err != nil {
-		return nil, err
+	liveMeta, hasLive := readManifestAtCommit(s.Dir, pkg, "", "HEAD")
+	legacy := map[string]bool{}
+	if !hasLive {
+		// Live packages never keep legacy version directories, so scanning
+		// every origin file is wasted work for the common case.
+		legacy, err = legacyVersionDirs(s.Dir, pkg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(tags) == 0 && len(legacy) == 0 {
 		// A crash between commit and tag creation must not hide the package.
-		if meta, ok := readManifestAtCommit(s.Dir, pkg, "", "HEAD"); ok && meta.Digest != "" {
-			version := VersionFromDigest(meta.Digest)
+		if hasLive && liveMeta.Digest != "" {
+			if !validDigest(liveMeta.Digest) {
+				return nil, fmt.Errorf("package %q has a malformed digest %q", pkg, liveMeta.Digest)
+			}
+			version := VersionFromDigest(liveMeta.Digest)
 			return []VersionInfo{{
-				Version: version, Label: meta.Label, Harness: meta.SourceHarness,
-				Time: meta.CreatedAt,
+				Version: version, Label: liveMeta.Label, Harness: liveMeta.SourceHarness,
+				Time: liveMeta.CreatedAt,
 			}}, nil
 		}
 		return nil, fmt.Errorf("package %q not found in set %q", pkg, s.Name)
 	}
-	info, err := commitTimes(s.Dir)
-	if err != nil {
-		return nil, err
-	}
-	legacyTimes, legacyOrder, err := versionTimes(s.Dir)
+	info, legacyTimes, legacyOrder, err := s.versionData()
 	if err != nil {
 		return nil, err
 	}
@@ -303,18 +330,16 @@ type PushOptions struct {
 }
 
 type PushResult struct {
-	Package    string
-	Version    string
-	Digest     string
-	Label      string
-	Harness    string
-	Files      int
-	Bytes      int64
-	Existing   bool
-	Warnings   []string
-	SetCreated bool
-	Committed  bool
-	Remote     string
+	Package  string
+	Version  string
+	Digest   string
+	Label    string
+	Harness  string
+	Files    int
+	Bytes    int64
+	Existing bool
+	Warnings []string
+	Remote   string
 }
 
 func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) {
@@ -366,6 +391,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if opts.DryRun {
 		return res, nil
 	}
+	s.invalidateVersionData()
 	dirty, status, err := gitDirty(s.Dir)
 	if err != nil {
 		return nil, err
@@ -385,6 +411,9 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		if err := s.pushExistingVersion(opts.Name, version); err != nil {
 			return res, err
 		}
+		if err := s.pushVersionTags(opts.Name, version); err != nil {
+			return res, err
+		}
 		return res, nil
 	}
 
@@ -396,7 +425,6 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		if err := os.WriteFile(filepath.Join(s.Dir, SetManifestFile), data, 0o644); err != nil {
 			return nil, err
 		}
-		res.SetCreated = true
 		paths = append(paths, SetManifestFile)
 	}
 	if err := os.MkdirAll(filepath.Join(s.Dir, "packages"), 0o755); err != nil {
@@ -420,17 +448,38 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err != nil {
 		return res, err
 	}
-	res.Committed = committed
 	if err := s.createTag(opts.Name, version, "HEAD"); err != nil {
 		return res, err
 	}
+	s.invalidateVersionData()
 	if !committed {
 		res.Existing = true
 	}
 	if err := s.pushExistingVersion(opts.Name, version); err != nil {
 		return res, err
 	}
+	if err := s.pushVersionTags(opts.Name, version); err != nil {
+		return res, err
+	}
 	return res, nil
+}
+
+// pushVersionTags pushes every local version tag. This repairs tags created by
+// an earlier push or migration whose tag push failed.
+func (s *SetRepo) pushVersionTags(pkg, skip string) error {
+	tags, err := listVersionTags(s.Dir, pkg)
+	if err != nil {
+		return err
+	}
+	for version := range tags {
+		if version == skip {
+			continue
+		}
+		if err := pushTag(s.Dir, versionTagName(pkg, version)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SetRepo) pushExistingVersion(pkg, version string) error {
@@ -452,6 +501,7 @@ type Migration struct {
 // per package plus immutable version tags. Old snapshots stay readable because
 // tags point at the pre-migration commits.
 func (s *SetRepo) Migrate() ([]Migration, error) {
+	s.invalidateVersionData()
 	dirty, status, err := gitDirty(s.Dir)
 	if err != nil {
 		return nil, err
@@ -502,7 +552,10 @@ func (s *SetRepo) Migrate() ([]Migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("migrate %s@%s: %w", pkg, latest.Version, err)
 		}
-		p.Meta.CreatedAt = time.Now().UTC()
+		p.Meta.CreatedAt = times[latest.Version]
+		if p.Meta.CreatedAt.IsZero() {
+			p.Meta.CreatedAt = time.Now().UTC()
+		}
 		if err := s.removePackageTree(pkg); err != nil {
 			return nil, err
 		}
@@ -512,31 +565,26 @@ func (s *SetRepo) Migrate() ([]Migration, error) {
 		migrated = append(migrated, Migration{Package: pkg, Version: latest.Version})
 		latestTags[pkg] = latest.Version
 	}
-	if len(migrated) == 0 {
-		return nil, nil
-	}
-	if _, err := commitPaths(s.Dir, "also: migrate set to tree+tags layout", "packages"); err != nil {
-		return nil, err
-	}
-	for pkg, version := range latestTags {
-		if err := s.createTag(pkg, version, "HEAD"); err != nil {
+	if len(migrated) > 0 {
+		if _, err := commitPaths(s.Dir, "also: migrate set to tree+tags layout", "packages"); err != nil {
 			return nil, err
 		}
-	}
-	if aheadOfUpstream(s.Dir) {
-		if err := pushHead(s.Dir); err != nil {
-			return nil, err
-		}
-	}
-	for _, m := range migrated {
-		tags, err := listVersionTags(s.Dir, m.Package)
-		if err != nil {
-			return nil, err
-		}
-		for version := range tags {
-			if err := pushTag(s.Dir, versionTagName(m.Package, version)); err != nil {
+		for pkg, version := range latestTags {
+			if err := s.createTag(pkg, version, "HEAD"); err != nil {
 				return nil, err
 			}
+		}
+		s.invalidateVersionData()
+		if aheadOfUpstream(s.Dir) {
+			if err := pushHead(s.Dir); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Push all tags, including ones left local by a previous failed migration.
+	for _, pkg := range packages {
+		if err := s.pushVersionTags(pkg, ""); err != nil {
+			return nil, err
 		}
 	}
 	return migrated, nil

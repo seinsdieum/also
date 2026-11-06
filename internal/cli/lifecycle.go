@@ -495,17 +495,15 @@ ai-infra source directory, and pushes a new package version.`
 		dest := into
 		var setName string
 		var sc also.SetConfig
-		if !noPush {
+		if !noPush || setFlag != "" {
 			setName, sc, err = requireSet(cmd, cfg, setFlag, "")
 			if err != nil {
 				return err
 			}
-		} else if setFlag == "" {
-			if cfg.DefaultSet != "" {
-				if s, ok := cfg.Sets[cfg.DefaultSet]; ok {
-					sc = s
-					setName = cfg.DefaultSet
-				}
+		} else if cfg.DefaultSet != "" {
+			if s, ok := cfg.Sets[cfg.DefaultSet]; ok {
+				sc = s
+				setName = cfg.DefaultSet
 			}
 		}
 		if dest == "" {

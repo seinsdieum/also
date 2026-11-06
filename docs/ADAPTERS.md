@@ -128,7 +128,9 @@ also remove harness acme
 
 The file is validated first, then saved under `~/.also/adapters/<id>.json`
 (or `ALSO_ADAPTERS=<dir>`). A community spec cannot shadow a built-in id or
-claim an alias that is already taken.
+claim an alias that is already taken. External global paths must be relative to
+`global_base`, and `global_base` must be a directory below `$HOME`; a downloaded
+spec cannot point at unrelated files such as `~/.bashrc`.
 
 The JSON shape is:
 

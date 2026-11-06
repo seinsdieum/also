@@ -179,3 +179,19 @@ Set-репозиторий подключался по shared folder (`\\Mac\Hom
 Ограничение: в VM нет Claude/Codex/OpenCode/Qwen CLI, поэтому проверка
 «на уровне софта» для них выполнена на macOS (раздел выше). Windows-прогон
 проверяет сам `also` и его git/config/filesystem-операции.
+
+## Повторный E2E после audit-фиксов
+
+После исправлений (guard для пустого upgrade/reshape, проверка правок TOML,
+публикация legacy-тегов, защита от malformed digest, OpenCode legacy MCP,
+слоты по harness, offline, кэш версий) полный приватный прогон выполнен
+заново с пакетами `rt8-*`:
+
+1. Для каждого X собран `ref8-X-real-X`.
+2. Для всех 16 пар X→Y: установка в Y, `adopt` → `rt8-X-real-to-Y` → `push`,
+   затем установка обратно в X (`back8-X-real-from-Y`).
+3. `compare8.py` сравнил instructions, skills, commands, agents, plugins,
+   extras, hooks, MCP и permissions/statusLine.
+
+Итог: **16/16 `RESULT OK`**, `0 DIFFER` (`compare8.out`).
+`also list` на том же наборе ускорился с 7.59 s до 2.79 s.

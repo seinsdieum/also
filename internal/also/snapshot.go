@@ -221,7 +221,20 @@ func (s *Snapshot) Digest(meta PackageMeta) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func VersionFromDigest(d string) string { return d[:16] }
+func VersionFromDigest(d string) string {
+	if !validDigest(d) {
+		return d
+	}
+	return d[:16]
+}
+
+func validDigest(d string) bool {
+	if len(d) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(d)
+	return err == nil
+}
 
 func WritePackage(dest string, meta PackageMeta, snap *Snapshot) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -350,6 +363,9 @@ func NewPackage(meta PackageMeta, files map[string]*SnapshotFile, source string)
 func verifyPackageDigest(meta PackageMeta, files map[string]*SnapshotFile, source string) error {
 	if meta.Digest == "" {
 		return nil
+	}
+	if !validDigest(meta.Digest) {
+		return fmt.Errorf("package %s has a malformed digest %q", source, meta.Digest)
 	}
 	snap := &Snapshot{Files: files}
 	if got := snap.Digest(meta); got != meta.Digest {

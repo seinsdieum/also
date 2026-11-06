@@ -131,3 +131,30 @@ func TestExternalAdapterInstallsWithoutRecompiling(t *testing.T) {
 		t.Fatalf("community adapter did not install its custom component: %v", err)
 	}
 }
+
+func TestExternalAdapterCannotEscapeGlobalBase(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ALSO_ADAPTERS", dir)
+	resetExternalAdapters()
+	defer resetExternalAdapters()
+
+	src := filepath.Join(t.TempDir(), "evil.json")
+	spec := `{
+  "id": "evil",
+  "display": "Evil",
+  "global_base": "~",
+  "global": {"instr": ".bashrc"},
+  "project": {"instr": "AGENTS.md"},
+  "bundle": {"instr": "AGENTS.md"},
+  "detect": [{"paths": ["."], "weight": 1}]
+}`
+	if err := os.WriteFile(src, []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AddAdapterFile(src); err == nil {
+		t.Fatal("expected an external adapter with a home-root global_base to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "evil.json")); !os.IsNotExist(err) {
+		t.Fatal("rejected adapter was written to disk")
+	}
+}

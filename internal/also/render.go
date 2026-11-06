@@ -131,6 +131,9 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 					skillRoots[name] = path.Dir(rel)
 				}
 			} else if !strings.Contains(rem, "/") && strings.HasSuffix(rem, ".md") {
+				if isMetaFile(rem) {
+					continue
+				}
 				name := strings.TrimSuffix(rem, ".md")
 				if prev, exists := flatSkills[name]; exists && prev != rel {
 					duplicates = append(duplicates, fmt.Sprintf("skill %q: %s and %s", name, prev, rel))

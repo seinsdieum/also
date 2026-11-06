@@ -39,13 +39,13 @@ type InstallRequest struct {
 
 func ResolveSetForInstall(cfg *Config, setName, remote string, offline bool) (*SetRepo, error) {
 	if remote != "" {
-		return OpenRemote(remote, !offline)
+		return openRemote(remote, !offline, offline)
 	}
 	name, sc, err := cfg.ResolveSet(setName)
 	if err != nil {
 		return nil, err
 	}
-	return OpenSet(name, sc, !offline)
+	return openSet(name, sc, !offline, offline)
 }
 
 func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*Plan, *SetRepo, error) {
@@ -85,7 +85,7 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	if err != nil {
 		return nil, set, err
 	}
-	if len(plan.NewFiles) == 0 && plan.Block == nil && len(plan.Edits) == 0 {
+	if !planHasChanges(plan) {
 		if len(req.Parts) > 0 {
 			var available []string
 			if source, ok := ResolveHarness(pkg.Meta.SourceHarness); ok {
@@ -100,6 +100,10 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 		return nil, set, err
 	}
 	return plan, set, nil
+}
+
+func planHasChanges(plan *Plan) bool {
+	return len(plan.NewFiles) > 0 || plan.Block != nil || len(plan.Edits) > 0
 }
 
 type UpgradeResult struct {
@@ -152,6 +156,11 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
+			out = append(out, res)
+			continue
+		}
+		if !planHasChanges(plan) {
+			res.Err = fmt.Errorf("version %s has no installable components for %s; kept the previous install", latest.Version, in.Harness)
 			out = append(out, res)
 			continue
 		}
@@ -306,10 +315,15 @@ func Reshape(cfg *Config, st *State, to string, pkgs []string, force bool) ([]Re
 			continue
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
-		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
+		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, OldHarness: in.Harness}
 		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
+			out = append(out, res)
+			continue
+		}
+		if !planHasChanges(plan) {
+			res.Err = fmt.Errorf("package has no installable components for %s; kept the previous install", target.Display)
 			out = append(out, res)
 			continue
 		}

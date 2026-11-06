@@ -89,17 +89,6 @@ func NewSelection(parts []string) (*Selection, error) {
 
 func (s *Selection) IsAll() bool { return s == nil || s.all }
 
-func (s *Selection) HasKind(kind string) bool {
-	if s == nil || s.all {
-		return true
-	}
-	canon, ok := CanonicalComponentKind(kind)
-	if !ok {
-		canon = kind
-	}
-	return s.kinds[canon]
-}
-
 // Wants reports whether a kind was selected at all, either whole or by name.
 func (s *Selection) Wants(kind string) bool {
 	if s == nil || s.all {

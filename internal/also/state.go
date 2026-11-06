@@ -59,14 +59,6 @@ type Install struct {
 	Skipped       []string        `json:"skipped,omitempty"`
 }
 
-func (i Install) Display() string {
-	v := ShortHash([]byte(i.Version), 12)
-	if i.Label != "" {
-		v += " (" + i.Label + ")"
-	}
-	return fmt.Sprintf("%s/%s@%s", i.Set, i.Package, v)
-}
-
 type State struct {
 	Schema   string    `json:"schema"`
 	Installs []Install `json:"installs"`
@@ -146,8 +138,19 @@ func (s *State) Remove(id string) {
 	s.Installs = out
 }
 
-// InstallID is stable across upgrades and reshapes of the same installation slot.
-func InstallID(set, pkg, scope, project string) string {
+// InstallID is stable across upgrades of one package into one harness. The
+// harness is part of the slot so the same package can live in two harnesses.
+func InstallID(set, pkg, harness, scope, project string) string {
+	if scope == "global" {
+		project = ""
+	}
+	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + harness + "\x00" + scope + "\x00" + project))
+	return hex.EncodeToString(sum[:8])
+}
+
+// legacyInstallID is the pre-harness slot id, kept so upgrades can adopt state
+// written by older also versions.
+func legacyInstallID(set, pkg, scope, project string) string {
 	if scope == "global" {
 		project = ""
 	}

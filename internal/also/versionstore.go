@@ -49,25 +49,26 @@ func (s *SetRepo) tagCommit(pkg, version string) (string, bool) {
 
 func listVersionTags(dir, pkg string) (map[string]string, error) {
 	prefix := "refs/tags/" + versionTagName(pkg, "")
-	out, err := runGit(dir, "for-each-ref", "--format=%(refname)", prefix)
+	out, err := runGit(dir, "for-each-ref", "--format=%(refname) %(objectname) %(*objectname)", prefix)
 	if err != nil {
 		return nil, err
 	}
 	tags := map[string]string{}
-	for _, ref := range strings.Split(out, "\n") {
-		ref = strings.TrimSpace(ref)
-		if ref == "" {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
+		ref := fields[0]
 		version := strings.TrimPrefix(ref, prefix)
 		if !validVersion(version) {
 			continue
 		}
-		commit, err := runGit(dir, "rev-parse", ref+"^{commit}")
-		if err != nil {
-			continue
+		commit := fields[1]
+		if len(fields) > 2 && fields[2] != "" {
+			commit = fields[2]
 		}
-		tags[version] = strings.TrimSpace(commit)
+		tags[version] = commit
 	}
 	return tags, nil
 }
@@ -104,10 +105,11 @@ func commitTimes(dir string) (map[string]commitInfo, error) {
 
 func readManifestAtCommit(dir, pkg, version, commit string) (PackageMeta, bool) {
 	var meta PackageMeta
-	for _, p := range []string{
-		"packages/" + pkg + "/" + PackageManifestFile,
-		"packages/" + pkg + "/" + version + "/" + PackageManifestFile,
-	} {
+	paths := []string{"packages/" + pkg + "/" + PackageManifestFile}
+	if version != "" {
+		paths = append(paths, "packages/"+pkg+"/"+version+"/"+PackageManifestFile)
+	}
+	for _, p := range paths {
 		data, err := runGitBytes(dir, "show", commit+":"+p)
 		if err != nil {
 			continue
@@ -177,6 +179,9 @@ func (s *SetRepo) ensureTagsForCurrentTree(pkg string) error {
 
 func (s *SetRepo) createTag(pkg, version, rev string) error {
 	_, err := runGit(s.Dir, "update-ref", versionTagRef(pkg, version), rev)
+	if err == nil {
+		s.invalidateVersionData()
+	}
 	return err
 }
 
@@ -194,6 +199,9 @@ func (s *SetRepo) createTagAt(pkg, version, rev string, created time.Time) error
 	}
 	args := gitCommitArgs(s.Dir, "tag", "-f", "-a", "-m", string(msg), versionTagName(pkg, version), rev)
 	_, err = runGit(s.Dir, args...)
+	if err == nil {
+		s.invalidateVersionData()
+	}
 	return err
 }
 

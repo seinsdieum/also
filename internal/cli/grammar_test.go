@@ -12,6 +12,7 @@ func testConfig() *also.Config {
 		Schema: also.SchemaConfig,
 		Sets: map[string]also.SetConfig{
 			"personal": {Remote: "git@example.com:me/infra.git"},
+			"infra":    {Remote: "git@example.com:me/other.git"},
 		},
 	}
 }
@@ -38,6 +39,13 @@ func TestParsePkgRefNamespaceAndVersion(t *testing.T) {
 	}
 	if ref.Namespace != "" || ref.Package != "infra" || ref.Version != "v1" {
 		t.Fatalf("unexpected ref: %+v", ref)
+	}
+	ref, err = parsePkgRef("infra@main", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Namespace != "infra" || ref.Package != "main" || ref.Version != "" {
+		t.Fatalf("unexpected namespace ref: %+v", ref)
 	}
 }
 
