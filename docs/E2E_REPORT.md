@@ -212,3 +212,17 @@ Set-репозиторий подключался по shared folder (`\\Mac\Hom
 
 Итог: **16/16 `RESULT OK`**, `0 DIFF` (`compare9.out`). Это подтверждает, что
 удаление локального source-каталога не изменило round-trip.
+
+## Real harness CLI smoke
+
+`make smoke` (`test/e2e/harness-smoke.sh`) собирает бандл с инструкциями,
+skill и MCP-сервером, ставит его во временные проекты и проверяет реальными
+CLI без запуска моделей:
+
+- Claude Code: `claude mcp list` видит `smoke`;
+- OpenCode: `opencode debug config` (или JSON, если сервис занят) видит `smoke`;
+- Codex: `codex mcp list` парсит сгенерированный TOML (через изолированный
+  `CODEX_HOME`; project-layer Codex читает только в trusted-проектах);
+- Qwen: `qwen mcp list` видит `smoke`.
+
+Локальный прогон 2026-11-06: `OK claude`, `OK opencode`, `OK codex`, `OK qwen`.

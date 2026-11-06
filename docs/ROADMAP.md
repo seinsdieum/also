@@ -155,7 +155,8 @@ Acceptance criteria:
 - [x] положить 4×4 E2E в `test/e2e` и запускать в CI
       (синтетическая матрица instructions+skill, локальные bare remotes);
 - [x] Windows CI: пути, CRLF, exec-bit, lock, имена пакетов;
-- [ ] отдельный smoke с реальными harness CLI (без реальных моделей).
+- [x] отдельный smoke с реальными harness CLI (без реальных моделей):
+      `make smoke` → claude/opencode/codex/qwen OK.
 
 ### V1-4. Trust/security
 
@@ -197,8 +198,10 @@ Acceptance criteria:
    migration-тесты и интерактивное подтверждение.
 5. **M4: diagnostics + CLI contract** — ядро сделано: doctor/verify, JSON,
    exit codes, command reference. Остались golden-тесты и recovery-команды.
-6. **M5: 1.0 RC** — full CI matrix, E2E, release candidate, CHANGELOG.
-7. **M6: 1.0 release** — signed binaries, packages, tag `v1.0.0`.
+6. **M5: 1.0 RC** — сделано, кроме тега: CI matrix, E2E, smoke, CHANGELOG,
+   release workflow с checksums и provenance готовы.
+7. **M6: 1.0 release** — остались внешние шаги: пакетный менеджер, реальный
+   release (checksums/attestation) и tag `v1.0.0`.
 
 ## После 1.0
 
