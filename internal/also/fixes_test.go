@@ -300,3 +300,43 @@ func TestPushRestoresCloneWhenCommitFails(t *testing.T) {
 		t.Fatalf("failed push changed versions: %+v %v", versions, err)
 	}
 }
+
+func TestLegacyInstallSlotIsMigratedOnReinstall(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req := InstallRequest{Package: "p", Harness: "opencode", Scope: "project", Project: project, WithConfig: true}
+	if _, _, err := InstallPackage(cfg, req, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Installs) != 1 {
+		t.Fatalf("unexpected installs: %+v", st.Installs)
+	}
+	st.Installs[0].ID = legacyInstallID("personal", "p", "project", project)
+	if err := SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, req, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err = LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := InstallID("personal", "p", "opencode", "project", project)
+	if len(st.Installs) != 1 || st.Installs[0].ID != want {
+		t.Fatalf("legacy slot was not migrated: %+v (want %s)", st.Installs, want)
+	}
+}
