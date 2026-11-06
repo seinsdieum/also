@@ -226,3 +226,10 @@ CLI без запуска моделей:
 - Qwen: `qwen mcp list` видит `smoke`.
 
 Локальный прогон 2026-11-06: `OK claude`, `OK opencode`, `OK codex`, `OK qwen`.
+
+## Interactive setup
+
+`also setup` проверен на пустом `ALSO_HOME` через pty: harness, scope, имя и
+URL namespace, отказ от второго namespace, default namespace и пустой starter
+package. Команда завершилась с кодом 0 и записала `also.config/v2` с одним
+namespace; `~/.also/sets` не создавался.
