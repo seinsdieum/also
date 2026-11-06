@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 
 	"github.com/spf13/cobra"
 )
@@ -79,7 +79,7 @@ func newListCmd() *cobra.Command {
 		}
 		printWarnings("unreadable packages", readErrs)
 		if len(rows) == 0 {
-			fmt.Printf("set %s is empty (remote: %s)\n", name, sc.Remote)
+			fmt.Printf("namespace %s is empty (remote: %s)\n", name, sc.Remote)
 			return nil
 		}
 		if versions {
@@ -119,7 +119,7 @@ func newListCmd() *cobra.Command {
 		}
 		return w.Flush()
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set name")
+	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
 	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before listing")
 	c.Flags().BoolVar(&versions, "versions", false, "show every version")
@@ -241,7 +241,7 @@ func newShowCmd() *cobra.Command {
 		if v.Label != "" {
 			fmt.Printf("label:    %s\n", v.Label)
 		}
-		fmt.Printf("set:      %s (%s)\n", name, sc.Remote)
+		fmt.Printf("namespace: %s (%s)\n", name, sc.Remote)
 		fmt.Printf("harness:  %s\n", pkg.Meta.SourceHarness)
 		fmt.Printf("digest:   %s\n", pkg.Meta.Digest)
 		fmt.Printf("files:    %d (%s)\n", len(pkg.Files), humanBytes(pkg.Files))
@@ -290,7 +290,7 @@ func newShowCmd() *cobra.Command {
 		fmt.Printf("versions: %d\n", len(allVersions))
 		return nil
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set name")
+	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
 	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before reading")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
@@ -338,7 +338,7 @@ func newPushCmd() *cobra.Command {
 	)
 	c := newCmd("push <bundle-dir>", "Encode a bundle and push a new package version")
 	c.Long = `Encodes a hand-written harness bundle into the universal also package format,
-commits it to the configured set repository, and pushes it. Re-running push with
+commits it to the configured namespace, and pushes it. Re-running push with
 unchanged content is a no-op.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		args, forHarness, err := parseTrailingFor(args)
@@ -402,7 +402,7 @@ unchanged content is a no-op.`
 				return nil
 			}
 			if res.Existing {
-				fmt.Printf("no changes: %s@%s already exists in set %s\n", res.Package, short(res.Version), setName)
+				fmt.Printf("no changes: %s@%s already exists in namespace %s\n", res.Package, short(res.Version), setName)
 				printWarnings("warnings", res.Warnings)
 				return nil
 			}
@@ -412,7 +412,7 @@ unchanged content is a no-op.`
 			}
 			fmt.Printf(" [%s]\n", res.Harness)
 			fmt.Printf("files: %d (%s)\n", res.Files, also.FormatBytes(res.Bytes))
-			fmt.Printf("set:   %s\n", setName)
+			fmt.Printf("namespace: %s\n", setName)
 			printWarnings("warnings", res.Warnings)
 			return nil
 		})
@@ -422,7 +422,7 @@ unchanged content is a no-op.`
 	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness (claude, opencode, codex, qwen); auto-detected by default")
 	c.Flags().StringVar(&label, "label", "", "human version label, e.g. v1.2")
 	c.Flags().StringVarP(&message, "message", "m", "", "git commit message")
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set name")
+	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pushed")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")

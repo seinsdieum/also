@@ -10,25 +10,40 @@ import (
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// ValidName reports whether a set or package name is safe to use as a path segment.
+// ValidName reports whether a namespace or package name is safe to use as a path segment.
 func ValidName(name string) bool { return validName.MatchString(name) }
 
-type SetConfig struct {
+// SchemaConfigV1 is accepted only so old configs can be migrated in place.
+const SchemaConfigV1 = "also.config/v1"
+
+// NamespaceConfig is a remote git repository that stores also packages. The
+// local clone is an internal cache, never part of the user-facing model.
+type NamespaceConfig struct {
 	Remote string `json:"remote"`
-	Path   string `json:"path"`
-	Source string `json:"source,omitempty"`
 }
 
 type Config struct {
-	Schema         string               `json:"schema"`
-	DefaultSet     string               `json:"default_set,omitempty"`
-	DefaultHarness string               `json:"default_harness,omitempty"`
-	DefaultScope   string               `json:"default_scope,omitempty"`
-	Sets           map[string]SetConfig `json:"sets"`
+	Schema           string                     `json:"schema"`
+	DefaultNamespace string                     `json:"default_namespace,omitempty"`
+	DefaultHarness   string                     `json:"default_harness,omitempty"`
+	DefaultScope     string                     `json:"default_scope,omitempty"`
+	Namespaces       map[string]NamespaceConfig `json:"namespaces"`
+}
+
+// configFile also accepts the v1 layout so the switch to remote-only
+// namespaces does not require the user to edit config by hand.
+type configFile struct {
+	Schema           string                     `json:"schema"`
+	DefaultSet       string                     `json:"default_set,omitempty"`
+	DefaultNamespace string                     `json:"default_namespace,omitempty"`
+	DefaultHarness   string                     `json:"default_harness,omitempty"`
+	DefaultScope     string                     `json:"default_scope,omitempty"`
+	Sets             map[string]NamespaceConfig `json:"sets"`
+	Namespaces       map[string]NamespaceConfig `json:"namespaces"`
 }
 
 func defaultConfig() *Config {
-	return &Config{Schema: SchemaConfig, DefaultScope: "project", Sets: map[string]SetConfig{}}
+	return &Config{Schema: SchemaConfig, DefaultScope: "project", Namespaces: map[string]NamespaceConfig{}}
 }
 
 func LoadConfig() (*Config, error) {
@@ -40,22 +55,40 @@ func LoadConfig() (*Config, error) {
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	if err := json.Unmarshal(data, cfg); err != nil {
+	var raw configFile
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", ConfigPath(), err)
 	}
-	if cfg.Schema != SchemaConfig {
-		return nil, fmt.Errorf("unsupported config schema %q in %s", cfg.Schema, ConfigPath())
+	if raw.Schema != SchemaConfig && raw.Schema != SchemaConfigV1 {
+		return nil, fmt.Errorf("unsupported config schema %q in %s", raw.Schema, ConfigPath())
 	}
-	if cfg.Sets == nil {
-		cfg.Sets = map[string]SetConfig{}
+	cfg.DefaultNamespace = raw.DefaultNamespace
+	if cfg.DefaultNamespace == "" {
+		cfg.DefaultNamespace = raw.DefaultSet
+	}
+	cfg.DefaultHarness = raw.DefaultHarness
+	cfg.DefaultScope = raw.DefaultScope
+	if raw.Namespaces != nil {
+		cfg.Namespaces = raw.Namespaces
+	} else if raw.Sets != nil {
+		cfg.Namespaces = raw.Sets
+	}
+	if cfg.Namespaces == nil {
+		cfg.Namespaces = map[string]NamespaceConfig{}
 	}
 	if cfg.DefaultScope == "" {
 		cfg.DefaultScope = "project"
+	}
+	if raw.Schema == SchemaConfigV1 {
+		if err := SaveConfig(cfg); err != nil {
+			return nil, fmt.Errorf("migrate config to %s: %w", SchemaConfig, err)
+		}
 	}
 	return cfg, nil
 }
 
 func SaveConfig(cfg *Config) error {
+	cfg.Schema = SchemaConfig
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -64,33 +97,33 @@ func SaveConfig(cfg *Config) error {
 	return atomicWrite(ConfigPath(), data, 0o600)
 }
 
-func (c *Config) SetNames() []string {
-	names := make([]string, 0, len(c.Sets))
-	for name := range c.Sets {
+func (c *Config) NamespaceNames() []string {
+	names := make([]string, 0, len(c.Namespaces))
+	for name := range c.Namespaces {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
 }
 
-func (c *Config) ResolveSet(name string) (string, SetConfig, error) {
+func (c *Config) ResolveSet(name string) (string, NamespaceConfig, error) {
 	if name == "" {
-		name = c.DefaultSet
+		name = c.DefaultNamespace
 	}
 	if name == "" {
-		if len(c.Sets) == 1 {
-			for n, s := range c.Sets {
+		if len(c.Namespaces) == 1 {
+			for n, s := range c.Namespaces {
 				return n, s, nil
 			}
 		}
-		if len(c.Sets) == 0 {
-			return "", SetConfig{}, fmt.Errorf("no namespace configured; add one with: also set <name> --remote <git-url>")
+		if len(c.Namespaces) == 0 {
+			return "", NamespaceConfig{}, fmt.Errorf("no namespace configured; add one with: also connect <name> <git-url>")
 		}
-		return "", SetConfig{}, fmt.Errorf("no active namespace; run: also use <namespace> (configured: %v)", c.SetNames())
+		return "", NamespaceConfig{}, fmt.Errorf("no active namespace; run: also use <namespace> (configured: %v)", c.NamespaceNames())
 	}
-	s, ok := c.Sets[name]
+	s, ok := c.Namespaces[name]
 	if !ok {
-		return "", SetConfig{}, fmt.Errorf("unknown set %q; configured: %v", name, c.SetNames())
+		return "", NamespaceConfig{}, fmt.Errorf("unknown namespace %q; configured: %v", name, c.NamespaceNames())
 	}
 	return name, s, nil
 }

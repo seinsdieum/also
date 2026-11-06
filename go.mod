@@ -1,4 +1,4 @@
-module also
+module github.com/seinsdieum/also
 
 go 1.23
 

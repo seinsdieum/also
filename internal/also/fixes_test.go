@@ -340,3 +340,32 @@ func TestLegacyInstallSlotIsMigratedOnReinstall(t *testing.T) {
 		t.Fatalf("legacy slot was not migrated: %+v (want %s)", st.Installs, want)
 	}
 }
+
+func TestAdoptPublishesWithoutLocalSource(t *testing.T) {
+	tmp, remote, _, cfg := setup(t)
+	project := filepath.Join(tmp, "project")
+	writeFile(t, filepath.Join(project, "CLAUDE.md"), "live rules\n")
+	writeFile(t, filepath.Join(project, ".claude", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: d\n---\nbody\n")
+	dest := t.TempDir()
+	res, err := ExtractBundle(AdoptOptions{Name: "captured", Project: project, Harness: "claude", Dest: dest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := openRepo(t, cfg)
+	pushed, err := repo.Push(res.BundleDir, PushOptions{Name: "captured"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushed.Version == "" {
+		t.Fatalf("adopt did not publish a version: %+v", pushed)
+	}
+	if out, err := runGit(remote, "tag", "--list", versionTagName("captured", pushed.Version)); err != nil || strings.TrimSpace(out) == "" {
+		t.Fatalf("version tag was not pushed: %q %v", out, err)
+	}
+	if _, err := os.Stat(SetCachePath(cfg.Namespaces["personal"].Remote)); err != nil {
+		t.Fatalf("cache clone is missing: %v", err)
+	}
+	if strings.Contains(SetCachePath(cfg.Namespaces["personal"].Remote), filepath.Join("also", "sets")) {
+		t.Fatalf("namespace cache still lives under sets/: %s", SetCachePath(cfg.Namespaces["personal"].Remote))
+	}
+}

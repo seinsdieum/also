@@ -182,7 +182,7 @@ func upgradeRepo(cfg *Config, in *Install, cache map[string]*SetRepo) (*SetRepo,
 	}
 	var r *SetRepo
 	var err error
-	if sc, ok := cfg.Sets[in.Set]; ok && sc.Remote == in.SetRemote {
+	if sc, ok := cfg.Namespaces[in.Set]; ok && sc.Remote == in.SetRemote {
 		r, err = OpenSet(in.Set, sc, true)
 	} else {
 		r, err = OpenRemote(in.SetRemote, true)

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"also/internal/cli"
+	"github.com/seinsdieum/also/internal/cli"
 )
 
 func main() {

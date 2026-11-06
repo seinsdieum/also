@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 )
 
 // This file holds the natural-language grammar used by the CLI. Flags remain
@@ -33,7 +33,7 @@ func (r pkgRef) String() string {
 
 // parsePkgRef accepts package, package@version, namespace@package and
 // namespace@package@version. A two-part token is a namespace only when the
-// left side names a configured set.
+// left side names a configured namespace.
 func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
 	tok = strings.TrimSpace(tok)
 	if tok == "" {
@@ -46,7 +46,7 @@ func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
 		ref.Package = parts[0]
 	case 2:
 		if cfg != nil {
-			if _, ok := cfg.Sets[parts[0]]; ok && !looksLikeVersion(parts[1]) {
+			if _, ok := cfg.Namespaces[parts[0]]; ok && !looksLikeVersion(parts[1]) {
 				ref.Namespace, ref.Package = parts[0], parts[1]
 				break
 			}
@@ -151,7 +151,7 @@ func parseInstallArgs(args []string, cfg *also.Config) (installSpec, error) {
 		// "install code-review from personal" is the namespace form unless the
 		// left side is a component kind.
 		if i == 1 && cfg != nil {
-			if _, isSet := cfg.Sets[args[i+1]]; isSet {
+			if _, isSet := cfg.Namespaces[args[i+1]]; isSet {
 				if _, isKind := also.CanonicalComponentKind(args[0]); !isKind {
 					ref, err := parsePkgRef(args[0], cfg)
 					if err != nil {

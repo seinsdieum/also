@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 
 	"github.com/spf13/cobra"
 )
@@ -46,7 +46,9 @@ func NewRoot() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		newVersionCmd(),
+		newSetupCmd(),
 		newUseCmd(),
+		newConnectCmd(),
 		newSetCmd(),
 		newConfigCmd(),
 		newAddCmd(),
@@ -70,14 +72,16 @@ func newVersionCmd() *cobra.Command {
 	c := newCmd("version", "Print the also version")
 	c.Run = func(cmd *cobra.Command, args []string) {
 		fmt.Printf("also %s\n", also.Version)
+		fmt.Printf("commit: %s\n", also.Commit)
+		fmt.Printf("built:  %s\n", also.BuildDate)
 	}
 	return c
 }
 
-func requireSet(cmd *cobra.Command, cfg *also.Config, setFlag, remote string) (string, also.SetConfig, error) {
+func requireSet(cmd *cobra.Command, cfg *also.Config, setFlag, remote string) (string, also.NamespaceConfig, error) {
 	if remote != "" {
 		name := "remote-" + also.ShortHash([]byte(remote), 6)
-		return name, also.SetConfig{Remote: remote, Path: also.SetCachePath(remote)}, nil
+		return name, also.NamespaceConfig{Remote: remote}, nil
 	}
 	return cfg.ResolveSet(setFlag)
 }
@@ -144,150 +148,157 @@ func newTabWriter() *tabwriter.Writer {
 	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 }
 
-func newSetCmd() *cobra.Command {
+func newConnectCmd() *cobra.Command {
 	var (
-		remote  string
-		source  string
 		def     bool
 		force   bool
 		migrate bool
 	)
-	c := newCmd("set [name]", "Configure a remote set and its local clone")
-	c.Long = `Attach a git repository that stores also packages. The remote repository
-must already exist. The local clone lives under ~/.also/sets/<name>.
+	c := newCmd("connect <name> <git-url>", "Connect a remote namespace")
+	c.Long = `Connect a git repository that stores also packages. The namespace is just a
+name plus a remote URL; the local clone is an internal cache. The repository
+must already exist and be reachable.
 
-A set can point at a local directory of hand-written bundles with --source;
-it is used by 'also adopt' to write the extracted bundle back.`
+Without arguments, list connected namespaces.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
 		}
 		if len(args) == 0 {
-			if len(cfg.Sets) == 0 {
-				fmt.Println("no sets configured; run: also set <name> --remote <git-url>")
-				return nil
-			}
-			w := newTabWriter()
-			fmt.Fprintf(w, "NAME\tREMOTE\tSOURCE\tDEFAULT\n")
-			for _, name := range cfg.SetNames() {
-				s := cfg.Sets[name]
-				mark := ""
-				if cfg.DefaultSet == name {
-					mark = "*"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, s.Remote, orDash(s.Source), mark)
-			}
-			return w.Flush()
+			return listNamespaces(cfg)
 		}
-		if len(args) > 1 {
-			return fmt.Errorf("expected one set name")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: also connect <name> <git-url>")
 		}
-		name := args[0]
-		if !also.ValidName(name) {
-			return fmt.Errorf("invalid set name %q; use lowercase letters, digits, '.', '_' or '-'", name)
-		}
-		if migrate {
-			existing, ok := cfg.Sets[name]
-			if !ok {
-				return fmt.Errorf("unknown set %q", name)
-			}
-			return withLock(func() error {
-				repo, err := also.OpenSet(name, existing, true)
-				if err != nil {
-					return err
-				}
-				migrated, err := repo.Migrate()
-				if err != nil {
-					return err
-				}
-				if len(migrated) == 0 {
-					fmt.Printf("set %s already uses the tree+tags layout\n", name)
-					return nil
-				}
-				for _, m := range migrated {
-					fmt.Printf("migrated %s@%s\n", m.Package, m.Version)
-				}
-				return nil
-			})
-		}
-		if source != "" {
-			abs, err := also.AbsPath(source)
-			if err != nil {
-				return err
-			}
-			if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-				return fmt.Errorf("source directory does not exist: %s", abs)
-			}
-			source = abs
-		}
-		existing, exists := cfg.Sets[name]
-		if exists && remote == "" {
-			// Show the set; optionally update the source.
-			changed := false
-			if source != "" {
-				existing.Source = source
-				cfg.Sets[name] = existing
-				changed = true
-			}
-			if def {
-				cfg.DefaultSet = name
-				changed = true
-			}
-			if changed {
-				if err := also.SaveConfig(cfg); err != nil {
-					return err
-				}
-			}
-			fmt.Printf("set %s\n  remote: %s\n  clone:  %s\n  source: %s\n", name, existing.Remote, existing.Path, orDash(existing.Source))
-			return nil
-		}
-		if remote == "" {
-			return fmt.Errorf("--remote <git-url> is required for a new set")
-		}
-		return withLock(func() error {
-			sc := also.SetConfig{Remote: remote, Path: also.SettingSetPath(name), Source: source}
-			if exists {
-				if existing.Remote != remote && !force {
-					return fmt.Errorf("set %q already points at %s; pass --force to replace the local clone", name, existing.Remote)
-				}
-				if existing.Remote != remote {
-					fmt.Fprintf(os.Stderr, "warning: replacing local clone %s (unpushed commits will be lost)\n", existing.Path)
-					if err := os.RemoveAll(existing.Path); err != nil {
-						return err
-					}
-				}
-				sc.Source = firstNonEmpty(source, existing.Source)
-				sc.Path = existing.Path
-				if sc.Path == "" {
-					sc.Path = also.SettingSetPath(name)
-				}
-			}
-			repo, err := also.OpenSet(name, sc, false)
-			if err != nil {
-				return err
-			}
-			cfg.Sets[name] = also.SetConfig{Remote: remote, Path: repo.Dir, Source: sc.Source}
-			if def || cfg.DefaultSet == "" {
-				cfg.DefaultSet = name
-			}
-			if err := also.SaveConfig(cfg); err != nil {
-				return err
-			}
-			fmt.Printf("set %s -> %s\n", name, remote)
-			fmt.Printf("clone:  %s\n", repo.Dir)
-			if sc.Source != "" {
-				fmt.Printf("source: %s\n", sc.Source)
-			}
-			return nil
-		})
+		return connectNamespace(cfg, args[0], args[1], def, force, migrate)
 	}
-	c.Flags().StringVar(&remote, "remote", "", "git URL of the remote repository")
-	c.Flags().StringVar(&source, "source", "", "local directory containing hand-written bundles")
-	c.Flags().BoolVar(&def, "default", false, "make this the default set")
-	c.Flags().BoolVar(&force, "force", false, "replace the local clone when the remote changes")
+	c.Flags().BoolVar(&def, "default", false, "make this the default namespace")
+	c.Flags().BoolVar(&force, "force", false, "replace the remote URL of an existing namespace")
 	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
 	return c
+}
+
+// newSetCmd is the older spelling kept for scripts.
+func newSetCmd() *cobra.Command {
+	var (
+		remote  string
+		def     bool
+		force   bool
+		migrate bool
+	)
+	c := newCmd("set [name]", "Alias for connect (remote namespace)")
+	c.Long = `Attach a git repository that stores also packages. The remote repository
+must already exist. Prefer: also connect <name> <git-url>.`
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		cfg, err := also.LoadConfig()
+		if err != nil {
+			return err
+		}
+		if len(args) == 0 {
+			return listNamespaces(cfg)
+		}
+		if len(args) != 1 {
+			return fmt.Errorf("expected one namespace name")
+		}
+		name := args[0]
+		if migrate {
+			existing, ok := cfg.Namespaces[name]
+			if !ok {
+				return fmt.Errorf("unknown namespace %q", name)
+			}
+			return withLock(func() error { return migrateNamespace(name, existing) })
+		}
+		if remote == "" {
+			existing, ok := cfg.Namespaces[name]
+			if !ok {
+				return fmt.Errorf("--remote <git-url> is required for a new namespace")
+			}
+			if def && cfg.DefaultNamespace != name {
+				cfg.DefaultNamespace = name
+				return withLock(func() error { return also.SaveConfig(cfg) })
+			}
+			fmt.Printf("%s  %s\n", name, existing.Remote)
+			return nil
+		}
+		return connectNamespace(cfg, name, remote, def, force, false)
+	}
+	c.Flags().StringVar(&remote, "remote", "", "git URL of the remote repository")
+	c.Flags().BoolVar(&def, "default", false, "make this the default namespace")
+	c.Flags().BoolVar(&force, "force", false, "replace the remote URL of an existing namespace")
+	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
+	return c
+}
+
+func listNamespaces(cfg *also.Config) error {
+	if len(cfg.Namespaces) == 0 {
+		fmt.Println("no namespaces configured; run: also connect <name> <git-url>")
+		return nil
+	}
+	w := newTabWriter()
+	fmt.Fprintf(w, "NAMESPACE\tREMOTE\tDEFAULT\n")
+	for _, name := range cfg.NamespaceNames() {
+		mark := ""
+		if cfg.DefaultNamespace == name {
+			mark = "*"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", name, cfg.Namespaces[name].Remote, mark)
+	}
+	return w.Flush()
+}
+
+func connectNamespace(cfg *also.Config, name, remote string, def, force, migrate bool) error {
+	if !also.ValidName(name) {
+		return fmt.Errorf("invalid namespace name %q; use lowercase letters, digits, '.', '_' or '-'", name)
+	}
+	existing, exists := cfg.Namespaces[name]
+	if exists && existing.Remote != remote && !force {
+		return fmt.Errorf("namespace %q already points at %s; pass --force to replace it", name, existing.Remote)
+	}
+	sc := also.NamespaceConfig{Remote: remote}
+	return withLock(func() error {
+		repo, err := also.OpenSet(name, sc, false)
+		if err != nil {
+			return err
+		}
+		cfg.Namespaces[name] = sc
+		if def || cfg.DefaultNamespace == "" {
+			cfg.DefaultNamespace = name
+		}
+		if err := also.SaveConfig(cfg); err != nil {
+			return err
+		}
+		if migrate {
+			if err := migrateNamespace(name, sc); err != nil {
+				return err
+			}
+		}
+		fmt.Printf("connected %s -> %s\n", name, remote)
+		fmt.Printf("cache: %s\n", repo.Dir)
+		if cfg.DefaultNamespace == name {
+			fmt.Printf("default namespace: %s\n", name)
+		}
+		return nil
+	})
+}
+
+func migrateNamespace(name string, sc also.NamespaceConfig) error {
+	repo, err := also.OpenSet(name, sc, true)
+	if err != nil {
+		return err
+	}
+	migrated, err := repo.Migrate()
+	if err != nil {
+		return err
+	}
+	if len(migrated) == 0 {
+		fmt.Printf("namespace %s already uses the tree+tags layout\n", name)
+		return nil
+	}
+	for _, m := range migrated {
+		fmt.Printf("migrated %s@%s\n", m.Package, m.Version)
+	}
+	return nil
 }
 
 func newConfigCmd() *cobra.Command {
@@ -300,7 +311,7 @@ func newConfigCmd() *cobra.Command {
 		if len(args) == 0 {
 			fmt.Printf("config: %s\n", also.ConfigPath())
 			fmt.Printf("state:  %s\n", also.StatePath())
-			fmt.Printf("default_set:     %s\n", orDash(cfg.DefaultSet))
+			fmt.Printf("default_namespace: %s\n", orDash(cfg.DefaultNamespace))
 			fmt.Printf("default_harness: %s\n", orDash(cfg.DefaultHarness))
 			fmt.Printf("default_scope:   %s\n", cfg.DefaultScope)
 			return nil
@@ -311,8 +322,8 @@ func newConfigCmd() *cobra.Command {
 				return fmt.Errorf("usage: also config get <key>")
 			}
 			switch args[1] {
-			case "default_set":
-				fmt.Println(cfg.DefaultSet)
+			case "default_namespace", "default_set":
+				fmt.Println(cfg.DefaultNamespace)
 			case "default_harness":
 				fmt.Println(cfg.DefaultHarness)
 			case "default_scope":
@@ -327,13 +338,13 @@ func newConfigCmd() *cobra.Command {
 			}
 			key, val := args[1], args[2]
 			switch key {
-			case "default_set":
+			case "default_namespace", "default_set":
 				if val != "" {
-					if _, ok := cfg.Sets[val]; !ok {
-						return fmt.Errorf("unknown set %q", val)
+					if _, ok := cfg.Namespaces[val]; !ok {
+						return fmt.Errorf("unknown namespace %q", val)
 					}
 				}
-				cfg.DefaultSet = val
+				cfg.DefaultNamespace = val
 			case "default_harness":
 				id, ok := also.ResolveHarness(val)
 				if !ok {

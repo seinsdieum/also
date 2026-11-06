@@ -13,7 +13,7 @@ import (
 
 type SetRepo struct {
 	Name string
-	Cfg  SetConfig
+	Cfg  NamespaceConfig
 	Dir  string
 
 	versionOnce sync.Once
@@ -23,30 +23,18 @@ type SetRepo struct {
 	versionErr  error
 }
 
-func OpenSet(name string, cfg SetConfig, refresh bool) (*SetRepo, error) {
+func OpenSet(name string, cfg NamespaceConfig, refresh bool) (*SetRepo, error) {
 	return openSet(name, cfg, refresh, false)
 }
 
-func openSet(name string, cfg SetConfig, refresh, offline bool) (*SetRepo, error) {
-	dir := cfg.Path
-	if dir == "" {
-		dir = SettingSetPath(name)
-		cfg.Path = dir
-	}
-	if !filepath.IsAbs(dir) {
-		abs, err := AbsPath(dir)
-		if err != nil {
-			return nil, err
-		}
-		dir = abs
-		cfg.Path = dir
-	}
+func openSet(name string, cfg NamespaceConfig, refresh, offline bool) (*SetRepo, error) {
+	dir := SetCachePath(cfg.Remote)
 	if !isGitRepo(dir) {
 		if _, err := os.Stat(dir); err == nil {
 			return nil, fmt.Errorf("%s exists but is not a git repository", dir)
 		}
 		if offline {
-			return nil, fmt.Errorf("offline: no local clone for set %q at %s", name, dir)
+			return nil, fmt.Errorf("offline: no cached clone for namespace %q (%s)", name, cfg.Remote)
 		}
 		if _, err := cloneOrInit(cfg.Remote, dir); err != nil {
 			return nil, fmt.Errorf("open set %q: %w", name, err)
@@ -77,8 +65,7 @@ func OpenRemote(remote string, refresh bool) (*SetRepo, error) {
 }
 
 func openRemote(remote string, refresh, offline bool) (*SetRepo, error) {
-	dir := SetCachePath(remote)
-	cfg := SetConfig{Remote: remote, Path: dir}
+	cfg := NamespaceConfig{Remote: remote}
 	return openSet("remote-"+ShortHash([]byte(remote), 6), cfg, refresh, offline)
 }
 

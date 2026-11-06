@@ -22,7 +22,7 @@ Rules:
 - The live tree holds the latest version. Older versions are immutable git tags; `also`
   reads them with `git archive` and never rewrites an existing version.
 - Legacy `packages/<package>/<version>/` trees remain readable and can be converted with
-  `also set <name> --migrate`.
+  `also connect <name> <git-url> --migrate`.
 - Paths inside `origin/` are slash-separated, relative, must not contain `..`, and must not be
   symlinks.
 

@@ -63,7 +63,7 @@ func preserveInLayer(rel string, h *Harness, in Install) bool {
 }
 
 func loadInstalledPackage(cfg *Config, in Install) (*Package, error) {
-	if sc, ok := cfg.Sets[in.Set]; ok && sc.Remote == in.SetRemote {
+	if sc, ok := cfg.Namespaces[in.Set]; ok && sc.Remote == in.SetRemote {
 		repo, err := OpenSet(in.Set, sc, false)
 		if err != nil {
 			return nil, err
@@ -220,7 +220,7 @@ func ExtractBundle(opts AdoptOptions) (*AdoptResult, error) {
 		return nil, fmt.Errorf("invalid package name %q", opts.Name)
 	}
 	if opts.Dest == "" {
-		return nil, fmt.Errorf("no destination for the local bundle; pass --into or set a source directory with: also set <name> --source <dir>")
+		return nil, fmt.Errorf("no destination for the extracted bundle; pass --into")
 	}
 	dest, err := AbsPath(filepath.Join(opts.Dest, opts.Name))
 	if err != nil {

@@ -8,7 +8,7 @@ package also
 //
 // Old versions are git history, not duplicated directories. A legacy set that
 // stored every version under packages/<name>/<version>/ is still readable and
-// can be converted with `also set <name> --migrate`.
+// can be converted with `also connect <name> <git-url> --migrate`.
 
 import (
 	"archive/tar"

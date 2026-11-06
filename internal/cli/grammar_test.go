@@ -4,13 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 )
 
 func testConfig() *also.Config {
 	return &also.Config{
 		Schema: also.SchemaConfig,
-		Sets: map[string]also.SetConfig{
+		Namespaces: map[string]also.NamespaceConfig{
 			"personal": {Remote: "git@example.com:me/infra.git"},
 			"infra":    {Remote: "git@example.com:me/other.git"},
 		},

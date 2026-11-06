@@ -11,14 +11,21 @@ import (
 
 const (
 	// Version is the CLI and package-encoder version.
-	Version = "0.1.0"
+	Version = "1.0.0"
 
-	SchemaConfig = "also.config/v1"
+	SchemaConfig = "also.config/v2"
 	SchemaState  = "also.state/v1"
 	SchemaSet    = "also.set/v1"
 	SchemaPkg    = "also.pkg/v1"
 
 	EnvHome = "ALSO_HOME"
+)
+
+// Commit and BuildDate are set by the release build through -ldflags. Source
+// builds keep the defaults.
+var (
+	Commit    = "unknown"
+	BuildDate = "unknown"
 )
 
 // HomeDir returns the also state directory. ALSO_HOME overrides it (used by tests).
@@ -36,13 +43,11 @@ func HomeDir() string {
 	return filepath.Join(h, ".also")
 }
 
-func ConfigPath() string                { return filepath.Join(HomeDir(), "config.json") }
-func StatePath() string                 { return filepath.Join(HomeDir(), "state.json") }
-func SetsDir() string                   { return filepath.Join(HomeDir(), "sets") }
-func CacheDir() string                  { return filepath.Join(HomeDir(), "cache") }
-func BackupsDir() string                { return filepath.Join(HomeDir(), "backups") }
-func LockPath() string                  { return filepath.Join(HomeDir(), "lock") }
-func SettingSetPath(name string) string { return filepath.Join(SetsDir(), name) }
+func ConfigPath() string { return filepath.Join(HomeDir(), "config.json") }
+func StatePath() string  { return filepath.Join(HomeDir(), "state.json") }
+func CacheDir() string   { return filepath.Join(HomeDir(), "cache") }
+func BackupsDir() string { return filepath.Join(HomeDir(), "backups") }
+func LockPath() string   { return filepath.Join(HomeDir(), "lock") }
 
 // SetCachePath is the clone used for --from <url> installs.
 func SetCachePath(remote string) string {
@@ -50,7 +55,7 @@ func SetCachePath(remote string) string {
 }
 
 func EnsureHome() error {
-	for _, dir := range []string{HomeDir(), SetsDir(), CacheDir(), BackupsDir()} {
+	for _, dir := range []string{HomeDir(), CacheDir(), BackupsDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}

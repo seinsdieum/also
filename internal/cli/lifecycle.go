@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 
 	"github.com/spf13/cobra"
 )
@@ -455,8 +455,8 @@ func newAdoptCmd() *cobra.Command {
 	)
 	c := newCmd("adopt <project-dir>", "Capture a live project's infrastructure into a bundle and push it")
 	c.Long = `Extracts project-scoped instructions, skills, commands, agents, plugins, hook
-scripts and native config for one harness, writes the bundle into your local
-ai-infra source directory, and pushes a new package version.`
+scripts and native config for one harness and pushes a new package version to
+the remote namespace. The bundle is temporary unless --into is given.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		args, forHarness, err := parseTrailingFor(args)
 		if err != nil {
@@ -492,25 +492,24 @@ ai-infra source directory, and pushes a new package version.`
 				return err
 			}
 		}
-		dest := into
 		var setName string
-		var sc also.SetConfig
-		if !noPush || setFlag != "" {
+		var sc also.NamespaceConfig
+		if !noPush {
 			setName, sc, err = requireSet(cmd, cfg, setFlag, "")
 			if err != nil {
 				return err
 			}
-		} else if cfg.DefaultSet != "" {
-			if s, ok := cfg.Sets[cfg.DefaultSet]; ok {
-				sc = s
-				setName = cfg.DefaultSet
+		}
+		if noPush && into == "" {
+			return fmt.Errorf("--no-push needs --into <dir> so the bundle is kept")
+		}
+		dest := into
+		if dest == "" {
+			dest, err = os.MkdirTemp("", "also-adopt-*")
+			if err != nil {
+				return err
 			}
-		}
-		if dest == "" {
-			dest = sc.Source
-		}
-		if dest == "" {
-			return fmt.Errorf("no local ai-infra directory; pass --into <dir> or configure one with: also set <name> --source <dir>")
+			defer os.RemoveAll(dest)
 		}
 		if name == "" {
 			name = filepath.Base(proj)
@@ -526,7 +525,11 @@ ai-infra source directory, and pushes a new package version.`
 			if err != nil {
 				return err
 			}
-			fmt.Printf("captured %s -> %s\n", harnessID, res.BundleDir)
+			if noPush || into != "" {
+				fmt.Printf("captured %s -> %s\n", harnessID, res.BundleDir)
+			} else {
+				fmt.Printf("captured %s\n", harnessID)
+			}
 			fmt.Printf("files: %d\n", res.Files)
 			printWarnings("warnings", res.Warnings)
 			if noPush {
@@ -554,8 +557,8 @@ ai-infra source directory, and pushes a new package version.`
 	}
 	c.Flags().StringVar(&name, "name", "", "package name (default: project directory name)")
 	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness; auto-detected by default")
-	c.Flags().StringVar(&into, "into", "", "local ai-infra directory for the extracted bundle")
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set name")
+	c.Flags().StringVar(&into, "into", "", "keep the extracted bundle in this directory (debugging)")
+	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
 	c.Flags().BoolVar(&noPush, "no-push", false, "only write the local bundle")
 	c.Flags().BoolVar(&force, "force", false, "replace an existing bundle (kept as a backup)")
 	c.Flags().StringVarP(&message, "message", "m", "", "git commit message")

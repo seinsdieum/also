@@ -7,33 +7,34 @@ import (
 	"sort"
 	"strings"
 
-	"also/internal/also"
+	"github.com/seinsdieum/also/internal/also"
 
 	"github.com/spf13/cobra"
 )
 
 func newUseCmd() *cobra.Command {
-	c := newCmd("use [namespace]", "Choose the active namespace (set)")
-	c.Long = `Choose which set receives pushes and adopt output, and which set installs
-read from. Without an argument, list namespaces and mark the active one.`
+	c := newCmd("use [namespace]", "Choose the active namespace")
+	c.Long = `Choose which remote namespace receives pushes and adopt output, and which
+namespace installs read from. Without an argument, list namespaces and mark the
+active one.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
 		}
 		if len(args) == 0 {
-			if len(cfg.Sets) == 0 {
-				fmt.Println("no namespaces yet; add one with: also set <name> --remote <git-url>")
+			if len(cfg.Namespaces) == 0 {
+				fmt.Println("no namespaces yet; add one with: also connect <name> <git-url>")
 				return nil
 			}
 			w := newTabWriter()
-			fmt.Fprintf(w, "NAMESPACE\tREMOTE\tSOURCE\n")
-			for _, name := range cfg.SetNames() {
+			fmt.Fprintf(w, "NAMESPACE\tREMOTE\n")
+			for _, name := range cfg.NamespaceNames() {
 				mark := " "
-				if cfg.DefaultSet == name {
+				if cfg.DefaultNamespace == name {
 					mark = "*"
 				}
-				fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, name, cfg.Sets[name].Remote, orDash(cfg.Sets[name].Source))
+				fmt.Fprintf(w, "%s %s\t%s\n", mark, name, cfg.Namespaces[name].Remote)
 			}
 			return w.Flush()
 		}
@@ -41,11 +42,11 @@ read from. Without an argument, list namespaces and mark the active one.`
 			return fmt.Errorf("usage: also use <namespace>")
 		}
 		name := args[0]
-		sc, ok := cfg.Sets[name]
+		sc, ok := cfg.Namespaces[name]
 		if !ok {
-			return fmt.Errorf("I don't know namespace %q. You've got: %s", name, strings.Join(cfg.SetNames(), ", "))
+			return fmt.Errorf("I don't know namespace %q. You've got: %s", name, strings.Join(cfg.NamespaceNames(), ", "))
 		}
-		cfg.DefaultSet = name
+		cfg.DefaultNamespace = name
 		if err := withLock(func() error { return also.SaveConfig(cfg) }); err != nil {
 			return err
 		}

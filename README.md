@@ -60,10 +60,21 @@ packages/<name>/
 - репозиторий остаётся чистым: `packages/<name>/{also-pkg.json,origin}`.
 
 Старый layout с `packages/<name>/<version>/` читается автоматически и
-конвертируется командой `also set <name> --migrate`; миграция сохраняет
-оригинальные timestamps версий в аннотированных тегах.
+конвертируется командой `also connect <name> <git-url> --migrate`; миграция
+сохраняет оригинальные timestamps версий в аннотированных тегах.
 
-## Сборка
+## Установка
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
+also setup
+```
+
+`install.sh` определяет OS/архитектуру, проверяет checksum релиза и ставит
+бинарник в `~/.local/bin` без sudo. Переменные: `ALSO_VERSION`,
+`ALSO_INSTALL_DIR`. Для Windows есть `install.ps1`.
+
+Из исходников:
 
 ```sh
 go build -o bin/also .
@@ -76,20 +87,31 @@ make build && make install PREFIX=$HOME/.local
 ## Быстрый старт
 
 ```sh
-# 1. Подключить существующий пустой/непустой git-репозиторий как набор
-also set personal --remote git@github.com:you/ai-infra.git --source ~/Development/ai-infra --default
+# 0. Первичная настройка: harness, scope, namespace
+also setup
 
-# 2. Закодировать и запушить одну из ваших папок-бандлов
-also push ~/Development/ai-infra/code-review
+# 1. Или подключить существующий git-репозиторий вручную
+also connect personal git@github.com:you/ai-infra.git --default
 
-# 3. Выбрать harness по умолчанию (иначе указывайте -h при каждой установке)
-also config set default_harness opencode
+# 2. Закодировать папку-бандл и запушить её в namespace
+also push ./code-review
+
+# 3. Забрать инфраструктуру живого проекта и сразу запушить
+also adopt . for claude --name code-review
 
 # 4. Установить в текущий проект
-also install code-review
+also install code-review for opencode
 
 # 5. Посмотреть, что реально установлено
 also tree
+```
+
+`also setup` интерактивен; для CI:
+
+```sh
+also setup --yes --harness opencode \
+  --namespace personal=git@github.com:you/ai-infra.git \
+  --default-namespace personal
 ```
 
 Пример `~/Development/ai-infra/code-review` для Claude:
@@ -148,12 +170,13 @@ namespace указывается как `personal@package` или словами
 
 | Команда | Что делает |
 |---|---|
+| `also setup [--yes] [--harness H] [--namespace N=URL]` | Первичная настройка: harness, scope, namespace, опционально стартовый пакет. |
 | `also use [namespace]` | Показать namespace или сделать его активным. |
-| `also set <name> --remote <url> [--source <dir>] [--default]` | Подключить набор. Локальный клон: `~/.also/sets/<name>`. |
-| `also set <name> --migrate` | Перевести старый layout `packages/<pkg>/<version>/` на одно дерево + git-теги. |
-| `also set` | Показать настроенные наборы. |
-| `also config` / `also config set <key> <value>` | `default_set`, `default_harness`, `default_scope`. |
-| `also list [--refresh] [--versions] [--from <url>]` | Пакеты и версии в наборе. |
+| `also connect <name> <git-url> [--default]` | Подключить удалённый namespace. Локальный клон — внутренний кэш. |
+| `also connect <name> <git-url> --migrate` | Перевести старый layout `packages/<pkg>/<version>/` на одно дерево + git-теги. |
+| `also connect` | Показать подключённые namespace. |
+| `also config` / `also config set <key> <value>` | `default_namespace`, `default_harness`, `default_scope`. |
+| `also list [--refresh] [--versions] [--from <url>]` | Пакеты и версии в namespace. |
 | `also show <pkg>[@version]` | Манифест, компоненты, MCP/hooks, версии. |
 | `also push <bundle-dir> [for <harness>] [--name N] [--label v1.2]` | Закодировать бандл, закоммитить и запушить новую версию. |
 | `also install <pkg>[@version] for <harness>` | Развернуть пакет в нативный формат. |
@@ -165,7 +188,7 @@ namespace указывается как `personal@package` или словами
 | `also upgrade\|update [pkg...] [--check] [--force]` | Обновить установленное (для того harness, куда ставили). |
 | `also reshape <harness> [pkg...] [--force]` | Пересобрать установленное в другой harness, сохранив версию. |
 | `also tree [for <harness>] [--json]` | Дерево **только установленной** инфраструктуры. |
-| `also adopt <project-dir> [for <harness>] [--name N] [--into <dir>]` | Забрать инфраструктуру живого проекта в локальный бандл и запушить. |
+| `also adopt <project-dir> [for <harness>] [--name N] [--into <dir>]` | Забрать инфраструктуру живого проекта и запушить в namespace. |
 | `also uninstall <pkg> [for <harness>] [--scope] [--project] [--all] [--force]` | Удалить установленное и откатить правки конфигов. |
 
 Полезные флаги:
@@ -175,7 +198,7 @@ namespace указывается как `personal@package` или словами
 - `--force` — перезаписать изменённые вручную файлы/конфликты. Перед перезаписью делается бэкап.
 - `--no-config` — ставить только портируемые компоненты, не трогать MCP/hooks.
 - `--offline` — не ходить в сеть; если локального клона нет, команда завершится ошибкой.
-- `--from <url>` — установить/посмотреть без настройки набора (нужен только read-доступ).
+- `--from <url>` — установить/посмотреть без настройки namespace (нужен только read-доступ).
 - `--allow-secrets`, `--allow-large` — явно разрешить то, что по умолчанию отклоняется.
 
 ## Что такое версия
@@ -216,14 +239,14 @@ ai-infra.git/
 └── refs/tags/also/code-review/<version>   # неизменяемые снимки всех версий
 ```
 
-- Один репозиторий = один набор (`set`/namespace) = много пакетов.
+- Один репозиторий = один namespace = много пакетов.
 - В рабочем дереве живёт только последняя версия каждого пакета; старые версии
   достаются из git-тегов, а не из копий каталогов.
 - Версии только добавляются; `also` никогда не перезаписывает существующую версию.
 - Старый layout `packages/<pkg>/<version>/` читается автоматически и переводится
-  командой `also set <name> --migrate`.
-- `also-set.json` и `packages/**` — единственные управляемые пути. Ваши локальные бандлы
-  остаются там, где вы их держите; `--source` — только ссылка на них.
+  командой `also connect <name> <git-url> --migrate`.
+- `also-set.json` и `packages/**` — единственные управляемые пути. Namespace — это
+  только имя и git URL; локальный клон и есть внутренний кэш.
 
 Полная спецификация: [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md).
 
@@ -298,10 +321,9 @@ ai-infra.git/
 
 ```
 ~/.also/
-├── config.json        # наборы, default_harness, default_scope
+├── config.json        # namespaces, default_namespace, default_harness, default_scope
 ├── state.json         # установки, файлы, блоки, правки конфигов
-├── sets/<name>/       # git-клоны наборов
-├── cache/<hash>/      # клоны для --from <url>
+├── cache/<hash>/      # внутренние клоны namespace и --from <url>
 ├── backups/<ts>/      # копии перезаписанных файлов
 └── lock
 ```
@@ -312,15 +334,13 @@ ai-infra.git/
 
 ```json
 {
-  "schema": "also.config/v1",
-  "default_set": "personal",
+  "schema": "also.config/v2",
+  "default_namespace": "personal",
   "default_harness": "opencode",
   "default_scope": "project",
-  "sets": {
+  "namespaces": {
     "personal": {
-      "remote": "git@github.com:you/ai-infra.git",
-      "path": "/Users/you/.also/sets/personal",
-      "source": "/Users/you/Development/ai-infra"
+      "remote": "git@github.com:you/ai-infra.git"
     }
   }
 }
@@ -328,15 +348,15 @@ ai-infra.git/
 
 ## Ограничения v1
 
-- Только один remote на набор; remote-репозиторий должен уже существовать.
+- Только один remote на namespace; репозиторий должен уже существовать.
 - Нет автоматического `gh repo create`.
 - `adopt` работает с project-scope раскладкой harness; глобальные конфиги не забирает.
 - Symlink'и в бандлах не поддерживаются (явная ошибка вместо тихого копирования).
 - Windows проверен на Windows 11 ARM64 (portable MinGit): clone set, install/uninstall,
   cross-harness и round-trip пакеты. Нужен установленный `git`; harness CLI на Windows
   не проверялись (их проверка выполнена на macOS).
-- Set-клон принудительно использует LF (`core.autocrlf=false`), иначе на Windows
-  ломается content digest.
+- Кэш namespace принудительно использует LF (`core.autocrlf=false`), иначе на
+  Windows ломается content digest.
 - Content hash ≠ semver: порядок версий определяется git-историей, а не номером.
 - Два пакета не могут владеть одним и тем же файлом скилла/команды/агента: второй
   `install` упадёт с конфликтом. Переименуйте компонент в одном из пакетов.

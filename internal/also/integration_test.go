@@ -21,17 +21,17 @@ func setup(t *testing.T) (tmp, remote, setDir string, cfg *Config) {
 	if out, err := exec.Command("git", "init", "--bare", "-q", remote).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	setDir = filepath.Join(tmp, "set")
+	setDir = SetCachePath(remote)
 	cfg = &Config{
 		Schema: SchemaConfig, DefaultScope: "project",
-		Sets: map[string]SetConfig{"personal": {Remote: remote, Path: setDir}},
+		Namespaces: map[string]NamespaceConfig{"personal": {Remote: remote}},
 	}
 	return tmp, remote, setDir, cfg
 }
 
 func openRepo(t *testing.T, cfg *Config) *SetRepo {
 	t.Helper()
-	r, err := OpenSet("personal", cfg.Sets["personal"], false)
+	r, err := OpenSet("personal", cfg.Namespaces["personal"], false)
 	if err != nil {
 		t.Fatal(err)
 	}
