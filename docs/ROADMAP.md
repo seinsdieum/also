@@ -1,7 +1,7 @@
 # also roadmap
 
-Статус: 2026-11-06, версия `1.0.0` (release candidate в работе). Это не обещание
-сроков, а порядок работ и критерии готовности.
+Статус: 2026-11-06, версия `1.0.0` выпущена. Релиз:
+https://github.com/seinsdieum/also/releases/tag/v1.0.0
 
 ## Текущее состояние
 
@@ -173,7 +173,8 @@ Acceptance criteria:
 - [x] `also doctor`: git, config, state, adapters, dirty caches, PATH;
 - [x] `also verify`: целостность set, тегов, манифестов, state;
 - [x] recovery-команды для dirty clone (`also repair`), понятные подсказки;
-- [ ] осиротевшие теги и битый state (пока только диагностируются);
+- [ ] восстановление осиротевших тегов и битого state (диагностируются, но
+      автоматически не исправляются);
 - [x] тесты на corrupted config/state/manifest/tag.
 
 ### V1-6. Стабильный CLI/API
@@ -203,6 +204,14 @@ Acceptance criteria:
    release workflow с checksums и provenance готовы.
 7. **M6: 1.0 release** — остались внешние шаги: пакетный менеджер, реальный
    release (checksums/attestation) и tag `v1.0.0`.
+
+## Выпущено
+
+Релиз `v1.0.0`: https://github.com/seinsdieum/also/releases/tag/v1.0.0
+
+Проверено после публикации: `install.sh` скачал релиз, checksum совпал,
+`gh attestation verify` прошёл, `also version` показывает `1.0.0`, а
+`also update --check` отвечает, что версия актуальна.
 
 ## После 1.0
 
@@ -234,5 +243,6 @@ Acceptance criteria:
 - [x] 4×4 E2E 16/16 на релизном бинарнике (`compare9.out`);
 - [x] `also doctor` и `also verify` проходят на тестовом set;
 - [x] LICENSE, CHANGELOG, SECURITY, command reference готовы;
-- [ ] бинарники подписаны, checksums опубликованы;
-- [ ] tag `v1.0.0`.
+- [x] бинарники подписаны, checksums опубликованы
+      (Sigstore build provenance, `SHA256SUMS`, 6 платформ);
+- [x] tag `v1.0.0`.
