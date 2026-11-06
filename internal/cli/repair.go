@@ -35,7 +35,7 @@ clone.`
 		if len(names) == 0 {
 			return fmt.Errorf("no namespaces connected")
 		}
-		if stdinIsTerminal() && !yes {
+		if promptAvailable() && !yes {
 			ok, err := confirm(fmt.Sprintf("Re-clone %d namespace cache(s)?", len(names)), false)
 			if err != nil {
 				return err

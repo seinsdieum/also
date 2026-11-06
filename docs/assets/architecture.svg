@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" fill="none">
+  <defs>
+    <linearGradient id="pkg" x1="470" y1="220" x2="730" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#93C5FD"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#1D4ED8" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="600" y="56" text-anchor="middle" fill="#0F172A" font-size="28" font-weight="700">How also works</text>
+    <text x="600" y="86" text-anchor="middle" fill="#64748B" font-size="16">One versioned package, rendered into each harness layout.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="150" width="250" height="340" rx="28" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+    <rect x="880" y="150" width="250" height="340" rx="28" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="195" y="196" text-anchor="middle" fill="#2563EB" font-size="13" font-weight="700" letter-spacing="1.5">HARNESSES</text>
+    <text x="1005" y="196" text-anchor="middle" fill="#2563EB" font-size="13" font-weight="700" letter-spacing="1.5">NAMESPACE</text>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <rect x="105" y="224" width="180" height="48" rx="12" fill="#EFF6FF"/>
+    <text x="195" y="254" fill="#0F172A" font-size="16" font-weight="600">Claude Code</text>
+    <rect x="105" y="286" width="180" height="48" rx="12" fill="#EFF6FF"/>
+    <text x="195" y="316" fill="#0F172A" font-size="16" font-weight="600">Codex CLI</text>
+    <rect x="105" y="348" width="180" height="48" rx="12" fill="#EFF6FF"/>
+    <text x="195" y="378" fill="#0F172A" font-size="16" font-weight="600">OpenCode</text>
+    <rect x="105" y="410" width="180" height="48" rx="12" fill="#EFF6FF"/>
+    <text x="195" y="440" fill="#0F172A" font-size="16" font-weight="600">Qwen Code</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="430" y="235" width="340" height="170" rx="36" fill="url(#pkg)"/>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="600" y="300" fill="#FFFFFF" font-size="34" font-weight="700">also package</text>
+    <text x="600" y="332" fill="#DBEAFE" font-size="15">instructions · skills · commands · agents</text>
+    <text x="600" y="356" fill="#DBEAFE" font-size="15">hooks · MCP · settings</text>
+    <text x="600" y="384" fill="#BFDBFE" font-size="13">content digest = immutable version</text>
+  </g>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect x="915" y="235" width="180" height="52" rx="12" fill="#EFF6FF"/>
+    <text x="1005" y="268" text-anchor="middle" fill="#0F172A" font-size="15" font-weight="600">main branch</text>
+    <rect x="915" y="303" width="180" height="52" rx="12" fill="#EFF6FF"/>
+    <text x="1005" y="336" text-anchor="middle" fill="#0F172A" font-size="15" font-weight="600">version tags</text>
+    <rect x="915" y="371" width="180" height="52" rx="12" fill="#EFF6FF"/>
+    <text x="1005" y="404" text-anchor="middle" fill="#0F172A" font-size="15" font-weight="600">git history</text>
+  </g>
+
+  <g stroke="url(#line)" stroke-width="2.5" stroke-linecap="round">
+    <path d="M320 320C370 320 380 320 430 320"/>
+    <path d="M770 320C820 320 830 320 880 320"/>
+  </g>
+  <path d="M430 320L414 311V329L430 320Z" fill="#3B82F6"/>
+  <path d="M880 320L864 311V329L880 320Z" fill="#3B82F6"/>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#64748B">
+    <text x="375" y="300" text-anchor="middle">adapters</text>
+    <text x="825" y="300" text-anchor="middle">push / pull</text>
+  </g>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="600" y="520" fill="#0F172A" font-size="16" font-weight="600">install</text>
+    <text x="600" y="546" fill="#64748B" font-size="14">package → native files, reversible edits</text>
+    <text x="600" y="582" fill="#0F172A" font-size="16" font-weight="600">adopt</text>
+    <text x="600" y="608" fill="#64748B" font-size="14">native files → package → new version</text>
+  </g>
+</svg>

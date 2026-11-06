@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" fill="none">
+  <defs>
+    <linearGradient id="core" x1="650" y1="280" x2="950" y2="540" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#93C5FD"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#1D4ED8" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <g opacity="0.45" stroke="#BFDBFE" stroke-width="1">
+    <path d="M120 120H1480M120 240H1480M120 360H1480M120 480H1480M120 600H1480M120 720H1480" stroke-dasharray="2 14"/>
+  </g>
+
+  <text x="800" y="112" text-anchor="middle" fill="#0F172A" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="74" font-weight="700" letter-spacing="-2">also</text>
+  <text x="800" y="158" text-anchor="middle" fill="#64748B" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" letter-spacing="1">portable AI infrastructure</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="90" y="300" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+    <rect x="1260" y="300" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+    <rect x="90" y="500" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+    <rect x="1260" y="500" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="215" y="344" fill="#0F172A" font-size="23" font-weight="600">Claude Code</text>
+    <text x="215" y="374" fill="#64748B" font-size="15">CLAUDE.md · .claude</text>
+    <text x="1385" y="344" fill="#0F172A" font-size="23" font-weight="600">Codex CLI</text>
+    <text x="1385" y="374" fill="#64748B" font-size="15">AGENTS.md · .codex</text>
+    <text x="215" y="544" fill="#0F172A" font-size="23" font-weight="600">OpenCode</text>
+    <text x="215" y="574" fill="#64748B" font-size="15">AGENTS.md · opencode.json</text>
+    <text x="1385" y="544" fill="#0F172A" font-size="23" font-weight="600">Qwen Code</text>
+    <text x="1385" y="574" fill="#64748B" font-size="15">QWEN.md · .qwen</text>
+  </g>
+
+  <g stroke="url(#edge)" stroke-width="2.5" stroke-dasharray="7 9" stroke-linecap="round">
+    <path d="M340 348C520 348 560 410 660 410"/>
+    <path d="M1260 348C1080 348 1040 410 940 410"/>
+    <path d="M340 548C520 548 560 486 660 486"/>
+    <path d="M1260 548C1080 548 1040 486 940 486"/>
+  </g>
+
+  <g filter="url(#soft)">
+    <rect x="620" y="300" width="360" height="296" rx="48" fill="url(#core)"/>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="800" y="410" fill="#FFFFFF" font-size="52" font-weight="700" letter-spacing="-1">also</text>
+    <text x="800" y="450" fill="#DBEAFE" font-size="17">packages · versions · adapters</text>
+    <line x1="690" y1="486" x2="910" y2="486" stroke="#BFDBFE" stroke-opacity="0.5"/>
+    <text x="800" y="528" fill="#EFF6FF" font-size="18" font-weight="600">one package</text>
+    <text x="800" y="556" fill="#BFDBFE" font-size="15">every harness</text>
+  </g>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" fill="#3B82F6">
+    <text x="470" y="392">encode / decode</text>
+    <text x="1030" y="392">render</text>
+    <text x="470" y="520">render</text>
+    <text x="1030" y="520">encode / decode</text>
+  </g>
+
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="800" y="700" fill="#64748B" font-size="17">Install into any harness, adopt back, and keep one versioned source of truth.</text>
+  </g>
+</svg>

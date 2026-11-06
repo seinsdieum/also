@@ -6,15 +6,37 @@ interface; flags exist for scripts.
 ## First run
 
 ```sh
-also setup
+curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
+```
+
+The installer verifies the release checksum, installs the binary, and starts
+`also setup`. For unattended machines set `ALSO_NO_SETUP=1` and pass flags:
+
+```sh
 also setup --yes --harness opencode \
-  --namespace personal=git@github.com:me/ai-infra.git \
+  --namespace personal=git@github.com:me/ai-infrastructure.git \
   --default-namespace personal
 ```
 
-`setup` detects installed harness CLIs/config directories, writes
-`also.config/v2`, validates every namespace before saving, and can install a
-starter package with `--install <package>`.
+`setup` detects installed harness command-line interfaces and configuration
+directories, writes `also.config/v2`, validates every namespace before saving,
+and can install a starter package with `--install <package>`. When the script is
+piped through `sh`, prompts are read from the terminal device, so the
+interactive setup still works.
+
+## Updates
+
+```sh
+also update --check
+also update
+```
+
+`also update` downloads the latest GitHub release, verifies `SHA256SUMS`, and
+replaces the running binary on macOS and Linux. On Windows it writes
+`also.exe.new` next to the current executable because a running file cannot be
+replaced. Ordinary commands check the latest release at most once per day and
+print a single notice on standard error when an update is available. Set
+`ALSO_NO_UPDATE_CHECK=1` to disable that check.
 
 ## Namespaces
 
@@ -98,6 +120,7 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | `uninstall` | array of namespace, package, version, harness, scope, warnings |
 | `setup` | harness, scope, default_namespace, namespaces, installed |
 | `doctor` / `verify` | array of name, status (`ok`/`warn`/`fail`), detail |
+| `update` | current, latest, updated, manual_path, asset |
 | `version` | version, commit, built |
 | `list` / `show` / `tree` | existing package/tree objects |
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,15 +14,22 @@ import (
 )
 
 type prompter struct {
-	r *bufio.Reader
+	r      *bufio.Reader
+	closer io.Closer
+}
+
+func (p *prompter) close() {
+	if p != nil && p.closer != nil {
+		_ = p.closer.Close()
+	}
 }
 
 func (p *prompter) ask(question, def string) (string, error) {
+	fmt.Printf("  %s %s", blue("?"), question)
 	if def != "" {
-		fmt.Printf("%s [%s]: ", question, def)
-	} else {
-		fmt.Printf("%s: ", question)
+		fmt.Printf(" %s", dim("["+def+"]"))
 	}
+	fmt.Print(": ")
 	line, err := p.r.ReadString('\n')
 	if err != nil && strings.TrimSpace(line) == "" {
 		return "", fmt.Errorf("input closed")
@@ -78,12 +86,17 @@ For CI or scripts use --yes plus flags:
 			return err
 		}
 		interactive := !yes
-		if interactive && !stdinIsTerminal() {
-			return fmt.Errorf("stdin is not a terminal; pass --yes with --harness and --namespace")
-		}
 		var p *prompter
 		if interactive {
-			p = &prompter{r: bufio.NewReader(os.Stdin)}
+			in, closer, ok := openPromptInput()
+			if !ok {
+				return fmt.Errorf("no terminal available; pass --yes with --harness and --namespace")
+			}
+			p = &prompter{r: bufio.NewReader(in), closer: closer}
+			defer p.close()
+		}
+		if interactive && !jsonOut {
+			printBanner()
 		}
 
 		harnessID, err := setupHarness(cfg, harness, p)
@@ -163,12 +176,17 @@ For CI or scripts use --yes plus flags:
 			out.Namespaces[name] = cfg.Namespaces[name].Remote
 		}
 		if !jsonOut {
-			fmt.Printf("harness: %s\n", harnessID)
-			fmt.Printf("scope:   %s\n", scopeID)
-			fmt.Printf("default namespace: %s\n", defaultNS)
-			for _, name := range cfg.NamespaceNames() {
-				fmt.Printf("  %s  %s\n", name, cfg.Namespaces[name].Remote)
+			rows := [][2]string{
+				{"Harness", harnessID},
+				{"Scope", scopeID},
+				{"Namespace", defaultNS},
 			}
+			for _, name := range cfg.NamespaceNames() {
+				if name != defaultNS {
+					rows = append(rows, [2]string{"Namespace", name})
+				}
+			}
+			printSummary(rows)
 		}
 		if starter != "" {
 			proj := project
@@ -191,7 +209,7 @@ For CI or scripts use --yes plus flags:
 		if jsonOut {
 			return printJSON(out)
 		}
-		fmt.Println("next: also list")
+		printNextStep("also list")
 		return nil
 	}
 	c.Flags().BoolVar(&yes, "yes", false, "non-interactive; use flags for every choice")
@@ -220,7 +238,7 @@ func setupHarness(cfg *also.Config, flag string, p *prompter) (string, error) {
 		return "", fmt.Errorf("--harness is required with --yes; available: %v", also.HarnessIDs())
 	}
 	if len(detected) > 0 {
-		fmt.Printf("detected harnesses: %s\n", strings.Join(detected, ", "))
+		fmt.Printf("  %s %s\n\n", dim("detected"), blue(strings.Join(detected, ", ")))
 	}
 	def := cfg.DefaultHarness
 	if def == "" {
@@ -350,6 +368,31 @@ func stdinIsTerminal() bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
+// openPromptInput lets `curl | sh` hand the terminal to setup: stdin is the
+// script pipe there, so read prompts from /dev/tty instead.
+func openPromptInput() (io.Reader, io.Closer, bool) {
+	if stdinIsTerminal() {
+		return os.Stdin, nil, true
+	}
+	f, err := os.Open("/dev/tty")
+	if err != nil {
+		return nil, nil, false
+	}
+	return f, f, true
+}
+
+func promptAvailable() bool {
+	if stdinIsTerminal() {
+		return true
+	}
+	f, err := os.Open("/dev/tty")
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
 func contains(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
@@ -360,6 +403,11 @@ func contains(list []string, want string) bool {
 }
 
 func confirm(question string, def bool) (bool, error) {
-	p := &prompter{r: bufio.NewReader(os.Stdin)}
+	in, closer, ok := openPromptInput()
+	if !ok {
+		return def, nil
+	}
+	p := &prompter{r: bufio.NewReader(in), closer: closer}
+	defer p.close()
 	return p.yes(question, def)
 }

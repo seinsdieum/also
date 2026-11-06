@@ -1,5 +1,6 @@
-# Install also on Windows from GitHub releases.
+# Install also on Windows from GitHub releases and start the interactive setup.
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/seinsdieum/also/main/install.ps1 | iex"
+# Set ALSO_NO_SETUP=1 for unattended installs.
 $ErrorActionPreference = "Stop"
 $Repo = "seinsdieum/also"
 $InstallDir = if ($env:ALSO_INSTALL_DIR) { $env:ALSO_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "also\bin" }
@@ -36,4 +37,9 @@ if (($userPath -split ';') -notcontains $InstallDir) {
   Write-Host "also: added $InstallDir to your user PATH; restart the terminal"
 }
 Write-Host "also: installed to $InstallDir\also.exe"
-Write-Host "also: next run: also setup"
+if ($env:ALSO_NO_SETUP -eq "1" -or -not [Environment]::UserInteractive) {
+  Write-Host "also: next run: also setup"
+} else {
+  Write-Host "Starting interactive setup..."
+  & (Join-Path $InstallDir "also.exe") setup
+}

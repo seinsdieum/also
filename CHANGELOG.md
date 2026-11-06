@@ -8,8 +8,12 @@
   clone is an internal cache.
 - `also connect <name> <git-url>` and `also setup`, interactive or `--yes`.
 - `install.sh`, `install.ps1` and `go install github.com/seinsdieum/also@latest`.
+  The installers verify the release checksum and launch `also setup` directly.
 - `adopt` publishes straight to the namespace without a local source directory.
 - `also doctor`, `also verify` and `also repair`.
+- `also update`, a once-per-day release check and a single “New version
+  available” notice on standard error.
+- A cobalt-blue installer and diagnostic design with one shared accent colour.
 - JSON output for install/push/adopt/upgrade/reshape/uninstall/setup,
   `also version --json`, and documented exit codes.
 - In-repo 4×4 harness matrix and a real-CLI smoke from `make smoke`.
@@ -26,7 +30,13 @@
   orphan tags are rejected.
 - Install slots include the target harness, so one package can live in several
   harnesses in the same project.
-- Module path is `github.com/seinsdieum/also`; the project is MIT licensed.
+- Module path is `github.com/seinsdieum/also`; the project is licensed under the
+  Apache License 2.0 with a NOTICE file that preserves attribution.
+
+- The README is written in full English and uses a six-part structure:
+  problem, quick start, overview, contributing, credits and license.
+- Repository illustrations use transparent backgrounds and one cobalt-blue
+  visual language.
 
 ### Fixed
 

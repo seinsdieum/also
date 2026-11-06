@@ -1,7 +1,8 @@
 #!/bin/sh
-# Install also from GitHub releases.
+# Install also and start the interactive setup.
 #   curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
 # Optional: ALSO_VERSION=1.0.0 ALSO_INSTALL_DIR="$HOME/bin" sh install.sh
+# Set ALSO_NO_SETUP=1 for unattended installs.
 set -eu
 
 REPO="seinsdieum/also"
@@ -9,12 +10,21 @@ INSTALL_DIR="${ALSO_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${ALSO_VERSION:-}"
 BASE="${ALSO_BASE_URL:-https://github.com/$REPO}"
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  BLUE="$(printf '\033[38;2;59;130;246m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+else
+  BLUE=""; DIM=""; BOLD=""; RESET=""
+fi
+
 os="$(uname -s)"
 case "$os" in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
   MINGW*|MSYS*|CYGWIN*) os=windows ;;
-  *) echo "also: unsupported OS: $os" >&2; exit 1 ;;
+  *) echo "also: unsupported operating system: $os" >&2; exit 1 ;;
 esac
 
 arch="$(uname -m)"
@@ -38,7 +48,8 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "also: downloading $asset${VERSION:+ v$VERSION}"
+printf '\n  %s◆%s %salso%s %sinstaller%s\n\n' "$BLUE" "$RESET" "$BOLD" "$RESET" "$DIM" "$RESET"
+echo "  downloading $asset${VERSION:+ v$VERSION}"
 curl -fsSL "$url/$asset" -o "$tmp/$asset"
 curl -fsSL "$url/SHA256SUMS" -o "$tmp/SHA256SUMS"
 
@@ -62,9 +73,17 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp/$asset" "$INSTALL_DIR/also$ext"
-echo "also: installed to $INSTALL_DIR/also$ext"
+printf '  %s✓%s installed %s\n' "$BLUE" "$RESET" "$INSTALL_DIR/also$ext"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
-  *) echo "also: add $INSTALL_DIR to PATH, then restart your shell";;
+  *) echo "  add $INSTALL_DIR to PATH, then restart your shell";;
 esac
-echo "also: next run: also setup"
+
+if [ "${ALSO_NO_SETUP:-0}" = "1" ]; then
+  echo "  next: also setup"
+elif [ -r /dev/tty ]; then
+  echo
+  "$INSTALL_DIR/also$ext" setup || echo "also: setup skipped; run: also setup"
+else
+  echo "  next: also setup"
+fi

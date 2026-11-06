@@ -1,414 +1,209 @@
-# also
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="also connects one versioned package to Claude Code, Codex CLI, OpenCode and Qwen Code" width="100%">
+</p>
 
-**Один CLI для версионирования AI-инфраструктуры и переноса её между harness.**
+<p align="center">
+  <strong>One package. Every harness. One source of truth.</strong>
+</p>
 
-`also` хранит ваши инструкции, скиллы, команды, агентов, хуки и MCP-серверы в git-репозитории в
-универсальном виде, а при установке материализует их в нативный формат нужного harness:
-Claude Code, OpenCode, Codex CLI или Qwen Code.
+`also` is a command-line interface for versioning, translating and installing artificial intelligence infrastructure across Claude Code, Codex CLI, OpenCode and Qwen Code. It stores instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings once, then materializes them in the native layout of any supported harness.
 
-Одна и та же инфраструктура ставится в любой harness и остаётся управляемой: версии
-иммутабельны, обновления проверяемы, конфиги не перезаписываются вслепую.
+## 1. The Problem
 
-```
-Claude bundle ──push──> also package (v=content hash) ──install -h opencode──> .opencode/
-                                                     └──install -h codex─────> .agents/skills + .codex/
-```
+Every harness invented its own layout for the same ideas. Claude Code reads `CLAUDE.md` and `.claude/`. Codex CLI reads `AGENTS.md` and `.codex/`. OpenCode reads `AGENTS.md`, `opencode.json` and `.opencode/`. Qwen Code reads `QWEN.md` and `.qwen/`. Skills, commands, agents, hooks, Model Context Protocol servers and permission settings all have slightly different names, file formats and merge rules.
 
----
+The usual result is duplication. The same review skill is copied into four projects. A useful hook exists only in the harness where it was written. A permission change is made in one configuration file and forgotten in the other three. Nothing has a meaningful version, so rolling back means remembering which copy was good.
 
-## Зачем
+`also` removes that duplication:
 
-- Не нужно заводить отдельный git-репозиторий на каждую папку с инфраструктурой.
-- Нет копирования «руками» и потери source of truth: пакет неизменяем и проверяется по хешу.
-- Скиллы, написанные для Claude, ставятся в OpenCode/Codex/Qwen без ручного переписывания.
-- Установка обратима: `also` помнит каждый созданный файл, блок инструкций и правку конфига.
+- one portable package describes the infrastructure once;
+- adapters translate it into each harness layout;
+- every package version is content-addressed and stored in git;
+- installation is reversible, including instructions blocks and configuration edits;
+- the same package can live in several harnesses inside one project.
 
-## Архитектура: harness как адаптер
+## 2. Quick Start
 
-Перевод не размазан по установщику: каждый harness — отдельный адаптер
-(`internal/also/adapters_<id>.go`), который описывает нативные пути,
-возможности, форматы MCP/hooks/settings и диалекты команд/агентов. Система
-отвечает за пакеты, digest, установку, обратимые правки и безопасность границ;
-адаптер — за то, как именно harness представляет инфраструктуру.
-
-Новый harness = новый файл-адаптер + `init()`-регистрация, без правок
-`install`/`render`/`mcp`/`hooks`. Адаптеры проходят валидацию при регистрации:
-уникальные имена, безопасные пути, известные форматы, обязательные
-конфиги/события. Пути, выбранные адаптером, дополнительно ограничиваются
-проектом (или `$HOME` для global) во время установки.
-
-Подробности и шаблон: [`docs/ADAPTERS.md`](docs/ADAPTERS.md).
-
-## Версии и чистота репозитория
-
-Версия пакета — content hash, но она **не создаёт папку на каждую версию**.
-В set-репозитории живёт ровно одно актуальное дерево пакета:
-
-```
-packages/<name>/
-├── also-pkg.json      # метаданные, label, digest, created_at
-└── origin/...         # файлы инфраструктуры
-```
-
-Каждая версия закреплена неизменяемым git-тегом
-`refs/tags/also/<name>/<version>`. Старые версии достаются из истории git
-(`git archive`), а не из копий каталогов. Поэтому:
-
-- новая версия переписывает только одно дерево пакета;
-- `install pkg@version` и `install pkg@label` работают через теги;
-- `list --versions` видит всю историю, включая миграцию старого layout;
-- репозиторий остаётся чистым: `packages/<name>/{also-pkg.json,origin}`.
-
-Старый layout с `packages/<name>/<version>/` читается автоматически и
-конвертируется командой `also connect <name> <git-url> --migrate`; миграция
-сохраняет оригинальные timestamps версий в аннотированных тегах.
-
-## Установка
+Run one command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
-also setup
 ```
 
-`install.sh` определяет OS/архитектуру, проверяет checksum релиза и ставит
-бинарник в `~/.local/bin` без sudo. Переменные: `ALSO_VERSION`,
-`ALSO_INSTALL_DIR`. Для Windows есть `install.ps1`.
+The installer detects the operating system and architecture, downloads the latest release from GitHub, verifies its SHA-256 checksum, installs the binary into `~/.local/bin`, and immediately launches the interactive setup. Setup detects installed harness command-line interfaces, asks for a default harness and scope, connects one or more remote namespaces, and optionally installs a starter package.
 
-Через Go:
+On Windows, use PowerShell:
 
-```sh
-go install github.com/seinsdieum/also@latest
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/seinsdieum/also/main/install.ps1 | iex"
 ```
 
-Из исходников:
+For unattended machines, set `ALSO_NO_SETUP=1` and provide setup flags:
 
 ```sh
-go build -o bin/also .
-# или
-make build && make install PREFIX=$HOME/.local
-```
-
-Требуется системный `git` (используются ваши SSH-ключи и credential helper) и Go 1.23+ для сборки.
-
-## Быстрый старт
-
-```sh
-# 0. Первичная настройка: harness, scope, namespace
-also setup
-
-# 1. Или подключить существующий git-репозиторий вручную
-also connect personal git@github.com:you/ai-infra.git --default
-
-# 2. Закодировать папку-бандл и запушить её в namespace
-also push ./code-review
-
-# 3. Забрать инфраструктуру живого проекта и сразу запушить
-also adopt . for claude --name code-review
-
-# 4. Установить в текущий проект
-also install code-review for opencode
-
-# 5. Посмотреть, что реально установлено
-also tree
-```
-
-`also setup` интерактивен; для CI:
-
-```sh
+curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | ALSO_NO_SETUP=1 sh
 also setup --yes --harness opencode \
-  --namespace personal=git@github.com:you/ai-infra.git \
+  --namespace personal=git@github.com:you/ai-infrastructure.git \
   --default-namespace personal
 ```
 
-Пример `~/Development/ai-infra/code-review` для Claude:
-
-```
-code-review/
-├── CLAUDE.md
-├── skills/reviewer/SKILL.md
-├── commands/review.md
-├── agents/critic.md
-├── hooks/guard.sh
-├── settings.json          # hooks (и прочие настройки — сохраняются, но не все ставятся)
-└── .mcp.json
-```
-
-## CLI как язык
-
-`also` говорит на коротком английском: сначала глагол, потом объект, условия —
-обычными словами. Флаги остались для скриптов и сложных случаев, но не нужны
-для повседневной работы.
+You can also install with Go:
 
 ```sh
-also use personal                                  # активный namespace
-also install awesome-design for opencode           # пакет в конкретный harness
-also install reviewer skill from personal@code-review for opencode
-also install guard hook from code-review           # только один hook
-also install github mcp from personal@tools        # только один MCP-сервер
-also exclude infra                                 # harness-файлы в .gitignore
-also include you                                   # убрать метаданные also из .gitignore
-also add harness ./adapters/pi.json                # community-harness
+go install github.com/seinsdieum/also@latest
+also setup
 ```
 
-Если harness не выбран и значения по умолчанию нет, `also` не угадывает:
+A namespace is any existing git repository. It is only a name and a remote uniform resource locator; the local clone is an internal cache. Connect one manually if you skipped setup:
 
-```
-$ also install awesome-design for
-Which harness? Please clarify!
-You've got: claude, codex, opencode, qwen
-Try: also install <package> for <harness>
+```sh
+also connect personal git@github.com:you/ai-infrastructure.git
 ```
 
-`namespace` — это настроенный набор (`set`). Активный namespace определяет,
-куда уйдут `push`/`adopt` и откуда по умолчанию читаются пакеты. Точечно
-namespace указывается как `personal@package` или словами `from personal`.
+Then install and inspect a package:
 
-Выборочная установка записывается в состояние (`parts`): `also upgrade`
-обновляет только выбранные части и не добавляет компоненты, которые вы не
-просили. `adopt` при этом забирает всё, что реально лежит в проекте —
-установленные части и новые файлы, созданные вами.
-
-Один и тот же пакет можно держать в нескольких harness одного проекта: у
-каждой пары пакет/harness свой слот состояния, поэтому установка в OpenCode
-не удаляет установку в Claude.
-
-## Команды
-
-| Команда | Что делает |
-|---|---|
-| `also setup [--yes] [--harness H] [--namespace N=URL]` | Первичная настройка: harness, scope, namespace, опционально стартовый пакет. |
-| `also use [namespace]` | Показать namespace или сделать его активным. |
-| `also connect <name> <git-url> [--default]` | Подключить удалённый namespace. Локальный клон — внутренний кэш. |
-| `also connect <name> <git-url> --migrate` | Перевести старый layout `packages/<pkg>/<version>/` на одно дерево + git-теги. |
-| `also connect` | Показать подключённые namespace. |
-| `also config` / `also config set <key> <value>` | `default_namespace`, `default_harness`, `default_scope`. |
-| `also list [--refresh] [--versions] [--from <url>]` | Пакеты и версии в namespace. |
-| `also show <pkg>[@version]` | Манифест, компоненты, MCP/hooks, версии. |
-| `also push <bundle-dir> [for <harness>] [--name N] [--label v1.2]` | Закодировать бандл, закоммитить и запушить новую версию. |
-| `also install <pkg>[@version] for <harness>` | Развернуть пакет в нативный формат. |
-| `also install <part> <kind> from [namespace@]<pkg> [for <harness>]` | Установить одну часть: `skill`, `command`, `agent`, `plugin`, `hook`, `mcp`, `settings`, `instructions` или custom-kind. |
-| `also exclude\|include infra [for <harness>] [in <dir>]` | Управлять `.gitignore` для harness-инфраструктуры проекта. |
-| `also exclude\|include you` | Управлять `.gitignore` для `.also-layers/` и `.also/`. |
-| `also add harness <file\|url>` / `also remove harness <id>` | Подключить или убрать community-адаптер. |
-| `also list harnesses` | Показать built-in и community harness. |
-| `also upgrade\|update [pkg...] [--check] [--force]` | Обновить установленное (для того harness, куда ставили). |
-| `also reshape <harness> [pkg...] [--force]` | Пересобрать установленное в другой harness, сохранив версию. |
-| `also tree [for <harness>] [--json]` | Дерево **только установленной** инфраструктуры. |
-| `also adopt <project-dir> [for <harness>] [--name N] [--into <dir>]` | Забрать инфраструктуру живого проекта и запушить в namespace. |
-| `also uninstall <pkg> [for <harness>] [--scope] [--project] [--all] [--force]` | Удалить установленное и откатить правки конфигов. |
-
-Полезные флаги:
-
-- `for <harness>` — основной способ выбрать harness; `-h/--harness` оставлен для скриптов. **`-h` — это harness, а не help**; справка — `--help`.
-- `--scope project` — по умолчанию (см. `default_scope`); `--scope global` — конфиг пользователя.
-- `--force` — перезаписать изменённые вручную файлы/конфликты. Перед перезаписью делается бэкап.
-- `--no-config` — ставить только портируемые компоненты, не трогать MCP/hooks.
-- `--offline` — не ходить в сеть; если локального клона нет, команда завершится ошибкой.
-- `--from <url>` — установить/посмотреть без настройки namespace (нужен только read-доступ).
-- `--allow-secrets`, `--allow-large` — явно разрешить то, что по умолчанию отклоняется.
-
-## Что такое версия
-
-Версия — не ручной semver, а **content hash**:
-
-```
-version = sha256(schema, name, description, source_harness, label, все файлы origin)[:16]
+```sh
+also install code-review for opencode
+also tree
 ```
 
-Свойства:
+Capture a live project back into a new package version:
 
-- Одинаковое содержимое → одна и та же версия, повторный `push` — no-op.
-- Изменение любого файла, описания или label → новая версия.
-- Пакет проверяется при установке: `also-pkg.json.digest` должен совпасть с содержимым.
-- `@latest` — версия с самым новым git-коммитом, `@v1.2` — человеческий label, `@a1b2c3` — префикс хеша.
-
-`--label` — только удобный алиас. Он не влияет на порядок: «новее» = позже закоммичено.
-Это осознанный компромисс: content-addressed версии не требуют ручного бампа и не дают
-«забыл поднять версию».
-
-## Layout удалённого репозитория
-
+```sh
+also adopt . for claude --name code-review
 ```
-ai-infra.git/
-├── also-set.json
+
+Keep the tool current:
+
+```sh
+also update
+```
+
+`also update` checks the latest GitHub release, verifies the published checksum and replaces the current binary. If a newer release exists, ordinary commands occasionally print a single notice with the next step.
+
+## 3. What also Does
+
+### Namespaces and packages
+
+A namespace is a remote git repository that stores packages. A package is a directory tree inside that repository with one live version and immutable version tags. The version identifier is the first sixteen hexadecimal characters of a content digest, so identical content always produces the same version and different content can never reuse an old one.
+
+```text
+namespace repository
 ├── packages/
 │   └── code-review/
-│       ├── also-pkg.json          # метаданные последней версии, digest, created_at
-│       └── origin/                # байт-в-байт то, что вы запушили
-│           ├── CLAUDE.md
-│           ├── skills/...
-│           ├── commands/...
-│           ├── agents/...
-│           ├── hooks/...
-│           ├── settings.json
-│           └── .mcp.json
-└── refs/tags/also/code-review/<version>   # неизменяемые снимки всех версий
+│       ├── also-pkg.json        package metadata and digest
+│       └── origin/              the portable bundle
+└── refs/tags/also/code-review/<version>
 ```
 
-- Один репозиторий = один namespace = много пакетов.
-- В рабочем дереве живёт только последняя версия каждого пакета; старые версии
-  достаются из git-тегов, а не из копий каталогов.
-- Версии только добавляются; `also` никогда не перезаписывает существующую версию.
-- Старый layout `packages/<pkg>/<version>/` читается автоматически и переводится
-  командой `also connect <name> <git-url> --migrate`.
-- `also-set.json` и `packages/**` — единственные управляемые пути. Namespace — это
-  только имя и git URL; локальный клон и есть внутренний кэш.
+Older versions are read from git tags. The working tree never accumulates one directory per version.
 
-Полная спецификация: [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md).
+### Adapters
 
-## Поддерживаемые harness
-
-| Harness | Instructions | Skills | Commands | Agents | Plugins | Hooks | MCP |
-|---|---|---|---|---|---|---|---|
-| Claude Code | `CLAUDE.md` | `skills/` | `commands/` | `agents/` | — | `settings.json` | `~/.claude.json`, `.mcp.json` |
-| OpenCode | `AGENTS.md` | `skills/` | `commands/` | `agents/` | `plugins/` | plugins (код) | `opencode.json(c)` → `mcp.servers` (или legacy `mcp.<name>`) |
-| Codex CLI | `AGENTS.md` | `.agents/skills/` | — | — | — | `hooks.json` | `config.toml` → `[mcp_servers.*]` |
-| Qwen Code | `QWEN.md` | `skills/` | `commands/` | `agents/` | — | `settings.json` | `settings.json` → `mcpServers` |
-
-Пути указаны относительно корня конфигурации harness; для project scope — относительно проекта.
-Точные пути — в `internal/also/harness.go`. Community-адаптеры добавляют свои harness
-без пересборки: `also add harness <file|url>`
-
-## MCP и hooks: что реально транслируется
-
-**MCP** нормализуется в общую модель (`stdio` / `http`, command, env, url, headers) и
-записывается в нативный формат цели. Поддерживаются все четыре harness.
-
-**Hooks** транслируются между декларативными форматами Claude / Codex / Qwen
-(общие события вроде `PreToolUse`, `PostToolUse`, `Stop`, `SessionStart`). События, которых
-нет у цели, пропускаются с предупреждением.
-
-Ограничения, о которых нужно знать:
-
-- **OpenCode не имеет декларативных hooks** — это JS/TS-плагины. При установке в OpenCode
-  hooks пропускаются с предупреждением. Плагины OpenCode копируются как файлы только
-  opencode → opencode.
-- Тела hook-команд копируются **как есть**. Переменные вида `$CLAUDE_PROJECT_DIR` и пути
-  к скриптам не переписываются; установщик предупреждает об этом.
-- Namespace в Qwen: `$ARGUMENTS` ↔ `{{args}}`, `` !`cmd` `` ↔ `!{cmd}` переводятся;
-  позиционные `$1..$9` копируются с предупреждением.
-- Claude/Qwen требуют подтверждения project MCP-серверов; Codex загружает project
-  `.codex` только в trusted-проекте; OpenCode при долго работающем service может требовать
-  `opencode reload`. Эти предупреждения выводятся при установке.
-- Вложенные `AGENTS.md` (по директориям) в v1 не устанавливаются: только корневой.
-- Inline-определения агентов/команд внутри `opencode.json` не извлекаются в пакет.
-  Используйте файловые `agents/*.md` и `commands/*.md`, если нужна переносимость.
-- Permissions, модели по умолчанию, темы, провайдеры и прочие настройки сохраняются в
-  пакете, но не устанавливаются: `also` не переписывает чужие policy-настройки.
-
-## Надёжность и безопасность
-
-- **Пакет не может писать вне целевой директории harness**: пути валидируются, `..` и
-  абсолютные пути отклоняются, symlink'и в пакете запрещены.
-- **Секреты по умолчанию не уезжают**: `.env*`, `*.pem`, `*.key`, `auth.json`, БД и т.п.
-  блокируются. Литеральные значения MCP `env`/`headers` с ключами вида `API_KEY`,
-  `TOKEN`, `Authorization` блокируются отдельно. Обойти — только явным `--allow-secrets`.
-- **Managed blocks**: инструкции пакета живут в файле между маркерами
-  `<!-- also:begin set/pkg -->` / `<!-- also:end set/pkg -->`. Ваш текст вокруг не трогается.
-- **Reversible config edits**: каждая правка MCP/hooks/settings записывается в состояние. При
-  `upgrade` старая правка снимается, при `uninstall` — восстанавливается предыдущее значение.
-  Если значение изменили вы — без `--force` она не будет тронута. Файл конфигурации,
-  созданный `also` и ставший пустым после удаления, удаляется.
-- **Native layers для round-trip**: `adopt` кладёт неподдерживаемые промежуточным harness
-  части в `.also-layers/<harness>/` вместе с манифестом baseline-хешей. При возврате в
-  исходный harness native-файл побеждает, **только если** переведённая копия не менялась;
-  локальные правки в промежуточном harness сохраняются.
-- **Конфликты**: если файл уже существует и не принадлежит `also`, установка по умолчанию
-  падает. `--force` перезаписывает, сохраняя копию в `~/.also/backups/<timestamp>/`.
-- **Транзакционность**: все файлы и конфиги меняются через журнал; при ошибке на любом шаге
-  выполняется rollback. Состояние пишется атомарно (temp + rename).
-- **Блокировка**: изменяющие команды сериализуются через `~/.also/lock`.
-- **Git-семантика**: версия становится доступной после коммита и push. Если push не удался,
-  коммит остаётся локально; повторный `also push` дошлёт его.
-- **Никакой магии с remote**: `also` пишет только в remote, настроенный для набора, и
-  проверяет, что локальный клон смотрит именно туда.
-
-## Конфигурация и состояние
-
-```
-~/.also/
-├── config.json        # namespaces, default_namespace, default_harness, default_scope
-├── state.json         # установки, файлы, блоки, правки конфигов
-├── cache/<hash>/      # внутренние клоны namespace и --from <url>
-├── backups/<ts>/      # копии перезаписанных файлов
-└── lock
-```
-
-`ALSO_HOME` переопределяет корень (удобно для тестов и изоляции).
-
-Пример конфига:
-
-```json
-{
-  "schema": "also.config/v2",
-  "default_namespace": "personal",
-  "default_harness": "opencode",
-  "default_scope": "project",
-  "namespaces": {
-    "personal": {
-      "remote": "git@github.com:you/ai-infra.git"
-    }
-  }
-}
-```
-
-## Ограничения v1
-
-- Только один remote на namespace; репозиторий должен уже существовать.
-- Нет автоматического `gh repo create`.
-- `adopt` работает с project-scope раскладкой harness; глобальные конфиги не забирает.
-- Symlink'и в бандлах не поддерживаются (явная ошибка вместо тихого копирования).
-- Windows проверен на Windows 11 ARM64 (portable MinGit): clone set, install/uninstall,
-  cross-harness и round-trip пакеты. Нужен установленный `git`; harness CLI на Windows
-  не проверялись (их проверка выполнена на macOS).
-- Кэш namespace принудительно использует LF (`core.autocrlf=false`), иначе на
-  Windows ломается content digest.
-- Content hash ≠ semver: порядок версий определяется git-историей, а не номером.
-- Два пакета не могут владеть одним и тем же файлом скилла/команды/агента: второй
-  `install` упадёт с конфликтом. Переименуйте компонент в одном из пакетов.
-- Общие MCP-серверы и hook-группы: если значение уже настроено (вами или другим пакетом),
-  `also` не создаёт дубликат и не претендует на владение. При удалении пакета, который
-  создал значение, оно будет восстановлено/удалено по правилам его собственной записи.
-- Cross-harness permissions **не транслируются автоматически** (риск выдать лишние права):
-  они сохраняются в universal-пакете/native-слое и возвращаются при установке в исходный harness.
-- Новый harness добавляется адаптером (`docs/ADAPTERS.md`). Built-in адаптеры
-  компилируются в бинарник; community-адаптер можно подключить без сборки:
-  `also add harness <file|url>`. Динамической загрузки стороннего кода нет:
-  адаптер выбирает только зарегистрированные форматы и пути, а система
-  проверяет их и ограничивает запись.
-- Бандлы без однозначных маркеров (`CLAUDE.md`, `QWEN.md`, `opencode.json`, `.codex`/`config.toml`)
-  требуют явного `for <harness>` или `-h/--harness`: например, одинокий `AGENTS.md` не говорит, Codex это или OpenCode.
-
-## E2E-проверка
-
-Реальный стресс-прогон на приватном git-репозитории (4 инфраструктуры × 4 harness,
-16 обратных round-trip через `adopt`) и проверка установки самими CLI описаны в
-[docs/E2E_REPORT.md](docs/E2E_REPORT.md). Итог: 16/16 round-trip совпали;
-Claude/Codex/OpenCode/Qwen загружают инструкции, skills и hooks из установленных файлов.
-
-## Roadmap
-
-План до 1.0, remote-only namespaces, curl-установка и интерактивный `also setup`:
-[docs/ROADMAP.md](docs/ROADMAP.md). Справочник команд, JSON и exit codes:
-[docs/CLI.md](docs/CLI.md). Контракты форматов: [docs/CONTRACTS.md](docs/CONTRACTS.md).
-
-## Разработка
+An adapter describes where a harness keeps each component and how it encodes configuration. Adding a community harness does not require recompiling `also` when the harness reuses an existing encoding:
 
 ```sh
-make test      # go test ./...
-make vet
-make build
+also add harness ./harness.json
+also add harness https://example.com/harness.json --sha256 <digest>
 ```
 
-Тесты поднимают временный bare-репозиторий и проверяют полный цикл:
-push → install → upgrade → reshape → uninstall, managed blocks, MCP/hooks merge,
-восстановление предыдущих значений и отказ при локальных изменениях.
+Adapters are declarative. They cannot execute code, their global paths must stay below the home directory, and downloaded specifications can be pinned to an exact checksum.
 
-## Структура
+### Supported harnesses
 
+| Harness | Instructions | Skills | Commands and agents | Hooks and settings | Model Context Protocol |
+|---|---|---|---|---|---|
+| Claude Code | `CLAUDE.md` | `.claude/skills` | yes | yes | yes |
+| Codex CLI | `AGENTS.md` | `.agents/skills` | not supported by the harness | project layers require a trusted project | yes |
+| OpenCode | `AGENTS.md` | `.opencode/skills` | yes | yes | yes |
+| Qwen Code | `QWEN.md` | `.qwen/skills` | yes | yes | yes |
+
+Cross-harness translation is deliberately honest. A component that has no equivalent in the target harness is skipped with a warning instead of being written into a file the harness ignores. Native data that cannot be translated is preserved in `.also-layers/` so a later round trip can restore it.
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="A package is rendered into harness layouts and stored in a namespace repository" width="100%">
+</p>
+
+### Installation is reversible
+
+`also` remembers every created file, managed instructions block and configuration edit in `~/.also/state.json`. Uninstalling removes only what the package still owns. If you edited a file, `also` refuses to delete it unless you pass `--force`, and it keeps a backup before overwriting anything.
+
+Project scope is the default. Global scope writes to the user-wide configuration of the selected harness. The same package can be installed into several harnesses in one project because each installation slot includes the harness.
+
+### Partial installation
+
+Install only the parts you want:
+
+```sh
+also install review skill from personal@code-review for opencode
+also install mcp from code-review
 ```
-internal/also/       ядро: git, пакеты, harness-адаптеры, рендеринг, установка
-internal/cli/        cobra-команды
-main.go
-docs/PACKAGE_FORMAT.md
+
+Supported selectors include `instructions`, `skills`, `commands`, `agents`, `plugins`, `hooks`, `mcp`, `settings` and adapter-defined component kinds.
+
+### Main commands
+
+| Command | Purpose |
+|---|---|
+| `also setup` | Interactive first-run setup with harness, scope and namespace choices. |
+| `also connect <name> <git-url>` | Connect a remote namespace. |
+| `also use <namespace>` | Choose the active namespace. |
+| `also list` | List packages and versions in a namespace. |
+| `also show <package>[@version]` | Show a package manifest and its components. |
+| `also install <package> for <harness>` | Install a package into a harness. |
+| `also adopt <project> for <harness>` | Capture a live project and publish a new package version. |
+| `also push <bundle> for <harness>` | Encode a hand-written bundle and publish it. |
+| `also upgrade` | Upgrade installed packages to their newest versions. |
+| `also reshape <harness>` | Re-materialize installed packages for another harness. |
+| `also tree` | Show only the installed infrastructure. |
+| `also uninstall <package>` | Remove an installation and reverse its configuration edits. |
+| `also doctor` | Check git, configuration, adapters, caches and installs. |
+| `also verify` | Verify package digests, version tags and installation state. |
+| `also repair <namespace>` | Re-clone a broken internal namespace cache. |
+| `also update` | Update the binary to the latest published release. |
+
+The complete command reference, JSON output shapes and exit codes live in [docs/CLI.md](docs/CLI.md).
+
+### Update notices
+
+On a successful command, `also` consults the latest GitHub release at most once per day. It caches the answer in `~/.also/update-check.json` and prints a short “New version available” line at most once per interval, on standard error, so machine-readable output stays clean. Set `ALSO_NO_UPDATE_CHECK=1` to disable the lookup.
+
+## 4. Contributing
+
+Contributions are welcome. The project is written in Go and targets Go 1.23 or newer.
+
+```sh
+git clone https://github.com/seinsdieum/also.git
+cd also
+make check          # formatting, vet and tests
+make build          # build bin/also
+make smoke          # exercise the real harness command-line interfaces, if installed
 ```
+
+`make check` runs `gofmt`, `go vet` and the full test suite with the race detector in continuous integration. The four-by-four harness matrix in `test/e2e/matrix_test.go` runs on every platform. The `make smoke` target is optional locally because it needs the real harness binaries; it never calls a model.
+
+Useful documents:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the package, adapter and rendering model;
+- [docs/ADAPTERS.md](docs/ADAPTERS.md) for adding a harness without recompiling;
+- [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md) for the package contract;
+- [docs/CONTRACTS.md](docs/CONTRACTS.md) for schema stability and migration policy;
+- [docs/CLI.md](docs/CLI.md) for the command reference.
+
+Before opening a pull request, run `make check`, keep user-facing text in complete English sentences, and add a test for any new branch, parser, security check or installer path. Adapter changes must keep the declarative path bounds and must not execute code. Security issues should go through the private channel described in [SECURITY.md](SECURITY.md), not through a public issue.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+
+## 5. Credits
+
+`also` is built with the Go programming language, the Cobra command-line framework, the BurntSushi TOML library and the `yaml.v3` library. It exists because Claude Code, Codex CLI, OpenCode and Qwen Code each publish a thoughtful but different configuration model. The illustrations in this repository were designed for the project in the same cobalt-blue visual language.
+
+Thank you to every contributor and to the maintainers of those projects and libraries.
+
+## 6. License
+
+`also` is released under the [Apache License 2.0](LICENSE). You may use it in personal and commercial products.
+
+The license keeps authorship with the project and requires that redistributions preserve the copyright notice and the [NOTICE](NOTICE) file. If you embed `also` inside another product, credit the project in that product's credits or documentation. The NOTICE file records the exact attribution text.
+
+Third-party dependencies remain under their own licenses.

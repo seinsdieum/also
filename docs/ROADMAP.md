@@ -21,10 +21,12 @@
 - 4×4 E2E: 16/16 round-trip, `compare8.out`; повторно 16/16 после
   remote-only (`compare9.out`), плюс `test/e2e` в обычном `go test`;
 - remote-only namespaces: `also connect <name> <git-url>`, единый внутренний кэш;
-- `also setup` (интерактивный и `--yes`) и `install.sh`/`install.ps1`;
+- `also setup` (интерактивный и `--yes`) и `install.sh`/`install.ps1`
+  (установщик сразу запускает setup);
 - `adopt` публикует прямо в namespace без локального source-каталога;
-- importable module, MIT license, CI и release workflow;
-- `also doctor`, `also verify`, `also repair`;
+- importable module, Apache-2.0 + NOTICE, CI и release workflow;
+- `also doctor`, `also verify`, `also repair`, `also update` и уведомление о
+  новой версии раз в сутки;
 - JSON-вывод, `also version --json`, `docs/CLI.md`;
 - контракты и политика версий: `docs/CONTRACTS.md`;
 - `go test -race`, `make check`, покрытие ядра ~73%, CLI ~33%.

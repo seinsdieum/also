@@ -25,6 +25,7 @@ func Execute() int {
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		return 1
 	}
+	maybeNotifyUpdate()
 	return 0
 }
 
@@ -47,6 +48,7 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(
 		newVersionCmd(),
 		newSetupCmd(),
+		newUpdateCmd(),
 		newUseCmd(),
 		newConnectCmd(),
 		newSetCmd(),
@@ -191,7 +193,7 @@ Without arguments, list connected namespaces.`
 		if len(args) != 2 {
 			return fmt.Errorf("usage: also connect <name> <git-url>")
 		}
-		if !yes && stdinIsTerminal() {
+		if !yes && promptAvailable() {
 			ok, err := confirm("Connect "+args[0]+" to "+args[1]+"?", true)
 			if err != nil {
 				return err
