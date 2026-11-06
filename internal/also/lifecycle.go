@@ -31,6 +31,7 @@ type InstallRequest struct {
 	Harness    string
 	Scope      string
 	Project    string
+	Parts      []string
 	Force      bool
 	WithConfig bool
 	Offline    bool
@@ -79,14 +80,23 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	if err != nil {
 		return nil, set, err
 	}
-	plan, err := BuildPlan(st, set, pkg, version, req.Harness, scope, project, InstallOptions{Force: req.Force, WithConfig: req.WithConfig})
+	opts := InstallOptions{Force: req.Force, WithConfig: req.WithConfig, Parts: req.Parts}
+	plan, err := BuildPlan(st, set, pkg, version, req.Harness, scope, project, opts)
 	if err != nil {
 		return nil, set, err
 	}
 	if len(plan.NewFiles) == 0 && plan.Block == nil && len(plan.Edits) == 0 {
+		if len(req.Parts) > 0 {
+			var available []string
+			if source, ok := ResolveHarness(pkg.Meta.SourceHarness); ok {
+				available = AvailableParts(pkg, source)
+			}
+			return nil, set, fmt.Errorf("no installable changes for the requested parts in %s: %s\navailable parts: %s",
+				pkg.Meta.Name, strings.Join(req.Parts, ", "), strings.Join(available, ", "))
+		}
 		return nil, set, fmt.Errorf("package %s has no components installable for %s", pkg.Meta.Name, req.Harness)
 	}
-	if err := ApplyPlan(st, plan, InstallOptions{Force: req.Force, WithConfig: req.WithConfig}); err != nil {
+	if err := ApplyPlan(st, plan, opts); err != nil {
 		return nil, set, err
 	}
 	return plan, set, nil
@@ -138,13 +148,14 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 			out = append(out, res)
 			continue
 		}
-		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, InstallOptions{Force: force, WithConfig: in.WithConfig})
+		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
+		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue
 		}
-		if err := ApplyPlan(st, plan, InstallOptions{Force: force, WithConfig: in.WithConfig}); err != nil {
+		if err := ApplyPlan(st, plan, opts); err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue
@@ -295,13 +306,14 @@ func Reshape(cfg *Config, st *State, to string, pkgs []string, force bool) ([]Re
 			continue
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
-		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, InstallOptions{Force: force, WithConfig: in.WithConfig})
+		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
+		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue
 		}
-		if err := ApplyPlan(st, plan, InstallOptions{Force: force, WithConfig: in.WithConfig}); err != nil {
+		if err := ApplyPlan(st, plan, opts); err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue

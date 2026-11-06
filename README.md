@@ -105,27 +105,68 @@ code-review/
 └── .mcp.json
 ```
 
+## CLI как язык
+
+`also` говорит на коротком английском: сначала глагол, потом объект, условия —
+обычными словами. Флаги остались для скриптов и сложных случаев, но не нужны
+для повседневной работы.
+
+```sh
+also use personal                                  # активный namespace
+also install awesome-design for opencode           # пакет в конкретный harness
+also install reviewer skill from personal@code-review for opencode
+also install guard hook from code-review           # только один hook
+also install github mcp from personal@tools        # только один MCP-сервер
+also exclude infra                                 # harness-файлы в .gitignore
+also include you                                   # убрать метаданные also из .gitignore
+also add harness ./adapters/pi.json                # community-harness
+```
+
+Если harness не выбран и значения по умолчанию нет, `also` не угадывает:
+
+```
+$ also install awesome-design for
+Which harness? Please clarify!
+You've got: claude, codex, opencode, qwen
+Try: also install <package> for <harness>
+```
+
+`namespace` — это настроенный набор (`set`). Активный namespace определяет,
+куда уйдут `push`/`adopt` и откуда по умолчанию читаются пакеты. Точечно
+namespace указывается как `personal@package` или словами `from personal`.
+
+Выборочная установка записывается в состояние (`parts`): `also upgrade`
+обновляет только выбранные части и не добавляет компоненты, которые вы не
+просили. `adopt` при этом забирает всё, что реально лежит в проекте —
+установленные части и новые файлы, созданные вами.
+
 ## Команды
 
 | Команда | Что делает |
 |---|---|
+| `also use [namespace]` | Показать namespace или сделать его активным. |
 | `also set <name> --remote <url> [--source <dir>] [--default]` | Подключить набор. Локальный клон: `~/.also/sets/<name>`. |
 | `also set <name> --migrate` | Перевести старый layout `packages/<pkg>/<version>/` на одно дерево + git-теги. |
 | `also set` | Показать настроенные наборы. |
 | `also config` / `also config set <key> <value>` | `default_set`, `default_harness`, `default_scope`. |
 | `also list [--refresh] [--versions] [--from <url>]` | Пакеты и версии в наборе. |
 | `also show <pkg>[@version]` | Манифест, компоненты, MCP/hooks, версии. |
-| `also push <bundle-dir> [--name N] [--label v1.2] [--harness H]` | Закодировать бандл, закоммитить и запушить новую версию. |
-| `also install <pkg>[@version] [-h harness] [--scope global\|project]` | Развернуть пакет в нативный формат. |
-| `also upgrade [pkg...] [--check] [--force]` | Обновить установленное (для того harness, куда ставили). |
+| `also push <bundle-dir> [for <harness>] [--name N] [--label v1.2]` | Закодировать бандл, закоммитить и запушить новую версию. |
+| `also install <pkg>[@version] for <harness>` | Развернуть пакет в нативный формат. |
+| `also install <part> <kind> from [namespace@]<pkg> [for <harness>]` | Установить одну часть: `skill`, `command`, `agent`, `plugin`, `hook`, `mcp`, `settings`, `instructions` или custom-kind. |
+| `also exclude\|include infra [for <harness>] [in <dir>]` | Управлять `.gitignore` для harness-инфраструктуры проекта. |
+| `also exclude\|include you` | Управлять `.gitignore` для `.also-layers/` и `.also/`. |
+| `also add harness <file\|url>` / `also remove harness <id>` | Подключить или убрать community-адаптер. |
+| `also list harnesses` | Показать built-in и community harness. |
+| `also upgrade\|update [pkg...] [--check] [--force]` | Обновить установленное (для того harness, куда ставили). |
 | `also reshape <harness> [pkg...] [--force]` | Пересобрать установленное в другой harness, сохранив версию. |
-| `also tree [--json]` | Дерево **только установленной** инфраструктуры. |
-| `also adopt <project-dir> [--name N] [-h harness] [--into <dir>]` | Забрать инфраструктуру живого проекта в локальный бандл и запушить. |
-| `also uninstall <pkg> [--scope] [-h] [--project] [--all] [--force]` | Удалить установленное и откатить правки конфигов. |
+| `also tree [for <harness>] [--json]` | Дерево **только установленной** инфраструктуры. |
+| `also adopt <project-dir> [for <harness>] [--name N] [--into <dir>]` | Забрать инфраструктуру живого проекта в локальный бандл и запушить. |
+| `also uninstall <pkg> [for <harness>] [--scope] [--project] [--all] [--force]` | Удалить установленное и откатить правки конфигов. |
 
 Полезные флаги:
 
-- `-h, --harness` — целевой harness (`claude`, `opencode`, `codex`, `qwen`). **`-h` — это harness, а не help**; справка — `--help`.
+- `for <harness>` — основной способ выбрать harness; `-h/--harness` оставлен для скриптов. **`-h` — это harness, а не help**; справка — `--help`.
 - `--scope project` — по умолчанию (см. `default_scope`); `--scope global` — конфиг пользователя.
 - `--force` — перезаписать изменённые вручную файлы/конфликты. Перед перезаписью делается бэкап.
 - `--no-config` — ставить только портируемые компоненты, не трогать MCP/hooks.
@@ -157,24 +198,26 @@ version = sha256(schema, name, description, source_harness, label, все фай
 ```
 ai-infra.git/
 ├── also-set.json
-└── packages/
-    └── code-review/
-        ├── 54883c0efc5b4330/
-        │   ├── also-pkg.json
-        │   └── origin/            # байт-в-байт то, что вы запушили
-        │       ├── CLAUDE.md
-        │       ├── skills/...
-        │       ├── commands/...
-        │       ├── agents/...
-        │       ├── hooks/...
-        │       ├── settings.json
-        │       └── .mcp.json
-        └── a8f2dda2a8a51341/
-            └── ...
+├── packages/
+│   └── code-review/
+│       ├── also-pkg.json          # метаданные последней версии, digest, created_at
+│       └── origin/                # байт-в-байт то, что вы запушили
+│           ├── CLAUDE.md
+│           ├── skills/...
+│           ├── commands/...
+│           ├── agents/...
+│           ├── hooks/...
+│           ├── settings.json
+│           └── .mcp.json
+└── refs/tags/also/code-review/<version>   # неизменяемые снимки всех версий
 ```
 
-- Один репозиторий = один набор (`set`) = много пакетов.
+- Один репозиторий = один набор (`set`/namespace) = много пакетов.
+- В рабочем дереве живёт только последняя версия каждого пакета; старые версии
+  достаются из git-тегов, а не из копий каталогов.
 - Версии только добавляются; `also` никогда не перезаписывает существующую версию.
+- Старый layout `packages/<pkg>/<version>/` читается автоматически и переводится
+  командой `also set <name> --migrate`.
 - `also-set.json` и `packages/**` — единственные управляемые пути. Ваши локальные бандлы
   остаются там, где вы их держите; `--source` — только ссылка на них.
 
@@ -190,7 +233,8 @@ ai-infra.git/
 | Qwen Code | `QWEN.md` | `skills/` | `commands/` | `agents/` | — | `settings.json` | `settings.json` → `mcpServers` |
 
 Пути указаны относительно корня конфигурации harness; для project scope — относительно проекта.
-Точные пути — в `internal/also/harness.go`.
+Точные пути — в `internal/also/harness.go`. Community-адаптеры добавляют свои harness
+без пересборки: `also add harness <file|url>`
 
 ## MCP и hooks: что реально транслируется
 
@@ -297,11 +341,13 @@ ai-infra.git/
   создал значение, оно будет восстановлено/удалено по правилам его собственной записи.
 - Cross-harness permissions **не транслируются автоматически** (риск выдать лишние права):
   они сохраняются в universal-пакете/native-слое и возвращаются при установке в исходный harness.
-- Новый harness добавляется адаптером (`docs/ADAPTERS.md`); адаптеры компилируются
-  в бинарник, динамической загрузки стороннего кода нет. Валидация адаптера и
-  границ путей выполняется системой.
+- Новый harness добавляется адаптером (`docs/ADAPTERS.md`). Built-in адаптеры
+  компилируются в бинарник; community-адаптер можно подключить без сборки:
+  `also add harness <file|url>`. Динамической загрузки стороннего кода нет:
+  адаптер выбирает только зарегистрированные форматы и пути, а система
+  проверяет их и ограничивает запись.
 - Бандлы без однозначных маркеров (`CLAUDE.md`, `QWEN.md`, `opencode.json`, `.codex`/`config.toml`)
-  требуют явного `-h/--harness`: например, одинокий `AGENTS.md` не говорит, Codex это или OpenCode.
+  требуют явного `for <harness>` или `-h/--harness`: например, одинокий `AGENTS.md` не говорит, Codex это или OpenCode.
 
 ## E2E-проверка
 

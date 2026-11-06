@@ -20,10 +20,16 @@ func newListCmd() *cobra.Command {
 		versions bool
 		jsonOut  bool
 	)
-	c := newCmd("list", "List packages available in a set")
+	c := newCmd("list [packages|harnesses]", "List packages in a set or installed harnesses")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 && (args[0] == "harnesses" || args[0] == "harness") {
+			return printHarnesses()
+		}
+		if len(args) == 1 && args[0] == "packages" {
+			args = nil
+		}
 		if len(args) > 0 {
-			return fmt.Errorf("list takes no arguments")
+			return fmt.Errorf("usage: also list [packages|harnesses]")
 		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -124,19 +130,29 @@ func newShowCmd() *cobra.Command {
 		refresh bool
 		jsonOut bool
 	)
-	c := newCmd("show <package>[@version]", "Show a package manifest and its components")
+	c := newCmd("show <package>[@version] [from <namespace>]", "Show a package manifest and its components")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 {
-			return fmt.Errorf("usage: also show <package>[@version]")
-		}
-		pkgName, spec, err := also.ParsePkgSpec(args[0])
-		if err != nil {
-			return err
-		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
 		}
+		if len(args) == 3 && strings.EqualFold(args[1], "from") {
+			args = []string{args[2] + "@" + args[0]}
+		}
+		if len(args) != 1 {
+			return fmt.Errorf("usage: also show <package>[@version] [from <namespace>]")
+		}
+		ref, err := parsePkgRef(args[0], cfg)
+		if err != nil {
+			return err
+		}
+		if ref.Namespace != "" {
+			if setFlag != "" && setFlag != ref.Namespace {
+				return fmt.Errorf("namespace %q conflicts with --set %q", ref.Namespace, setFlag)
+			}
+			setFlag = ref.Namespace
+		}
+		pkgName, spec := ref.Package, ref.Version
 		name, sc, err := requireSet(cmd, cfg, setFlag, from)
 		if err != nil {
 			return err
@@ -314,8 +330,18 @@ func newPushCmd() *cobra.Command {
 commits it to the configured set repository, and pushes it. Re-running push with
 unchanged content is a no-op.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		args, forHarness, err := parseTrailingFor(args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
-			return fmt.Errorf("usage: also push <bundle-dir>")
+			return fmt.Errorf("usage: also push <bundle-dir> [for <harness>]")
+		}
+		if forHarness != "" {
+			if harness != "" && !strings.EqualFold(harness, forHarness) {
+				return fmt.Errorf("two different harnesses: %q and %q", harness, forHarness)
+			}
+			harness = forHarness
 		}
 		dir, err := also.AbsPath(args[0])
 		if err != nil {

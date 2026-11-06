@@ -163,6 +163,11 @@ type Paths struct {
 
 var harnesses []*Harness
 
+// externalHarnesses are declarative adapters loaded from disk. Keeping them
+// separate lets add/remove refresh the community registry without touching
+// compiled-in adapters.
+var externalHarnesses []*Harness
+
 // registerAdapter is called by adapter files from init(). Built-in adapters are
 // code, so an invalid one is a programming error and panics during init.
 func registerAdapter(h *Harness) {
@@ -546,10 +551,15 @@ func (h *Harness) SettingsTarget(t Target) string {
 	return h.Settings.Target(t)
 }
 
+func registeredAdapters() []*Harness {
+	out := append([]*Harness{}, harnesses...)
+	return append(out, externalHarnesses...)
+}
+
 // Harnesses returns the registered adapters sorted by id.
 func Harnesses() []*Harness {
 	ensureExternalAdapters()
-	out := append([]*Harness{}, harnesses...)
+	out := registeredAdapters()
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }

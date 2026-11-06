@@ -117,8 +117,20 @@ harness; `Format` restricts it to matching formats; `Convert` is optional.
 
 ## External declarative adapters
 
-A harness that reuses an existing format can be added without recompiling by
-putting JSON under `~/.also/adapters/` (or `ALSO_ADAPTERS=<dir>`):
+A harness that reuses an existing format can be added without recompiling:
+
+```sh
+also add harness ./acme.json
+also add harness https://example.com/pi-adapter.json
+also list harnesses
+also remove harness acme
+```
+
+The file is validated first, then saved under `~/.also/adapters/<id>.json`
+(or `ALSO_ADAPTERS=<dir>`). A community spec cannot shadow a built-in id or
+claim an alias that is already taken.
+
+The JSON shape is:
 
 ```json
 {

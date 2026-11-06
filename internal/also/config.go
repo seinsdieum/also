@@ -84,9 +84,9 @@ func (c *Config) ResolveSet(name string) (string, SetConfig, error) {
 			}
 		}
 		if len(c.Sets) == 0 {
-			return "", SetConfig{}, fmt.Errorf("no set configured; run: also set <name> --remote <git-url>")
+			return "", SetConfig{}, fmt.Errorf("no namespace configured; add one with: also set <name> --remote <git-url>")
 		}
-		return "", SetConfig{}, fmt.Errorf("default set is not set; pass --set or run: also config set default_set <name>")
+		return "", SetConfig{}, fmt.Errorf("no active namespace; run: also use <namespace> (configured: %v)", c.SetNames())
 	}
 	s, ok := c.Sets[name]
 	if !ok {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -16,6 +17,11 @@ import (
 func Execute() int {
 	root := NewRoot()
 	if err := root.Execute(); err != nil {
+		var ask *clarification
+		if errors.As(err, &ask) {
+			fmt.Fprintln(os.Stderr, ask.Error())
+			return 1
+		}
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		return 1
 	}
@@ -40,8 +46,13 @@ func NewRoot() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		newVersionCmd(),
+		newUseCmd(),
 		newSetCmd(),
 		newConfigCmd(),
+		newAddCmd(),
+		newRemoveCmd(),
+		newExcludeCmd(),
+		newIncludeCmd(),
 		newListCmd(),
 		newShowCmd(),
 		newPushCmd(),

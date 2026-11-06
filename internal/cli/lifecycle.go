@@ -23,26 +23,47 @@ func newInstallCmd() *cobra.Command {
 		offline  bool
 		noConfig bool
 	)
-	c := newCmd("install <package>[@version]", "Materialize a package for a harness")
-	c.Long = `Decodes a package into the native layout of the target harness. By default the
-scope comes from config (project); use --scope global for user-wide installs.
-Instructions are installed as a managed block; skills, commands and agents as
-files; MCP and hooks are merged into native config with reversible bookkeeping.`
+	c := newCmd("install [part kind] from <package> [for <harness>]", "Materialize a package or one part for a harness")
+	c.Long = `Decodes a package into the native layout of the target harness. The natural form
+is "also install <package> for <harness>" or
+"also install <part> <kind> from [namespace@]<package> [for <harness>]".
+By default the scope comes from config (project); use --scope global for
+user-wide installs. Instructions are installed as a managed block; skills,
+commands and agents as files; MCP and hooks are merged into native config with
+reversible bookkeeping.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 {
-			return fmt.Errorf("usage: also install <package>[@version]")
-		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
 		}
-		harnessID, err := cfg.Harness(harness)
+		spec, err := parseInstallArgs(args, cfg)
+		if err != nil {
+			return err
+		}
+		requestedHarness := harness
+		if spec.HarnessRequested {
+			if requestedHarness != "" && !strings.EqualFold(requestedHarness, spec.Harness) {
+				return fmt.Errorf("two different harnesses: %q and %q", requestedHarness, spec.Harness)
+			}
+			requestedHarness = spec.Harness
+		}
+		harnessID, err := resolveHarnessWord(cfg, requestedHarness, spec.HarnessRequested)
 		if err != nil {
 			return err
 		}
 		scopeID, err := cfg.Scope(scope)
 		if err != nil {
 			return err
+		}
+		installSet := setFlag
+		if spec.Ref.Namespace != "" {
+			if installSet != "" && installSet != spec.Ref.Namespace {
+				return fmt.Errorf("namespace %q conflicts with --set %q", spec.Ref.Namespace, installSet)
+			}
+			if from != "" {
+				return fmt.Errorf("namespace %q cannot be combined with --from <url>", spec.Ref.Namespace)
+			}
+			installSet = spec.Ref.Namespace
 		}
 		proj := project
 		if scopeID == "project" && proj == "" {
@@ -53,9 +74,9 @@ files; MCP and hooks are merged into native config with reversible bookkeeping.`
 		}
 		return withLock(func() error {
 			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
-				Package: args[0], Harness: harnessID, Scope: scopeID, Project: proj,
-				Force: force, WithConfig: !noConfig, Offline: offline,
-			}, setFlag, from)
+				Package: spec.Ref.spec(), Harness: harnessID, Scope: scopeID, Project: proj,
+				Parts: spec.Parts, Force: force, WithConfig: !noConfig, Offline: offline,
+			}, installSet, from)
 			if err != nil {
 				return err
 			}
@@ -63,15 +84,33 @@ files; MCP and hooks are merged into native config with reversible bookkeeping.`
 			return nil
 		})
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set name")
-	c.Flags().StringVar(&from, "from", "", "install from a remote git URL without configuring a set")
-	c.Flags().StringVarP(&harness, "harness", "h", "", "target harness (claude, opencode, codex, qwen)")
+	c.Flags().StringVarP(&setFlag, "set", "s", "", "set/namespace name")
+	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
+	c.Flags().StringVarP(&harness, "harness", "h", "", "target harness (claude, opencode, codex, qwen, ...)")
 	c.Flags().StringVar(&scope, "scope", "", "global or project (default from config)")
 	c.Flags().StringVarP(&project, "project", "p", "", "project directory for --scope project (default: cwd)")
 	c.Flags().BoolVar(&force, "force", false, "overwrite conflicting files and modified content (backups are kept)")
 	c.Flags().BoolVar(&offline, "offline", false, "use the local clone without fetching")
 	c.Flags().BoolVar(&noConfig, "no-config", false, "do not install MCP servers or hooks")
 	return c
+}
+
+func resolveHarnessWord(cfg *also.Config, requested string, sawFor bool) (string, error) {
+	if requested != "" {
+		h, ok := also.ResolveHarness(requested)
+		if !ok {
+			return "", unknownHarness(requested)
+		}
+		return h.ID, nil
+	}
+	if sawFor {
+		return "", clarifyHarnessFor(cfg)
+	}
+	id, err := cfg.Harness("")
+	if err != nil {
+		return "", clarifyHarness()
+	}
+	return id, nil
 }
 
 func printPlan(plan *also.Plan) {
@@ -81,6 +120,9 @@ func printPlan(plan *also.Plan) {
 	}
 	fmt.Printf(" -> %s (%s)\n", plan.Install.Harness, plan.Install.Scope)
 	fmt.Printf("root:  %s\n", plan.Install.Root)
+	if len(plan.Install.Parts) > 0 {
+		fmt.Printf("parts: %s\n", strings.Join(plan.Install.Parts, ", "))
+	}
 	fmt.Printf("files: %d\n", len(plan.NewFiles))
 	if plan.Block != nil {
 		fmt.Printf("instructions: %s\n", plan.Block.File)
@@ -108,6 +150,7 @@ func newUpgradeCmd() *cobra.Command {
 		force bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade installed packages to their latest version")
+	c.Aliases = []string{"update"}
 	c.Long = "Upgrades packages for the harness each one was installed for. Content is\ncontent-addressed: 'up to date' means the installed digest is still the newest."
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
@@ -207,8 +250,18 @@ func newTreeCmd() *cobra.Command {
 	)
 	c := newCmd("tree", "Show only the installed AI infrastructure")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		args, forHarness, err := parseTrailingFor(args)
+		if err != nil {
+			return err
+		}
 		if len(args) > 0 {
-			return fmt.Errorf("tree takes no arguments")
+			return fmt.Errorf("usage: also tree [for <harness>]")
+		}
+		if forHarness != "" {
+			if harness != "" && !strings.EqualFold(harness, forHarness) {
+				return fmt.Errorf("two different harnesses: %q and %q", harness, forHarness)
+			}
+			harness = forHarness
 		}
 		st, err := also.LoadState()
 		if err != nil {
@@ -310,8 +363,18 @@ func newUninstallCmd() *cobra.Command {
 	)
 	c := newCmd("uninstall <package>", "Remove an installed package and its reversible config edits")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		args, forHarness, err := parseTrailingFor(args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
-			return fmt.Errorf("usage: also uninstall <package>")
+			return fmt.Errorf("usage: also uninstall <package> [for <harness>]")
+		}
+		if forHarness != "" {
+			if harness != "" && !strings.EqualFold(harness, forHarness) {
+				return fmt.Errorf("two different harnesses: %q and %q", harness, forHarness)
+			}
+			harness = forHarness
 		}
 		st, err := also.LoadState()
 		if err != nil {
@@ -395,8 +458,18 @@ func newAdoptCmd() *cobra.Command {
 scripts and native config for one harness, writes the bundle into your local
 ai-infra source directory, and pushes a new package version.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		args, forHarness, err := parseTrailingFor(args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
-			return fmt.Errorf("usage: also adopt <project-dir>")
+			return fmt.Errorf("usage: also adopt <project-dir> [for <harness>]")
+		}
+		if forHarness != "" {
+			if harness != "" && !strings.EqualFold(harness, forHarness) {
+				return fmt.Errorf("two different harnesses: %q and %q", harness, forHarness)
+			}
+			harness = forHarness
 		}
 		cfg, err := also.LoadConfig()
 		if err != nil {

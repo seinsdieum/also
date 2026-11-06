@@ -21,7 +21,7 @@ func ResolveHarness(s string) (*Harness, bool) {
 	ensureExternalAdapters()
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(s, "@")
-	for _, h := range harnesses {
+	for _, h := range Harnesses() {
 		if s == h.ID {
 			return h, true
 		}
@@ -161,7 +161,7 @@ func DetectHarness(dir string) (string, error) {
 		n  int
 	}
 	scores := map[string]int{}
-	for _, h := range harnesses {
+	for _, h := range Harnesses() {
 		for _, rule := range h.Detect {
 			for _, rel := range rule.Paths {
 				if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {

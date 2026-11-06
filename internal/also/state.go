@@ -50,6 +50,7 @@ type Install struct {
 	Project       string          `json:"project,omitempty"`
 	Root          string          `json:"root"`
 	WithConfig    bool            `json:"with_config"`
+	Parts         []string        `json:"parts,omitempty"`
 	InstalledAt   time.Time       `json:"installed_at"`
 	Files         []InstalledFile `json:"files"`
 	Block         *BlockEdit      `json:"block,omitempty"`

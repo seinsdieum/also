@@ -14,6 +14,8 @@ import (
 type InstallOptions struct {
 	Force      bool
 	WithConfig bool
+	// Parts selects individual components for a partial install. Empty = all.
+	Parts []string
 }
 
 type Plan struct {
@@ -95,7 +97,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		project = ""
 	}
 	target := targetH.TargetPath(scope, project)
-	render, err := RenderPackage(pkg, source, target)
+	render, err := RenderPackageSelection(pkg, source, target, opts.Parts)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		ID: id, Set: set.Name, SetRemote: set.Cfg.Remote, Package: pkg.Meta.Name,
 		Version: version.Version, Label: version.Label, SourceHarness: source.ID,
 		Harness: targetH.ID, Scope: scope, Project: project, Root: target.Root,
-		WithConfig: opts.WithConfig, InstalledAt: time.Now().UTC(),
+		WithConfig: opts.WithConfig, Parts: uniqueStrings(opts.Parts), InstalledAt: time.Now().UTC(),
 	}
 
 	// ---- regular files ----

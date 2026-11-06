@@ -7,10 +7,13 @@ package also
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type AdapterSpec struct {
@@ -156,13 +159,17 @@ func mcpResolver(h *Harness, projectCandidates, globalCandidates []string) func(
 
 var externalAdaptersOnce sync.Once
 
+// AdapterDir is where community declarative adapters live.
+func AdapterDir() string {
+	if dir := os.Getenv("ALSO_ADAPTERS"); dir != "" {
+		return ExpandHome(dir)
+	}
+	return filepath.Join(HomeDir(), "adapters")
+}
+
 func ensureExternalAdapters() {
 	externalAdaptersOnce.Do(func() {
-		dir := os.Getenv("ALSO_ADAPTERS")
-		if dir == "" {
-			dir = filepath.Join(HomeDir(), "adapters")
-		}
-		entries, err := os.ReadDir(dir)
+		entries, err := os.ReadDir(AdapterDir())
 		if err != nil {
 			return
 		}
@@ -170,7 +177,7 @@ func ensureExternalAdapters() {
 			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
 				continue
 			}
-			path := filepath.Join(dir, e.Name())
+			path := filepath.Join(AdapterDir(), e.Name())
 			data, err := os.ReadFile(path)
 			if err != nil {
 				warnAdapter(path, err)
@@ -186,13 +193,173 @@ func ensureExternalAdapters() {
 				warnAdapter(path, err)
 				continue
 			}
-			if err := addAdapter(h); err != nil {
+			if err := ValidateAdapters(append(registeredAdapters(), h)); err != nil {
 				warnAdapter(path, err)
+				continue
 			}
+			externalHarnesses = append(externalHarnesses, h)
 		}
 	})
 }
 
 func warnAdapter(path string, err error) {
 	fmt.Fprintf(os.Stderr, "also: ignoring adapter %s: %v\n", path, err)
+}
+
+const maxAdapterSpecSize = 1 << 20
+
+// AddAdapterFile installs a declarative harness spec from a local file or URL.
+func AddAdapterFile(source string) (*Harness, string, error) {
+	data, err := loadAdapterSource(source)
+	if err != nil {
+		return nil, "", err
+	}
+	var spec AdapterSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return nil, "", fmt.Errorf("parse adapter spec: %w", err)
+	}
+	h, err := spec.Harness()
+	if err != nil {
+		return nil, "", err
+	}
+	ensureExternalAdapters()
+	others := make([]*Harness, 0, len(registeredAdapters()))
+	for _, cur := range harnesses {
+		others = append(others, cur)
+	}
+	for _, cur := range externalHarnesses {
+		if cur.ID != h.ID {
+			others = append(others, cur)
+		}
+	}
+	if err := ValidateAdapters(append(others, h)); err != nil {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(AdapterDir(), 0o755); err != nil {
+		return nil, "", err
+	}
+	dest := filepath.Join(AdapterDir(), h.ID+".json")
+	if err := atomicWrite(dest, data, 0o644); err != nil {
+		return nil, "", err
+	}
+	replaced := false
+	for i, cur := range externalHarnesses {
+		if cur.ID == h.ID {
+			externalHarnesses[i] = h
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		externalHarnesses = append(externalHarnesses, h)
+	}
+	return h, dest, nil
+}
+
+func loadAdapterSource(source string) ([]byte, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, fmt.Errorf("adapter source is empty; pass a JSON file or URL")
+	}
+	var data []byte
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		client := &http.Client{Timeout: 20 * time.Second}
+		resp, err := client.Get(source)
+		if err != nil {
+			return nil, fmt.Errorf("fetch adapter: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetch adapter: %s returned %s", source, resp.Status)
+		}
+		data, err = io.ReadAll(io.LimitReader(resp.Body, maxAdapterSpecSize+1))
+		if err != nil {
+			return nil, fmt.Errorf("read adapter: %w", err)
+		}
+	} else {
+		path := strings.TrimPrefix(source, "file://")
+		abs, err := AbsPath(path)
+		if err != nil {
+			return nil, err
+		}
+		data, err = os.ReadFile(abs)
+		if err != nil {
+			return nil, fmt.Errorf("read adapter: %w", err)
+		}
+	}
+	if len(data) > maxAdapterSpecSize {
+		return nil, fmt.Errorf("adapter spec is too large (max %d bytes)", maxAdapterSpecSize)
+	}
+	return data, nil
+}
+
+// RemoveAdapter deletes an external declarative adapter. Built-ins cannot be
+// removed this way.
+func RemoveAdapter(id string) (string, error) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	ensureExternalAdapters()
+	for _, h := range harnesses {
+		if h.ID == id {
+			return "", fmt.Errorf("%s is a built-in harness and cannot be removed", id)
+		}
+	}
+	var target *Harness
+	for i, h := range externalHarnesses {
+		if h.ID == id {
+			target = h
+			externalHarnesses = append(externalHarnesses[:i], externalHarnesses[i+1:]...)
+			break
+		}
+	}
+	if target == nil {
+		var ids []string
+		for _, h := range externalHarnesses {
+			ids = append(ids, h.ID)
+		}
+		return "", fmt.Errorf("no external harness %q; installed: %v", id, ids)
+	}
+	dest := filepath.Join(AdapterDir(), id+".json")
+	if _, err := os.Stat(dest); err != nil {
+		entries, _ := os.ReadDir(AdapterDir())
+		for _, e := range entries {
+			path := filepath.Join(AdapterDir(), e.Name())
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				continue
+			}
+			var spec AdapterSpec
+			if json.Unmarshal(data, &spec) == nil && spec.ID == id {
+				dest = path
+				break
+			}
+		}
+	}
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return dest, nil
+}
+
+func resetExternalAdapters() {
+	externalHarnesses = nil
+	externalAdaptersOnce = sync.Once{}
+}
+
+// ExternalAdapterIDs lists community adapters loaded from disk.
+func ExternalAdapterIDs() []string {
+	ensureExternalAdapters()
+	var ids []string
+	for _, h := range externalHarnesses {
+		ids = append(ids, h.ID)
+	}
+	return ids
+}
+
+func IsExternalAdapter(id string) bool {
+	for _, cur := range ExternalAdapterIDs() {
+		if cur == id {
+			return true
+		}
+	}
+	return false
 }

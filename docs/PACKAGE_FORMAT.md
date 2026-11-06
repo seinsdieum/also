@@ -8,17 +8,21 @@ materialized result of an install.
 
 ```
 also-set.json                     # {"schema":"also.set/v1","name":"personal"}
-packages/<package>/<version>/
-    also-pkg.json
+packages/<package>/
+    also-pkg.json                 # metadata for the latest version
     origin/
         ...                       # byte-for-byte bundle content
+refs/tags/also/<package>/<version>
 ```
 
 Rules:
 
 - `<package>` matches `^[a-z0-9][a-z0-9._-]{0,63}$`.
 - `<version>` is the first 16 hex characters of the digest (below).
-- A version directory is immutable. `also` never rewrites an existing version.
+- The live tree holds the latest version. Older versions are immutable git tags; `also`
+  reads them with `git archive` and never rewrites an existing version.
+- Legacy `packages/<package>/<version>/` trees remain readable and can be converted with
+  `also set <name> --migrate`.
 - Paths inside `origin/` are slash-separated, relative, must not contain `..`, and must not be
   symlinks.
 
@@ -38,12 +42,15 @@ Rules:
 
 - `schema` — required, exactly `also.pkg/v1`.
 - `name` — required, must match the directory name.
-- `source_harness` — required; one of `claude`, `opencode`, `codex`, `qwen`. It selects the
-  adapter used to interpret `origin/`.
+- `source_harness` — required; an installed adapter id (`claude`, `opencode`, `codex`,
+  `qwen`, or a community adapter added with `also add harness`). It selects the adapter
+  used to interpret `origin/`.
 - `label` — optional human alias. It is part of the digest.
 - `digest` — full SHA-256 of the canonical input described below.
 - `encoded_with` — informational; **not** part of the digest, so encoder upgrades do not
   create new versions.
+- `created_at` — optional RFC3339 timestamp used for version ordering and display; not part
+  of the digest.
 
 ## Digest
 

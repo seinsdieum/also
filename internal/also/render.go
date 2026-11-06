@@ -298,7 +298,17 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 }
 
 func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
-	plan, err := renderPackageMain(pkg, source, target)
+	return RenderPackageSelection(pkg, source, target, nil)
+}
+
+// RenderPackageSelection renders only the selected parts. An empty selection
+// installs the whole package.
+func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts []string) (*RenderPlan, error) {
+	sel, err := NewSelection(parts)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := renderPackageMainSel(pkg, source, target, sel)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +321,7 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 		Meta:  PackageMeta{Schema: SchemaPkg, Name: pkg.Meta.Name, SourceHarness: target.Harness.ID},
 		Files: layer,
 	}
-	layerPlan, err := renderPackageMain(layerPkg, target.Harness, target)
+	layerPlan, err := renderPackageMainSel(layerPkg, target.Harness, target, sel)
 	if err != nil {
 		return nil, fmt.Errorf("render preserved %s layer: %w", target.Harness.ID, err)
 	}
@@ -364,10 +374,15 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 }
 
 func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
+	return renderPackageMainSel(pkg, source, target, nil)
+}
+
+func renderPackageMainSel(pkg *Package, source *Harness, target Target, sel *Selection) (*RenderPlan, error) {
 	parts, err := ClassifyPackage(pkg, source)
 	if err != nil {
 		return nil, err
 	}
+	filterPartsBySelection(parts, source, sel)
 	plan := &RenderPlan{Target: target, Source: source, MCP: map[string]MCPServer{}, Hooks: HookSet{}}
 	plan.ConfigFiles = parts.Configs
 	add := func(dest string, rel string, component string) error {
@@ -527,12 +542,22 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 		return nil, err
 	}
 	plan.Warnings = append(plan.Warnings, warn...)
+	if !sel.IsAll() {
+		for name := range servers {
+			if !sel.Allows("mcp", name) {
+				delete(servers, name)
+			}
+		}
+	}
 	plan.MCP = servers
 	hooks, warn, err := ExtractBundleHooks(source, pkg.Files, roots)
 	if err != nil {
 		return nil, err
 	}
 	plan.Warnings = append(plan.Warnings, warn...)
+	if !sel.IsAll() && !sel.Wants("hooks") {
+		hooks = HookSet{}
+	}
 	if len(hooks) > 0 {
 		translated, warn := RenderHooks(target.Harness, source, hooks)
 		plan.Warnings = append(plan.Warnings, warn...)
@@ -543,6 +568,13 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 		return nil, err
 	}
 	plan.Warnings = append(plan.Warnings, warn...)
+	if !sel.IsAll() {
+		for key := range settings {
+			if !sel.Allows("settings", key) {
+				delete(settings, key)
+			}
+		}
+	}
 	plan.Settings = settings
 	if len(settings) > 0 && source.ID != target.Harness.ID {
 		var names []string
