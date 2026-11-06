@@ -52,7 +52,7 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 		if dirty, status, err := gitDirty(dir); err != nil {
 			add("namespace "+name, "fail", err.Error())
 		} else if dirty {
-			add("namespace "+name, "warn", "cached clone is dirty:\n"+status)
+			add("namespace "+name, "warn", "cached clone is dirty (run: also repair "+name+"):\n"+status)
 		} else {
 			add("namespace "+name, "ok", ns.Remote)
 		}
@@ -139,7 +139,7 @@ func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck 
 		if dirty, status, err := gitDirty(repo.Dir); err != nil {
 			add("namespace "+name, "fail", err.Error())
 		} else if dirty {
-			add("namespace "+name, "warn", "cached clone is dirty:\n"+status)
+			add("namespace "+name, "warn", "cached clone is dirty (run: also repair "+name+"):\n"+status)
 		}
 		pkgs, err := repo.Packages()
 		if err != nil {

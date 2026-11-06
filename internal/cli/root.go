@@ -58,6 +58,7 @@ func NewRoot() *cobra.Command {
 		newListCmd(),
 		newDoctorCmd(),
 		newVerifyCmd(),
+		newRepairCmd(),
 		newShowCmd(),
 		newPushCmd(),
 		newAdoptCmd(),
@@ -163,6 +164,7 @@ func newConnectCmd() *cobra.Command {
 		def     bool
 		force   bool
 		migrate bool
+		yes     bool
 	)
 	c := newCmd("connect <name> <git-url>", "Connect a remote namespace")
 	c.Long = `Connect a git repository that stores also packages. The namespace is just a
@@ -181,11 +183,21 @@ Without arguments, list connected namespaces.`
 		if len(args) != 2 {
 			return fmt.Errorf("usage: also connect <name> <git-url>")
 		}
+		if !yes && stdinIsTerminal() {
+			ok, err := confirm("Connect "+args[0]+" to "+args[1]+"?", true)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("cancelled")
+			}
+		}
 		return connectNamespace(cfg, args[0], args[1], def, force, migrate)
 	}
 	c.Flags().BoolVar(&def, "default", false, "make this the default namespace")
 	c.Flags().BoolVar(&force, "force", false, "replace the remote URL of an existing namespace")
 	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
+	c.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
 	return c
 }
 

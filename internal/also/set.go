@@ -589,3 +589,22 @@ func (s *SetRepo) Migrate() ([]Migration, error) {
 	}
 	return migrated, nil
 }
+
+// RepairNamespace deletes the internal clone and fetches it again. Only the
+// cache is touched; user bundles and installed files stay where they are.
+func RepairNamespace(name string, cfg NamespaceConfig) (string, error) {
+	if cfg.Remote == "" {
+		return "", fmt.Errorf("namespace %q has no remote", name)
+	}
+	dir := SetCachePath(cfg.Remote)
+	if _, err := os.Stat(dir); err == nil {
+		if err := os.RemoveAll(dir); err != nil {
+			return "", fmt.Errorf("remove cache %s: %w", dir, err)
+		}
+	}
+	repo, err := openSet(name, cfg, false, false)
+	if err != nil {
+		return "", err
+	}
+	return repo.Dir, nil
+}

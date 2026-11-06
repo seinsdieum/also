@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seinsdieum/also/internal/also"
 )
 
 func runCLI(args ...string) error {
@@ -160,5 +162,34 @@ func TestDoctorAndVerifyAfterPush(t *testing.T) {
 	}
 	if err := runCLI("verify", "personal", "--json"); err != nil {
 		t.Fatalf("verify --json: %v", err)
+	}
+}
+
+func TestRepairReclonesDirtyCache(t *testing.T) {
+	setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := also.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := also.SetCachePath(cfg.Namespaces["personal"].Remote)
+	if err := os.WriteFile(filepath.Join(cache, "junk.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("repair", "personal", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", cache, "status", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("cache is still dirty:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "junk.txt")); !os.IsNotExist(err) {
+		t.Fatal("repair kept an untracked file")
 	}
 }

@@ -57,7 +57,10 @@ active one.`
 }
 
 func newAddCmd() *cobra.Command {
-	var wantSHA string
+	var (
+		wantSHA string
+		yes     bool
+	)
 	c := newCmd("add harness <file|url>", "Add a community harness adapter")
 	c.Long = `Install a declarative harness adapter from a JSON file or URL. The adapter may
 reuse any registered format; it cannot execute code. It is saved under
@@ -68,7 +71,17 @@ reuse any registered format; it cannot execute code. It is saved under
 		}
 		if strings.HasPrefix(args[1], "http://") || strings.HasPrefix(args[1], "https://") {
 			if wantSHA == "" {
-				fmt.Fprintln(os.Stderr, "warning: adapter is not pinned; pass --sha256 <hash> to verify a downloaded spec")
+				if stdinIsTerminal() && !yes {
+					ok, err := confirm("Adapter is not pinned. Download "+args[1]+" anyway?", false)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return fmt.Errorf("cancelled; pass --sha256 <hash> to pin the adapter")
+					}
+				} else {
+					fmt.Fprintln(os.Stderr, "warning: adapter is not pinned; pass --sha256 <hash> to verify a downloaded spec")
+				}
 			}
 		}
 		h, dest, err := also.AddAdapterFileSHA256(args[1], wantSHA)
@@ -86,6 +99,7 @@ reuse any registered format; it cannot execute code. It is saved under
 		return nil
 	}
 	c.Flags().StringVar(&wantSHA, "sha256", "", "expected SHA-256 of the adapter file")
+	c.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
 	return c
 }
 

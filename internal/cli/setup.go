@@ -358,3 +358,8 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+func confirm(question string, def bool) (bool, error) {
+	p := &prompter{r: bufio.NewReader(os.Stdin)}
+	return p.yes(question, def)
+}

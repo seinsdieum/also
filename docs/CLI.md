@@ -62,6 +62,7 @@ same project.
 ```sh
 also doctor [--refresh] [--json]
 also verify [namespace] [--refresh] [--json]
+also repair <namespace|--all> [--yes]
 also add harness <file|url> [--sha256 <hash>]
 also remove harness <id>
 also exclude|include infra [for <harness>] [in <dir>]
@@ -69,6 +70,8 @@ also exclude|include you
 ```
 
 `doctor` and `verify` never change data. They exit non-zero on a failed check.
+`repair` deletes the internal cache clone for a namespace and fetches it again;
+user bundles and installed files are untouched.
 `verify` reads every package version in every namespace and confirms installed
 state still points at existing versions.
 

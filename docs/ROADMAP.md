@@ -168,9 +168,10 @@ Acceptance criteria:
 
 - [x] `also doctor`: git, config, state, adapters, dirty caches, PATH;
 - [x] `also verify`: целостность set, тегов, манифестов, state;
-- [ ] recovery-команды для dirty clone, осиротевших тегов и битого state;
-- [ ] понятные ошибки вместо ручных `git`-инструкций;
-- [ ] тесты на corrupted config/state/manifest/tag.
+- [x] recovery-команды для dirty clone (`also repair`), понятные подсказки;
+- [ ] осиротевшие теги и битый state (пока только диагностируются);
+- [ ] тесты на corrupted config/state/manifest/tag
+      (config/state/manifest частично покрыты).
 
 ### V1-6. Стабильный CLI/API
 
