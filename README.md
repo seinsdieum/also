@@ -360,6 +360,11 @@ ai-infra.git/
 [docs/E2E_REPORT.md](docs/E2E_REPORT.md). Итог: 16/16 round-trip совпали;
 Claude/Codex/OpenCode/Qwen загружают инструкции, skills и hooks из установленных файлов.
 
+## Roadmap
+
+План до 1.0, remote-only namespaces, curl-установка и интерактивный `also setup`:
+[docs/ROADMAP.md](docs/ROADMAP.md).
+
 ## Разработка
 
 ```sh
