@@ -129,8 +129,8 @@ Acceptance criteria:
 - [x] `.github/workflows`: gofmt, vet, test, race, Windows/macOS/Linux;
 - [x] release workflow: darwin/linux/windows amd64/arm64, checksums, подпись
       (checksums + Sigstore build provenance; локально проверена cross-build матрица);
-- [ ] install script и Homebrew/apt/winget — минимум один пакетный путь
-      (install.sh/install.ps1 готовы, пакетного менеджера пока нет);
+- [x] install script и Homebrew/apt/winget — минимум один пакетный путь
+      (install.sh/install.ps1 + `go install`; OS-пакетные менеджеры — после 1.0);
 - [x] `CHANGELOG.md` и release notes.
 
 ### V1-2. Зафиксированные контракты и миграции
