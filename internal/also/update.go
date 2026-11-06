@@ -35,15 +35,37 @@ type Release struct {
 	Assets  []ReleaseAsset `json:"assets"`
 }
 
-// LatestRelease reads the newest published GitHub release.
+// LatestRelease reads the newest published GitHub release. GitHub occasionally
+// closes a connection in the middle of a request, so retry a few times unless
+// the caller's context expired or the release simply does not exist yet.
 func LatestRelease(ctx context.Context) (*Release, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		rel, err := latestReleaseOnce(ctx)
+		if err == nil {
+			return rel, nil
+		}
+		last = err
+		if strings.Contains(err.Error(), "no published release") || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, last
+		case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
+		}
+	}
+	return nil, last
+}
+
+func latestReleaseOnce(ctx context.Context) (*Release, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseAPIURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "also/"+Version)
-	resp, err := (&http.Client{Timeout: 6 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("check latest release: %w", err)
 	}
@@ -273,6 +295,26 @@ func applyUpdate(current, exe string, windows bool) (*UpdateResult, error) {
 }
 
 func downloadAsset(ctx context.Context, url string) ([]byte, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		data, err := downloadAssetOnce(ctx, url)
+		if err == nil {
+			return data, nil
+		}
+		last = err
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, last
+		case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
+		}
+	}
+	return nil, last
+}
+
+func downloadAssetOnce(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -286,11 +328,7 @@ func downloadAsset(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download %s: %s", url, resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 128<<20))
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	return io.ReadAll(io.LimitReader(resp.Body, 128<<20))
 }
 
 func verifyAsset(data []byte, name string, sums []byte) error {

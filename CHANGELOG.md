@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-06)
+
+- Retry transient GitHub connection failures during release checks and
+  downloads, so `also update` survives a closed connection.
+
 ## 1.0.0 (2026-11-06)
 
 ### Added

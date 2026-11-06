@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/seinsdieum/also/internal/also"
 )
 
 func runCLICapture(t *testing.T, args ...string) (string, error) {
@@ -44,7 +46,7 @@ func TestJSONCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := decodeJSON(t, out).(map[string]any)
-	if v["version"] != "1.0.0" {
+	if v["version"] != also.Version {
 		t.Fatalf("version = %v", v["version"])
 	}
 
