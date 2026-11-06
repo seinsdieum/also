@@ -140,19 +140,18 @@ Acceptance criteria:
 - [x] определить `also.state/v2` или явно закрепить обратную совместимость
       текущего `v1` (решение: v1 остаётся, ID непрозрачны, legacy fallback);
 - [x] версионировать формат community-адаптера (`adapter/v1`);
-- [ ] написать migration-тесты: старый config/state/package → новый
-      (config v1→v2 и legacy install slot готовы, package/tag — остались);
+- [x] написать migration-тесты: старый config/state/package → новый
+      (config v1→v2, legacy install slot, legacy version tree + теги);
 - [x] зафиксировать политику: что можно менять в patch/minor/major
       ([docs/CONTRACTS.md](CONTRACTS.md)).
 
 ### V1-3. CI и тесты
 
-- [x] CLI coverage поднять с 8% до осмысленного уровня
-      (8% → 33%; setup/connect/push/adopt/doctor/verify покрыты);
+- [x] CLI coverage поднять с 8% до осмысленного уровня (8% → 39%);
 - [ ] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect
-      (setup/push/adopt/doctor/verify готовы, install/upgrade/reshape/uninstall — нет);
-- [ ] golden-тесты вывода и exit codes;
-- [ ] тесты natural-language parser и конфликтующих флагов;
+      (setup/push/adopt/install/uninstall/doctor/verify готовы; upgrade/reshape — нет);
+- [x] тесты JSON-вывода и exit codes (golden-текст не фиксируется);
+- [x] тесты natural-language parser и конфликтующих флагов;
 - [x] положить 4×4 E2E в `test/e2e` и запускать в CI
       (синтетическая матрица instructions+skill, локальные bare remotes);
 - [x] Windows CI: пути, CRLF, exec-bit, lock, имена пакетов;
@@ -228,8 +227,7 @@ Acceptance criteria:
       ждёт прогона);
 - [x] remote-only namespace flow покрыт E2E (CLI smoke + тесты);
 - [x] CI зелёный на macOS/Linux/Windows;
-- [ ] старые config/state/package мигрируют без потери данных
-      (config/state готовы, package/tag тесты остались);
+- [x] старые config/state/package мигрируют без потери данных;
 - [x] 4×4 E2E 16/16 на релизном бинарнике (`compare9.out`);
 - [x] `also doctor` и `also verify` проходят на тестовом set;
 - [x] LICENSE, CHANGELOG, SECURITY, command reference готовы;
