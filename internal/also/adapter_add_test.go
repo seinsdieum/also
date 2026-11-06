@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -156,5 +157,15 @@ func TestExternalAdapterCannotEscapeGlobalBase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "evil.json")); !os.IsNotExist(err) {
 		t.Fatal("rejected adapter was written to disk")
+	}
+}
+
+func TestLocalAdapterSourceIsSizeLimited(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.json")
+	if err := os.WriteFile(path, make([]byte, maxAdapterSpecSize+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadAdapterSource(path); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected size limit, got %v", err)
 	}
 }

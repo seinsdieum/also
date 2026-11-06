@@ -125,6 +125,15 @@ func UpdateGitIgnore(project string, kind IgnoreKind, add bool, entries []string
 		return false, err
 	}
 	path := filepath.Join(root, ".gitignore")
+	mode := os.FileMode(0o644)
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return false, fmt.Errorf("refusing to replace symlink %s; make it a regular file first", path)
+		}
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
@@ -145,7 +154,7 @@ func UpdateGitIgnore(project string, kind IgnoreKind, add bool, entries []string
 		}
 		return true, nil
 	}
-	return true, atomicWrite(path, []byte(next), 0o644)
+	return true, atomicWrite(path, []byte(next), mode)
 }
 
 func findIgnoreBlock(content string, kind IgnoreKind) (start, end int, ok bool) {

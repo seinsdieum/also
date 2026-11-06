@@ -271,3 +271,32 @@ func TestOfflineRefusesMissingClone(t *testing.T) {
 		t.Fatalf("expected offline error, got %v", err)
 	}
 }
+
+func TestPushRestoresCloneWhenCommitFails(t *testing.T) {
+	tmp, _, setDir, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(setDir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(bundle, "CLAUDE.md"), "two\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err == nil {
+		t.Fatal("expected commit failure")
+	}
+	dirty, status, err := gitDirty(setDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Fatalf("set clone left dirty after failed push:\n%s", status)
+	}
+	versions, err := repo.Versions("p")
+	if err != nil || len(versions) != 1 {
+		t.Fatalf("failed push changed versions: %+v %v", versions, err)
+	}
+}

@@ -434,6 +434,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		return nil, err
 	}
 	if err := WritePackage(s.PackageTreeDir(opts.Name), meta, snap); err != nil {
+		s.restorePaths(paths...)
 		return nil, err
 	}
 	msg := opts.Message
@@ -446,6 +447,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	}
 	committed, err := commitPaths(s.Dir, msg, paths...)
 	if err != nil {
+		s.restorePaths(paths...)
 		return res, err
 	}
 	if err := s.createTag(opts.Name, version, "HEAD"); err != nil {
@@ -462,6 +464,15 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		return res, err
 	}
 	return res, nil
+}
+
+// restorePaths puts a set clone back after a write or commit failure. The
+// clone was checked clean before Push, so a hard reset is safe here.
+func (s *SetRepo) restorePaths(paths ...string) {
+	_, _ = runGit(s.Dir, "reset", "--hard", "--quiet")
+	args := append([]string{"clean", "-fd", "--quiet", "--"}, paths...)
+	_, _ = runGit(s.Dir, args...)
+	s.invalidateVersionData()
 }
 
 // pushVersionTags pushes every local version tag. This repairs tags created by

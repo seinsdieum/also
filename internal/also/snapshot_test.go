@@ -3,6 +3,7 @@ package also
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +76,20 @@ func TestMCPSecretDetection(t *testing.T) {
 	got := MCPSuspiciousSecrets(servers)
 	if len(got) != 1 || got[0] != "mcp a env API_KEY" {
 		t.Fatalf("unexpected: %v", got)
+	}
+}
+
+func TestSnapshotRefusesOversizedPackage(t *testing.T) {
+	old := maxPackageBytes
+	maxPackageBytes = 10
+	defer func() { maxPackageBytes = old }()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "123456")
+	writeFile(t, filepath.Join(dir, "b.txt"), "123456")
+	if _, _, err := ReadSnapshot(dir, SnapshotOptions{}); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("expected total size refusal, got %v", err)
+	}
+	if _, _, err := ReadSnapshot(dir, SnapshotOptions{AllowLarge: true}); err != nil {
+		t.Fatalf("allow-large: %v", err)
 	}
 }

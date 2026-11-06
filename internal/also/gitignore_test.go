@@ -114,3 +114,35 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+func TestGitIgnoreKeepsModeAndRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	ignore := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(ignore, []byte("node_modules/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateGitIgnore(dir, IgnoreInfra, true, []string{".claude/"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(ignore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode changed: %o", info.Mode().Perm())
+	}
+
+	linkDir := t.TempDir()
+	gitInit(t, linkDir)
+	target := filepath.Join(linkDir, "real-ignore")
+	if err := os.WriteFile(target, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real-ignore", filepath.Join(linkDir, ".gitignore")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	if _, err := UpdateGitIgnore(linkDir, IgnoreInfra, true, nil); err == nil {
+		t.Fatal("expected symlink refusal")
+	}
+}

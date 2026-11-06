@@ -20,6 +20,10 @@ const (
 	maxFileSize         = 8 << 20 // 8 MiB
 )
 
+// maxPackageBytes is a guard against accidentally publishing huge bundles.
+// --allow-large bypasses it together with the per-file limit.
+var maxPackageBytes int64 = 64 << 20
+
 type SnapshotFile struct {
 	Data []byte
 	Mode fs.FileMode
@@ -106,6 +110,7 @@ func ReadSnapshot(root string, opts SnapshotOptions) (*Snapshot, []string, error
 	snap := &Snapshot{Files: map[string]*SnapshotFile{}}
 	var warnings []string
 	var secrets, large []string
+	var total int64
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -148,6 +153,10 @@ func ReadSnapshot(root string, opts SnapshotOptions) (*Snapshot, []string, error
 		if info.Size() > maxFileSize && !opts.AllowLarge {
 			large = append(large, fmt.Sprintf("%s (%s)", rel, humanBytes(info.Size())))
 			return nil
+		}
+		total += info.Size()
+		if total > maxPackageBytes && !opts.AllowLarge {
+			return fmt.Errorf("package is larger than %s (use --allow-large if this is intentional)", humanBytes(maxPackageBytes))
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

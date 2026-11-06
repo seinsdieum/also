@@ -321,7 +321,12 @@ func loadAdapterSource(source string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		data, err = os.ReadFile(abs)
+		f, err := os.Open(abs)
+		if err != nil {
+			return nil, fmt.Errorf("read adapter: %w", err)
+		}
+		defer f.Close()
+		data, err = io.ReadAll(io.LimitReader(f, maxAdapterSpecSize+1))
 		if err != nil {
 			return nil, fmt.Errorf("read adapter: %w", err)
 		}
