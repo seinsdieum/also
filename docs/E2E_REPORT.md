@@ -203,3 +203,12 @@ Set-репозиторий подключался по shared folder (`\\Mac\Hom
 всех 16 пар выполняется `push → install → adopt → push → install back`.
 Проверяется, что instructions и тело skill вернулись в исходный harness.
 Матрица запускается обычным `go test ./...` в CI на macOS/Linux/Windows.
+
+## Remote-only E2E (compare9)
+
+После перехода на remote-only namespaces матрица прогнана заново на `rt9-*`:
+`adopt` вызывался без `--into` и публиковал временный бандл прямо в namespace;
+старый `also.config/v1` из приватного стенда мигрировал в v2 автоматически.
+
+Итог: **16/16 `RESULT OK`**, `0 DIFF` (`compare9.out`). Это подтверждает, что
+удаление локального source-каталога не изменило round-trip.

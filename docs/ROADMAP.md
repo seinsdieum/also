@@ -18,12 +18,16 @@
 - multi-harness install одного пакета в одном проекте;
 - community-адаптеры через `also add harness <file|url>`;
 - естественный CLI-язык (`also install pkg for opencode`, `also use ns`);
-- 4×4 E2E: 16/16 round-trip, `compare8.out`;
+- 4×4 E2E: 16/16 round-trip, `compare8.out`; повторно 16/16 после
+  remote-only (`compare9.out`), плюс `test/e2e` в обычном `go test`;
 - remote-only namespaces: `also connect <name> <git-url>`, единый внутренний кэш;
 - `also setup` (интерактивный и `--yes`) и `install.sh`/`install.ps1`;
 - `adopt` публикует прямо в namespace без локального source-каталога;
 - importable module, MIT license, CI и release workflow;
-- `go test -race`, `make check`, покрытие ядра ~74.5%.
+- `also doctor`, `also verify`, `also repair`;
+- JSON-вывод, `also version --json`, `docs/CLI.md`;
+- контракты и политика версий: `docs/CONTRACTS.md`;
+- `go test -race`, `make check`, покрытие ядра ~73%, CLI ~33%.
 
 Чего пока нет как продукта:
 
@@ -158,8 +162,7 @@ Acceptance criteria:
 
 - [x] описать threat model community-адаптеров;
 - [x] checksum/signature или pinning для `also add harness <url>`;
-- [ ] подтверждение при подключении namespace/адаптера
-      (сейчас предупреждение о неподписанном URL, без интерактивного yes/no);
+- [x] подтверждение при подключении namespace/адаптера;
 - [x] расширить secret scanning: произвольные settings, URL, command args;
 - [x] политика `--allow-secrets`/`--allow-large` и redaction в логах;
 - [x] `SECURITY.md` с каналом сообщения об уязвимостях.
@@ -221,12 +224,13 @@ Acceptance criteria:
 ## Release gate 1.0
 
 - [x] install одной командой + `also setup` работают на чистой машине
-      (install.sh проверен на macOS; Windows installer ждёт прогона);
+      (install.sh проверен локальным HTTP-сервером на macOS; Windows installer
+      ждёт прогона);
 - [x] remote-only namespace flow покрыт E2E (CLI smoke + тесты);
 - [x] CI зелёный на macOS/Linux/Windows;
 - [ ] старые config/state/package мигрируют без потери данных
       (config/state готовы, package/tag тесты остались);
-- [ ] 4×4 E2E 16/16 на релизном бинарнике;
+- [x] 4×4 E2E 16/16 на релизном бинарнике (`compare9.out`);
 - [x] `also doctor` и `also verify` проходят на тестовом set;
 - [x] LICENSE, CHANGELOG, SECURITY, command reference готовы;
 - [ ] бинарники подписаны, checksums опубликованы;
