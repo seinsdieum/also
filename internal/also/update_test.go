@@ -1,9 +1,9 @@
 package also
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +12,29 @@ import (
 	"testing"
 	"time"
 )
+
+func setReleaseServer(t *testing.T, tag string, asset string, data []byte) *httptest.Server {
+	t.Helper()
+	sum := sha256.Sum256(data)
+	sums := hex.EncodeToString(sum[:]) + "  " + asset + "\n"
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			http.Redirect(w, r, "/tag/"+tag, http.StatusFound)
+		case "/download/" + tag + "/" + asset:
+			_, _ = w.Write(data)
+		case "/download/" + tag + "/SHA256SUMS":
+			_, _ = w.Write([]byte(sums))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ALSO_RELEASE_LATEST_URL", srv.URL+"/latest")
+	t.Setenv("ALSO_RELEASE_DOWNLOAD_BASE", srv.URL+"/download")
+	return srv
+}
 
 func TestCompareVersions(t *testing.T) {
 	cases := []struct {
@@ -35,14 +58,16 @@ func TestCompareVersions(t *testing.T) {
 func TestCheckLatestVersionNotifiesOncePerInterval(t *testing.T) {
 	t.Setenv("ALSO_HOME", filepath.Join(t.TempDir(), "also"))
 	calls := 0
+	old := latestReleaseURL()
+	defer func() {
+		t.Setenv("ALSO_RELEASE_LATEST_URL", old)
+	}()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		_ = json.NewEncoder(w).Encode(Release{TagName: "v1.1.0"})
+		http.Redirect(w, r, "/tag/v1.1.0", http.StatusFound)
 	}))
 	defer srv.Close()
-	old := releaseAPIURL
-	releaseAPIURL = srv.URL
-	defer func() { releaseAPIURL = old }()
+	t.Setenv("ALSO_RELEASE_LATEST_URL", srv.URL+"/latest")
 
 	now := time.Now()
 	latest, notify, err := CheckLatestVersion("1.0.0", now, false)
@@ -72,31 +97,7 @@ func TestApplyUpdateReplacesBinary(t *testing.T) {
 	}
 	asset := releaseAssetName(runtime.GOOS, runtime.GOARCH)
 	data := []byte("new binary")
-	sum := sha256.Sum256(data)
-	sums := hex.EncodeToString(sum[:]) + "  " + asset + "\n"
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/latest":
-			_ = json.NewEncoder(w).Encode(Release{
-				TagName: "v1.1.0",
-				Assets: []ReleaseAsset{
-					{Name: asset, BrowserDownloadURL: "http://" + r.Host + "/asset"},
-					{Name: "SHA256SUMS", BrowserDownloadURL: "http://" + r.Host + "/sums"},
-				},
-			})
-		case "/asset":
-			_, _ = w.Write(data)
-		case "/sums":
-			_, _ = w.Write([]byte(sums))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	old := releaseAPIURL
-	releaseAPIURL = srv.URL + "/latest"
-	defer func() { releaseAPIURL = old }()
+	setReleaseServer(t, "v1.1.0", asset, data)
 
 	res, err := applyUpdate("1.0.0", exe, false)
 	if err != nil {
@@ -119,5 +120,14 @@ func TestApplyUpdateRejectsBadChecksum(t *testing.T) {
 	err := verifyAsset(data, "also-test", []byte("0000  also-test\n"))
 	if err == nil {
 		t.Fatal("expected a checksum mismatch")
+	}
+}
+
+func TestLatestTagRejectsMissingRelease(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	t.Setenv("ALSO_RELEASE_LATEST_URL", srv.URL+"/latest")
+	if _, err := LatestTag(context.Background()); err == nil {
+		t.Fatal("expected an error")
 	}
 }

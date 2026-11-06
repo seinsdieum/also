@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 (2026-11-06)
+
+- Resolve the latest release through the GitHub redirect instead of the
+  unauthenticated API, which avoids its hourly request limit.
+- Support `ALSO_RELEASE_LATEST_URL` and `ALSO_RELEASE_DOWNLOAD_BASE` for mirrors
+  and for testing the update path against a local release server.
+
 ## 1.0.1 (2026-11-06)
 
 - Retry transient GitHub connection failures during release checks and

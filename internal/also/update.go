@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,31 +20,34 @@ const (
 	// UpdateCheckInterval controls both the GitHub lookup and the one-time
 	// "new version" notice.
 	UpdateCheckInterval = 24 * time.Hour
-	releaseAPI          = "https://api.github.com/repos/seinsdieum/also/releases/latest"
+
+	latestReleaseDefault = "https://github.com/seinsdieum/also/releases/latest"
+	downloadBaseDefault  = "https://github.com/seinsdieum/also/releases/download"
 )
 
-var releaseAPIURL = releaseAPI
-
-type ReleaseAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
+func latestReleaseURL() string {
+	if value := os.Getenv("ALSO_RELEASE_LATEST_URL"); value != "" {
+		return value
+	}
+	return latestReleaseDefault
 }
 
-type Release struct {
-	TagName string         `json:"tag_name"`
-	HTMLURL string         `json:"html_url"`
-	Assets  []ReleaseAsset `json:"assets"`
+func releaseDownloadBase() string {
+	if value := os.Getenv("ALSO_RELEASE_DOWNLOAD_BASE"); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	return downloadBaseDefault
 }
 
-// LatestRelease reads the newest published GitHub release. GitHub occasionally
-// closes a connection in the middle of a request, so retry a few times unless
-// the caller's context expired or the release simply does not exist yet.
-func LatestRelease(ctx context.Context) (*Release, error) {
+// LatestTag reads the newest release tag from the releases/latest redirect.
+// Using the redirect avoids the unauthenticated GitHub API rate limit. GitHub
+// occasionally closes a connection, so retry a few times.
+func LatestTag(ctx context.Context) (string, error) {
 	var last error
 	for attempt := 0; attempt < 3; attempt++ {
-		rel, err := latestReleaseOnce(ctx)
+		tag, err := latestTagOnce(ctx)
 		if err == nil {
-			return rel, nil
+			return tag, nil
 		}
 		last = err
 		if strings.Contains(err.Error(), "no published release") || ctx.Err() != nil {
@@ -51,39 +55,56 @@ func LatestRelease(ctx context.Context) (*Release, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return nil, last
+			return "", last
 		case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
 		}
 	}
-	return nil, last
+	return "", last
 }
 
-func latestReleaseOnce(ctx context.Context) (*Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseAPIURL, nil)
+func latestTagOnce(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestReleaseURL(), nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "also/"+Version)
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("check latest release: %w", err)
+		return "", fmt.Errorf("check latest release: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("no published release yet")
+		return "", fmt.Errorf("no published release yet")
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("check latest release: %s", resp.Status)
+	location := resp.Header.Get("Location")
+	if location == "" {
+		if resp.StatusCode == http.StatusOK {
+			location = resp.Request.URL.String()
+		}
 	}
-	var rel Release
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("parse release: %w", err)
+	if location == "" {
+		return "", fmt.Errorf("check latest release: %s", resp.Status)
 	}
-	if rel.TagName == "" {
-		return nil, fmt.Errorf("latest release has no tag")
+	base, err := url.Parse(latestReleaseURL())
+	if err != nil {
+		return "", err
 	}
-	return &rel, nil
+	next, err := base.Parse(location)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.TrimRight(next.Path, "/"), "/")
+	tag := parts[len(parts)-1]
+	if tag == "" || tag == "latest" || tag == "releases" {
+		return "", fmt.Errorf("latest release redirect has no tag")
+	}
+	return tag, nil
 }
 
 // CompareVersions compares dotted versions. It returns -1, 0 or 1.
@@ -166,23 +187,23 @@ func writeUpdateCache(c updateCache) {
 }
 
 // CheckLatestVersion returns the newest release and whether the user should be
-// told about it. The GitHub lookup and the notice each happen at most once per
+// told about it. The lookup and the notice each happen at most once per
 // UpdateCheckInterval.
 func CheckLatestVersion(current string, now time.Time, force bool) (string, bool, error) {
 	c := readUpdateCache()
 	fresh := !c.CheckedAt.IsZero() && now.Sub(c.CheckedAt) < UpdateCheckInterval
 	latest := c.Latest
 	if force || !fresh {
-		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
-		rel, err := LatestRelease(ctx)
+		tag, err := LatestTag(ctx)
 		if err != nil {
 			if latest != "" {
 				return latest, false, nil
 			}
 			return "", false, err
 		}
-		latest = rel.TagName
+		latest = tag
 		c.CheckedAt = now
 		c.Latest = latest
 		writeUpdateCache(c)
@@ -225,33 +246,22 @@ func applyUpdate(current, exe string, windows bool) (*UpdateResult, error) {
 	res := &UpdateResult{Current: current}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	rel, err := LatestRelease(ctx)
+	tag, err := LatestTag(ctx)
 	if err != nil {
 		return res, err
 	}
-	res.Latest = rel.TagName
-	if CompareVersions(rel.TagName, current) <= 0 {
+	res.Latest = tag
+	if CompareVersions(tag, current) <= 0 {
 		return res, nil
 	}
 	assetName := releaseAssetName(runtime.GOOS, runtime.GOARCH)
-	var asset, sums *ReleaseAsset
-	for i := range rel.Assets {
-		switch rel.Assets[i].Name {
-		case assetName:
-			asset = &rel.Assets[i]
-		case "SHA256SUMS":
-			sums = &rel.Assets[i]
-		}
-	}
-	if asset == nil || sums == nil {
-		return res, fmt.Errorf("release %s has no %s or SHA256SUMS asset", rel.TagName, assetName)
-	}
+	base := releaseDownloadBase() + "/" + tag
 	res.Asset = assetName
-	data, err := downloadAsset(ctx, asset.BrowserDownloadURL)
+	data, err := downloadAsset(ctx, base+"/"+assetName)
 	if err != nil {
 		return res, err
 	}
-	sumData, err := downloadAsset(ctx, sums.BrowserDownloadURL)
+	sumData, err := downloadAsset(ctx, base+"/SHA256SUMS")
 	if err != nil {
 		return res, err
 	}

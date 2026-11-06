@@ -28,18 +28,18 @@ the current one because a running executable cannot be replaced.`
 		if check {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			rel, err := also.LatestRelease(ctx)
+			tag, err := also.LatestTag(ctx)
 			if err != nil {
 				return err
 			}
-			available := also.CompareVersions(rel.TagName, current) > 0
+			available := also.CompareVersions(tag, current) > 0
 			if jsonOut {
 				return printJSON(map[string]any{
-					"current": current, "latest": rel.TagName, "available": available,
+					"current": current, "latest": tag, "available": available,
 				})
 			}
 			if available {
-				fmt.Printf("  %s update available: %s → %s\n", yellow("↑"), current, blue(rel.TagName))
+				fmt.Printf("  %s update available: %s → %s\n", yellow("↑"), current, blue(tag))
 				printNextStep("also update")
 			} else {
 				fmt.Printf("  %s also %s is up to date\n", green("✓"), current)
