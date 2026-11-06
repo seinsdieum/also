@@ -1,72 +1,191 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" fill="none">
+<svg font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace" xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
   <defs>
-    <linearGradient id="core" x1="650" y1="280" x2="950" y2="540" gradientUnits="userSpaceOnUse">
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#60A5FA"/>
       <stop offset="1" stop-color="#2563EB"/>
     </linearGradient>
-    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#93C5FD"/>
-      <stop offset="1" stop-color="#3B82F6"/>
-    </linearGradient>
-    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="18" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#1D1D1F" flood-opacity="0.06"/>
     </filter>
-    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#1D4ED8" flood-opacity="0.16"/>
-    </filter>
+    <style>
+      .mono { font-family: "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace; }
+      .label { font-size: 12px; letter-spacing: 1.8px; fill: #86868B; }
+      .tiny { font-size: 13px; fill: #6E6E73; }
+      .body { font-size: 15px; fill: #6E6E73; }
+      .ink { fill: #111113; }
+      .white { fill: #F5F5F7; }
+      .muted { fill: #86868B; }
+      .card { fill: #FFFFFF; }
+      .dark { fill: #0B0B0D; }
+      .line { stroke: #E7E7EA; stroke-width: 1; }
+      .hair { stroke: #D2D2D7; stroke-width: 1; }
+    </style>
   </defs>
 
-  <g opacity="0.45" stroke="#BFDBFE" stroke-width="1">
-    <path d="M120 120H1480M120 240H1480M120 360H1480M120 480H1480M120 600H1480M120 720H1480" stroke-dasharray="2 14"/>
+  <!-- outer panel: radius 36 = card radius 22 + gap 14 -->
+  <rect x="20" y="20" width="1560" height="960" rx="36" fill="#F4F4F6"/>
+
+  <!-- ===== LEFT COLUMN ===== -->
+  <!-- hero statement -->
+  <rect x="34" y="34" width="430" height="330" rx="22" fill="#FFFFFF"/>
+  <text x="64" y="74" class="mono label">PORTABLE AI INFRASTRUCTURE</text>
+  <text x="64" y="140" class="mono ink" font-size="35" font-weight="700" letter-spacing="-1">ONE PACKAGE.</text>
+  <text x="64" y="185" class="mono ink" font-size="35" font-weight="700" letter-spacing="-1">EVERY HARNESS.</text>
+  <text x="64" y="228" class="mono body">Version, translate and install the</text>
+  <text x="64" y="250" class="mono body">same infrastructure once.</text>
+
+  <line x1="64" y1="284" x2="434" y2="284" class="line"/>
+  <g transform="translate(64, 310)">
+    <circle cx="9" cy="0" r="4" fill="#3B82F6"/>
+    <circle cx="61" cy="0" r="4" fill="#C7C7CC"/>
+    <circle cx="113" cy="0" r="4" fill="#C7C7CC"/>
+    <circle cx="165" cy="0" r="4" fill="#C7C7CC"/>
+    <line x1="13" y1="0" x2="57" y2="0" stroke="#D2D2D7"/>
+    <line x1="65" y1="0" x2="109" y2="0" stroke="#D2D2D7"/>
+    <line x1="117" y1="0" x2="161" y2="0" stroke="#D2D2D7"/>
+    <text x="190" y="4" class="mono tiny">built-in + community adapters</text>
   </g>
 
-  <text x="800" y="112" text-anchor="middle" fill="#0F172A" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="74" font-weight="700" letter-spacing="-2">also</text>
-  <text x="800" y="158" text-anchor="middle" fill="#64748B" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" letter-spacing="1">portable AI infrastructure</text>
+  <!-- versioned -->
+  <rect x="34" y="378" width="430" height="180" rx="22" fill="#FFFFFF"/>
+  <text x="64" y="414" class="mono label">VERSIONED</text>
+  <text x="64" y="462" class="mono ink" font-size="26" font-weight="600" letter-spacing="-0.5">3f9a6c2e1b7d4a90</text>
+  <text x="64" y="490" class="mono tiny">content digest = version</text>
+  <text x="64" y="512" class="mono tiny">immutable git tags</text>
+  <text x="64" y="542" class="mono muted" font-size="12">16 hexadecimal characters</text>
 
-  <g filter="url(#cardShadow)">
-    <rect x="90" y="300" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
-    <rect x="1260" y="300" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
-    <rect x="90" y="500" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
-    <rect x="1260" y="500" width="250" height="96" rx="22" fill="#FFFFFF" stroke="#DBEAFE" stroke-width="1.5"/>
+  <!-- reversible -->
+  <rect x="34" y="572" width="430" height="182" rx="22" fill="#FFFFFF"/>
+  <text x="64" y="608" class="mono label">REVERSIBLE</text>
+  <text x="64" y="656" class="mono ink" font-size="30" font-weight="700">INSTALL / UNDO</text>
+  <text x="64" y="686" class="mono tiny">every file, block and edit tracked</text>
+  <text x="64" y="708" class="mono tiny">uninstall removes only what it owns</text>
+  <text x="64" y="738" class="mono muted" font-size="12">modified files stay unless --force</text>
+
+  <!-- partial install -->
+  <rect x="34" y="768" width="430" height="198" rx="22" fill="#FFFFFF"/>
+  <text x="64" y="804" class="mono label">PARTIAL INSTALL</text>
+  <rect x="64" y="826" width="344" height="52" rx="12" fill="#F4F4F6"/>
+  <text x="80" y="858" class="mono ink" font-size="14"><tspan fill="#3B82F6">$</tspan> also install review skill</text>
+  <text x="64" y="910" class="mono tiny">install exactly the parts you need</text>
+  <text x="64" y="932" class="mono muted" font-size="12">instructions · skills · commands · agents</text>
+
+  <!-- ===== MIDDLE COLUMN ===== -->
+  <!-- three small cards -->
+  <rect x="478" y="34" width="204" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="500" y="68" class="mono label">BUILT-IN</text>
+  <text x="500" y="118" class="mono ink" font-size="38" font-weight="700">4</text>
+  <text x="500" y="142" class="mono tiny">adapters</text>
+  <text x="500" y="164" class="mono muted" font-size="12">ready to install</text>
+
+  <rect x="696" y="34" width="204" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="718" y="68" class="mono label">COMMUNITY</text>
+  <text x="718" y="118" class="mono ink" font-size="30" font-weight="700">+ JSON</text>
+  <text x="718" y="142" class="mono tiny">declarative</text>
+  <text x="718" y="164" class="mono muted" font-size="12">no recompilation</text>
+
+  <rect x="914" y="34" width="204" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="936" y="68" class="mono label">SLOTS</text>
+  <text x="936" y="118" class="mono ink" font-size="34" font-weight="700">N × H</text>
+  <text x="936" y="142" class="mono tiny">package × harness</text>
+  <text x="936" y="164" class="mono muted" font-size="12">one project</text>
+
+  <!-- package tree -->
+  <rect x="478" y="198" width="640" height="440" rx="22" fill="#FFFFFF"/>
+  <text x="506" y="238" class="mono label">THE PACKAGE</text>
+  <text x="506" y="278" class="mono ink" font-size="24" font-weight="600">one tree, every version</text>
+  <g class="mono" font-size="14" fill="#3F3F46">
+    <text x="506" y="322">namespace/</text>
+    <text x="506" y="348">└── packages/code-review/</text>
+    <text x="506" y="374">    ├── also-pkg.json</text>
+    <text x="506" y="400">    └── origin/</text>
+    <text x="506" y="426">        ├── instructions</text>
+    <text x="506" y="452">        ├── skills/</text>
+    <text x="506" y="478">        ├── commands/</text>
+    <text x="506" y="504">        ├── agents/</text>
+    <text x="506" y="530">        └── mcp/</text>
   </g>
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
-    <text x="215" y="344" fill="#0F172A" font-size="23" font-weight="600">Claude Code</text>
-    <text x="215" y="374" fill="#64748B" font-size="15">CLAUDE.md · .claude</text>
-    <text x="1385" y="344" fill="#0F172A" font-size="23" font-weight="600">Codex CLI</text>
-    <text x="1385" y="374" fill="#64748B" font-size="15">AGENTS.md · .codex</text>
-    <text x="215" y="544" fill="#0F172A" font-size="23" font-weight="600">OpenCode</text>
-    <text x="215" y="574" fill="#64748B" font-size="15">AGENTS.md · opencode.json</text>
-    <text x="1385" y="544" fill="#0F172A" font-size="23" font-weight="600">Qwen Code</text>
-    <text x="1385" y="574" fill="#64748B" font-size="15">QWEN.md · .qwen</text>
+  <rect x="808" y="314" width="280" height="48" rx="10" fill="#F4F4F6"/>
+  <text x="826" y="344" class="mono muted" font-size="12">tag</text>
+  <text x="862" y="344" class="mono ink" font-size="13">3f9a6c2e1b7d4a90</text>
+  <text x="808" y="392" class="mono muted" font-size="12">live tree = latest version</text>
+  <text x="808" y="412" class="mono muted" font-size="12">old versions = git archive</text>
+  <text x="808" y="448" class="mono muted" font-size="12">no version directories</text>
+  <text x="808" y="468" class="mono muted" font-size="12">accumulate on disk</text>
+  <line x1="808" y1="500" x2="1088" y2="500" class="line"/>
+  <text x="808" y="530" class="mono tiny">history stays small</text>
+  <text x="808" y="552" class="mono muted" font-size="12">one live tree per package</text>
+
+  <!-- git namespace -->
+  <rect x="478" y="652" width="640" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="506" y="688" class="mono label">GIT NAMESPACE</text>
+  <text x="506" y="724" class="mono ink" font-size="24" font-weight="600">one remote repository</text>
+  <text x="506" y="752" class="mono tiny">history, packages and version tags</text>
+  <text x="506" y="774" class="mono muted" font-size="12">local clone is an internal cache</text>
+  <g transform="translate(880, 694)">
+    <line x1="0" y1="44" x2="206" y2="44" stroke="#D2D2D7"/>
+    <circle cx="18" cy="44" r="6" fill="#111113"/>
+    <circle cx="68" cy="44" r="6" fill="#111113"/>
+    <circle cx="118" cy="44" r="6" fill="#111113"/>
+    <circle cx="168" cy="44" r="6" fill="#111113"/>
+    <circle cx="168" cy="20" r="5" fill="#3B82F6"/>
+    <line x1="168" y1="25" x2="168" y2="38" stroke="#3B82F6"/>
+    <text x="184" y="24" class="mono" font-size="11" fill="#6E6E73">tag</text>
+    <text x="0" y="76" class="mono" font-size="11" fill="#86868B">main</text>
   </g>
 
-  <g stroke="url(#edge)" stroke-width="2.5" stroke-dasharray="7 9" stroke-linecap="round">
-    <path d="M340 348C520 348 560 410 660 410"/>
-    <path d="M1260 348C1080 348 1040 410 940 410"/>
-    <path d="M340 548C520 548 560 486 660 486"/>
-    <path d="M1260 548C1080 548 1040 486 940 486"/>
+  <!-- diagnose + update -->
+  <rect x="478" y="816" width="313" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="506" y="852" class="mono label">DIAGNOSE</text>
+  <text x="506" y="896" class="mono ink" font-size="22" font-weight="600">doctor / verify</text>
+  <text x="506" y="922" class="mono tiny">repair a broken cache</text>
+  <text x="506" y="946" class="mono muted" font-size="12">non-zero exit on failure</text>
+
+  <rect x="805" y="816" width="313" height="150" rx="22" fill="#FFFFFF"/>
+  <text x="833" y="852" class="mono label">STAY CURRENT</text>
+  <text x="833" y="896" class="mono ink" font-size="22" font-weight="600">also update</text>
+  <text x="833" y="922" class="mono tiny">daily notice, verified download</text>
+  <text x="833" y="946" class="mono muted" font-size="12">checksum before replace</text>
+
+  <!-- ===== RIGHT COLUMN ===== -->
+  <!-- adopt dark card -->
+  <rect x="1132" y="34" width="434" height="260" rx="22" class="dark"/>
+  <text x="1162" y="74" class="mono label" fill="#8E8E93">ADOPT</text>
+  <text x="1162" y="122" class="mono white" font-size="28" font-weight="700">CAPTURE</text>
+  <text x="1162" y="156" class="mono white" font-size="28" font-weight="700">→ PUBLISH</text>
+  <text x="1162" y="196" class="mono" fill="#A1A1A6" font-size="14">turn a live project into a</text>
+  <text x="1162" y="216" class="mono" fill="#A1A1A6" font-size="14">new package version</text>
+  <g transform="translate(1420, 188)" stroke="#3B82F6" stroke-width="2" fill="none">
+    <path d="M64 0A64 64 0 1 1 0 64" stroke-linecap="round"/>
+    <path d="M64 0l-12-10M64 0l-10 12" stroke-linecap="round"/>
   </g>
 
-  <g filter="url(#soft)">
-    <rect x="620" y="300" width="360" height="296" rx="48" fill="url(#core)"/>
+  <!-- namespace -->
+  <rect x="1132" y="308" width="434" height="230" rx="22" fill="#FFFFFF"/>
+  <text x="1162" y="344" class="mono label">NAMESPACE</text>
+  <text x="1162" y="390" class="mono ink" font-size="28" font-weight="700">git</text>
+  <text x="1162" y="420" class="mono tiny">name + remote URL</text>
+  <text x="1162" y="442" class="mono tiny">local clone is an internal cache</text>
+  <g class="mono" font-size="13" fill="#3F3F46">
+    <text x="1162" y="482">main ──●──●──●</text>
+    <text x="1208" y="506">└── tag v3</text>
   </g>
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
-    <text x="800" y="410" fill="#FFFFFF" font-size="52" font-weight="700" letter-spacing="-1">also</text>
-    <text x="800" y="450" fill="#DBEAFE" font-size="17">packages · versions · adapters</text>
-    <line x1="690" y1="486" x2="910" y2="486" stroke="#BFDBFE" stroke-opacity="0.5"/>
-    <text x="800" y="528" fill="#EFF6FF" font-size="18" font-weight="600">one package</text>
-    <text x="800" y="556" fill="#BFDBFE" font-size="15">every harness</text>
-  </g>
+  <text x="1162" y="528" class="mono muted" font-size="12">git owns the history</text>
 
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" fill="#3B82F6">
-    <text x="470" y="392">encode / decode</text>
-    <text x="1030" y="392">render</text>
-    <text x="470" y="520">render</text>
-    <text x="1030" y="520">encode / decode</text>
-  </g>
+  <!-- scriptable -->
+  <rect x="1132" y="552" width="434" height="210" rx="22" fill="#FFFFFF"/>
+  <text x="1162" y="588" class="mono label">SCRIPTABLE</text>
+  <text x="1162" y="636" class="mono ink" font-size="30" font-weight="700">JSON</text>
+  <text x="1162" y="666" class="mono tiny">stable output and exit codes</text>
+  <text x="1162" y="688" class="mono tiny">for every mutating command</text>
+  <rect x="1162" y="708" width="374" height="34" rx="8" fill="#F4F4F6"/>
+  <text x="1178" y="730" class="mono muted" font-size="12">also list --json | jq</text>
 
-  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
-    <text x="800" y="700" fill="#64748B" font-size="17">Install into any harness, adopt back, and keep one versioned source of truth.</text>
-  </g>
+  <!-- guarded -->
+  <rect x="1132" y="776" width="434" height="190" rx="22" fill="#FFFFFF"/>
+  <text x="1162" y="812" class="mono label">GUARDED</text>
+  <text x="1162" y="858" class="mono ink" font-size="28" font-weight="700">SHA-256</text>
+  <text x="1162" y="888" class="mono tiny">checksums · adapter pinning</text>
+  <text x="1162" y="910" class="mono tiny">credential scanning</text>
+  <text x="1162" y="940" class="mono muted" font-size="12">reversible by design</text>
 </svg>

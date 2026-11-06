@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="also connects one versioned package to Claude Code, Codex CLI, OpenCode and Qwen Code" width="100%">
+  <img src="docs/assets/hero.svg" alt="also connects one versioned package to every supported harness" width="100%">
 </p>
 
 <p align="center">
   <strong>One package. Every harness. One source of truth.</strong>
 </p>
 
-`also` is a command-line interface for versioning, translating and installing artificial intelligence infrastructure across Claude Code, Codex CLI, OpenCode and Qwen Code. It stores instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings once, then materializes them in the native layout of any supported harness.
+`also` is a command-line interface for versioning, translating and installing artificial intelligence infrastructure for every supported harness. It stores instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings once, then materializes them in the native layout of any harness through a built-in or declarative adapter.
 
 ## 1. The Problem
 
-Every harness invented its own layout for the same ideas. Claude Code reads `CLAUDE.md` and `.claude/`. Codex CLI reads `AGENTS.md` and `.codex/`. OpenCode reads `AGENTS.md`, `opencode.json` and `.opencode/`. Qwen Code reads `QWEN.md` and `.qwen/`. Skills, commands, agents, hooks, Model Context Protocol servers and permission settings all have slightly different names, file formats and merge rules.
+Every harness invented its own layout for the same ideas. One expects `CLAUDE.md`, another reads `AGENTS.md`, a third uses `QWEN.md`, and each keeps skills, commands, agents, hooks, Model Context Protocol servers and permission settings in a different place. The names, file formats and merge rules rarely match.
 
 The usual result is duplication. The same review skill is copied into four projects. A useful hook exists only in the harness where it was written. A permission change is made in one configuration file and forgotten in the other three. Nothing has a meaningful version, so rolling back means remembering which copy was good.
 
@@ -109,9 +109,13 @@ also add harness https://example.com/harness.json --sha256 <digest>
 
 Adapters are declarative. They cannot execute code, their global paths must stay below the home directory, and downloaded specifications can be pinned to an exact checksum.
 
-### Supported harnesses
+### Cross-harness architecture
 
-| Harness | Instructions | Skills | Commands and agents | Hooks and settings | Model Context Protocol |
+The same package is rendered through whichever adapter matches the target harness. A built-in adapter is ready to install without compiling code. A community adapter is declarative JSON and reuses an existing encoding.
+
+#### Built-in adapters
+
+| Adapter | Instructions | Skills | Commands and agents | Hooks and settings | Model Context Protocol |
 |---|---|---|---|---|---|
 | Claude Code | `CLAUDE.md` | `.claude/skills` | yes | yes | yes |
 | Codex CLI | `AGENTS.md` | `.agents/skills` | not supported by the harness | project layers require a trusted project | yes |
