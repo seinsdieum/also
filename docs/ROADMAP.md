@@ -1,7 +1,7 @@
 # also roadmap
 
-Статус: 2026-11-06, версия `0.1.0`. Это не обещание сроков, а порядок работ и
-критерии готовности.
+Статус: 2026-11-06, версия `1.0.0` (release candidate в работе). Это не обещание
+сроков, а порядок работ и критерии готовности.
 
 ## Текущее состояние
 
@@ -19,16 +19,19 @@
 - community-адаптеры через `also add harness <file|url>`;
 - естественный CLI-язык (`also install pkg for opencode`, `also use ns`);
 - 4×4 E2E: 16/16 round-trip, `compare8.out`;
-- `go test -race`, `make check`, ~74.5% покрытия ядра.
+- remote-only namespaces: `also connect <name> <git-url>`, единый внутренний кэш;
+- `also setup` (интерактивный и `--yes`) и `install.sh`/`install.ps1`;
+- `adopt` публикует прямо в namespace без локального source-каталога;
+- importable module, MIT license, CI и release workflow;
+- `go test -race`, `make check`, покрытие ядра ~74.5%.
 
 Чего пока нет как продукта:
 
-- importable module path, лицензии, CI, релизного процесса;
-- стабильных контрактов state/config/adapter и политики миграций;
+- подписанных бинарников и пакетных менеджеров;
+- стабильных контрактов state/adapter и политики миграций;
 - доверия к community-адаптерам (подписи/checksum/подтверждение);
 - диагностики (`also doctor`/`verify`) и документированного recovery;
-- JSON-вывода и зафиксированных exit codes у изменяющих команд;
-- нормальной установки одной командой и интерактивного onboarding.
+- JSON-вывода и зафиксированных exit codes у изменяющих команд.
 
 ## Решения для 1.0
 
@@ -57,6 +60,10 @@ Acceptance criteria:
 - старый config с `sets[].path/source` автоматически мигрирует;
 - `also list/show/tree/install/upgrade` не показывают пользователю пути клонов;
 - при недоступном remote ошибка говорит, какой namespace и URL недоступны.
+
+Статус: реализовано. `SetConfig.Path/Source`, `--source`, `~/.also/sets` и
+показ путей клонов убраны; config v1 мигрирует в v2 автоматически; `adopt`
+без `--into` собирает временный бандл и пушит его в namespace.
 
 ### D2. Установка через curl + интерактивный setup
 
@@ -104,27 +111,33 @@ Acceptance criteria:
 - неверный URL/harness не оставляет полузаписанный config;
 - установка работает на macOS/Linux, Windows — отдельным installer-путём.
 
+Статус: `install.sh` и `install.ps1` добавлены, `also setup` и `--yes`
+работают; проверено на macOS, Windows installer ещё не прогонялся.
+
 ## Блокеры 1.0
 
 ### V1-1. Дистрибуция и релиз
 
-- [ ] заменить `module also` на реальный import path;
-- [ ] добавить git remote и публичный репозиторий;
-- [ ] добавить `LICENSE`;
-- [ ] `Version = "1.0.0"` + commit/date в `also version`;
-- [ ] `.github/workflows`: gofmt, vet, test, race, Windows/macOS/Linux;
-- [ ] release workflow: darwin/linux/windows amd64/arm64, checksums, подпись;
-- [ ] install script и Homebrew/apt/winget — минимум один пакетный путь;
-- [ ] `CHANGELOG.md` и release notes.
+- [x] заменить `module also` на реальный import path;
+- [x] добавить git remote и публичный репозиторий;
+- [x] добавить `LICENSE`;
+- [x] `Version = "1.0.0"` + commit/date в `also version`;
+- [x] `.github/workflows`: gofmt, vet, test, race, Windows/macOS/Linux;
+- [ ] release workflow: darwin/linux/windows amd64/arm64, checksums, подпись
+      (сборка и checksums готовы, подпись — нет);
+- [ ] install script и Homebrew/apt/winget — минимум один пакетный путь
+      (install.sh/install.ps1 готовы, пакетного менеджера пока нет);
+- [x] `CHANGELOG.md` и release notes.
 
 ### V1-2. Зафиксированные контракты и миграции
 
 - [ ] объявить `also.pkg/v1` стабильным;
-- [ ] определить `also.config/v2` для remote-only namespaces;
+- [x] определить `also.config/v2` для remote-only namespaces;
 - [ ] определить `also.state/v2` или явно закрепить обратную совместимость
       текущего `v1` (install slot id уже включает harness);
 - [ ] версионировать формат community-адаптера (`adapter/v1`);
-- [ ] написать migration-тесты: старый config/state/package → новый;
+- [ ] написать migration-тесты: старый config/state/package → новый
+      (config v1→v2 готов, state/package — остались);
 - [ ] зафиксировать политику: что можно менять в patch/minor/major.
 
 ### V1-3. CI и тесты

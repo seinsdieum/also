@@ -5,6 +5,8 @@ package also
 // registered formats and declare validated paths.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -246,9 +248,26 @@ const maxAdapterSpecSize = 1 << 20
 
 // AddAdapterFile installs a declarative harness spec from a local file or URL.
 func AddAdapterFile(source string) (*Harness, string, error) {
+	return AddAdapterFileSHA256(source, "")
+}
+
+// AddAdapterFileSHA256 pins a downloaded adapter to a known checksum. An empty
+// checksum keeps the old unpinned behavior for local files.
+func AddAdapterFileSHA256(source, want string) (*Harness, string, error) {
 	data, err := loadAdapterSource(source)
 	if err != nil {
 		return nil, "", err
+	}
+	if want != "" {
+		want = strings.ToLower(strings.TrimSpace(want))
+		if len(want) != 64 {
+			return nil, "", fmt.Errorf("--sha256 must be 64 hex characters")
+		}
+		sum := sha256.Sum256(data)
+		got := hex.EncodeToString(sum[:])
+		if got != want {
+			return nil, "", fmt.Errorf("adapter checksum mismatch: got %s, want %s", got, want)
+		}
 	}
 	var spec AdapterSpec
 	if err := json.Unmarshal(data, &spec); err != nil {

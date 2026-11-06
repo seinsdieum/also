@@ -132,6 +132,12 @@ claim an alias that is already taken. External global paths must be relative to
 `global_base`, and `global_base` must be a directory below `$HOME`; a downloaded
 spec cannot point at unrelated files such as `~/.bashrc`.
 
+Downloaded specs can be pinned with `also add harness <url> --sha256 <hash>`.
+The hash covers the exact file bytes; an unpinned URL still works but prints a
+warning. Adapters cannot execute code, so the remaining risk is choosing where
+files are written, which the path bounds above are meant to contain. See
+[SECURITY.md](../SECURITY.md) for the full trust model.
+
 The JSON shape is:
 
 ```json

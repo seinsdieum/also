@@ -369,3 +369,24 @@ func TestAdoptPublishesWithoutLocalSource(t *testing.T) {
 		t.Fatalf("namespace cache still lives under sets/: %s", SetCachePath(cfg.Namespaces["personal"].Remote))
 	}
 }
+
+func TestConfigSecretScanning(t *testing.T) {
+	files := map[string]*SnapshotFile{
+		"settings.json": {Data: []byte(`{
+  "env": {"API_KEY": "sk-live", "TOKEN": "${TOKEN}"},
+  "headers": [{"Authorization": "Bearer plain"}],
+  "safe": {"name": "demo"}
+}`), Mode: 0o644},
+		"config.toml": {Data: []byte("[model]\napi_key = \"sk-toml\"\ncommand = \"echo\"\n"), Mode: 0o644},
+	}
+	got := strings.Join(ScanConfigSecrets(files), "\n")
+	if !strings.Contains(got, "settings.json:env.API_KEY") {
+		t.Fatalf("JSON secret was missed: %s", got)
+	}
+	if !strings.Contains(got, "config.toml:model.api_key") {
+		t.Fatalf("TOML secret was missed: %s", got)
+	}
+	if strings.Contains(got, "TOKEN") {
+		t.Fatalf("environment reference was flagged: %s", got)
+	}
+}

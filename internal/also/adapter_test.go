@@ -12,6 +12,12 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestAdaptersAreValid(t *testing.T) {
 	list := Harnesses()
 	if len(list) < 4 {
@@ -30,7 +36,7 @@ func TestAdaptersAreValid(t *testing.T) {
 func TestAdapterTargetsStayInsideRoot(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	for _, h := range Harnesses() {
 		for _, tc := range []struct {
 			scope string
@@ -57,9 +63,9 @@ func TestAdapterValidationRejectsUnsafeSpecs(t *testing.T) {
 	cases := map[string]func(*Harness){
 		"traversal skill": func(h *Harness) { h.Project.Skills = "../outside" },
 		"absolute project path": func(h *Harness) {
-			h.Project.Commands = "/etc/commands"
+			h.Project.Commands = testAbsolutePath()
 		},
-		"absolute global path": func(h *Harness) { h.Global.MCP = "/etc/mcp.json" },
+		"absolute global path": func(h *Harness) { h.Global.MCP = testAbsolutePath() },
 		"config traversal":     func(h *Harness) { h.MCP.Configs = []string{"../settings.json"} },
 		"reserved project dir": func(h *Harness) { h.Project.Hooks = ".git/hooks" },
 		"reserved global dir":  func(h *Harness) { h.Global.Skills = "~/.ssh/keys" },
@@ -78,6 +84,13 @@ func TestAdapterValidationRejectsUnsafeSpecs(t *testing.T) {
 			t.Fatalf("%s: expected validation error", name)
 		}
 	}
+}
+
+func testAbsolutePath() string {
+	if filepath.Separator == '\\' {
+		return `C:\Windows\win.ini`
+	}
+	return "/etc/passwd"
 }
 
 func TestAdapterNamesAreUnique(t *testing.T) {
@@ -224,7 +237,7 @@ func TestAdapterSpecRejectsUnsafeMCPCandidate(t *testing.T) {
 
 func TestConfigPathIsBounded(t *testing.T) {
 	project := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	target := MustHarness("claude").TargetPath("project", project)
 	if !configPathAllowed(filepath.Join(project, ".mcp.json"), target) {
 		t.Fatal("in-project config must be allowed")

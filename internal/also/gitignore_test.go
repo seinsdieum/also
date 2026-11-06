@@ -129,7 +129,7 @@ func TestGitIgnoreKeepsModeAndRejectsSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if filepath.Separator != '\\' && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode changed: %o", info.Mode().Perm())
 	}
 

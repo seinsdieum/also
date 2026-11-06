@@ -76,6 +76,11 @@ func TestLoadPackageModesFromGit(t *testing.T) {
 	testGit(t, dir, "init", "-q")
 	testGit(t, dir, "config", "core.filemode", "true")
 	testGit(t, dir, "add", ".")
+	if filepath.Separator == '\\' {
+		// Windows cannot set the exec bit in the worktree, but git can still
+		// record it in the index; this is what a Unix push produces.
+		testGit(t, dir, "update-index", "--chmod=+x", "origin/hook.sh")
+	}
 	testGit(t, dir, "commit", "-qm", "pkg")
 
 	// Simulate a Windows checkout where the exec bit is gone.

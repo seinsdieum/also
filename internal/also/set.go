@@ -359,8 +359,9 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		return nil, fmt.Errorf("cannot encode MCP configuration: %w", err)
 	}
 	warnings = append(warnings, mcpWarnings...)
-	if secrets := MCPSuspiciousSecrets(servers); len(secrets) > 0 && !opts.AllowSecrets {
-		return nil, fmt.Errorf("refusing to encode literal MCP credentials (use --allow-secrets if intentional):\n  %s", strings.Join(secrets, "\n  "))
+	secrets := append(MCPSuspiciousSecrets(servers), ScanConfigSecrets(snap.Files)...)
+	if len(secrets) > 0 && !opts.AllowSecrets {
+		return nil, fmt.Errorf("refusing to encode literal credentials (use --allow-secrets if intentional):\n  %s", strings.Join(uniqueStrings(secrets), "\n  "))
 	}
 	meta := PackageMeta{
 		Schema: SchemaPkg, Name: opts.Name, Description: opts.Description,

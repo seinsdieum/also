@@ -15,7 +15,7 @@ func setup(t *testing.T) (tmp, remote, setDir string, cfg *Config) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("ALSO_HOME", filepath.Join(tmp, "also"))
 	remote = filepath.Join(tmp, "remote.git")
 	if out, err := exec.Command("git", "init", "--bare", "-q", remote).CombinedOutput(); err != nil {

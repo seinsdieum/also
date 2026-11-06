@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -31,6 +32,7 @@ func setupHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("USERPROFILE", filepath.Join(tmp, "home"))
 	t.Setenv("ALSO_HOME", filepath.Join(tmp, "also"))
 	if err := os.MkdirAll(os.Getenv("HOME"), 0o755); err != nil {
 		t.Fatal(err)
@@ -49,11 +51,20 @@ func TestSetupNonInteractiveAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(data)
-	for _, want := range []string{`"also.config/v2"`, `"personal"`, remote, `"opencode"`} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("config is missing %q:\n%s", want, got)
-		}
+	var parsed struct {
+		Schema           string                       `json:"schema"`
+		DefaultNamespace string                       `json:"default_namespace"`
+		DefaultHarness   string                       `json:"default_harness"`
+		Namespaces       map[string]map[string]string `json:"namespaces"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Schema != "also.config/v2" || parsed.DefaultNamespace != "personal" || parsed.DefaultHarness != "opencode" {
+		t.Fatalf("unexpected config: %+v", parsed)
+	}
+	if parsed.Namespaces["personal"]["remote"] != remote {
+		t.Fatalf("remote = %q, want %q", parsed.Namespaces["personal"]["remote"], remote)
 	}
 	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
 		t.Fatal(err)

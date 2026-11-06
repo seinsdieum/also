@@ -1,6 +1,8 @@
 package also
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -167,5 +169,29 @@ func TestLocalAdapterSourceIsSizeLimited(t *testing.T) {
 	}
 	if _, err := loadAdapterSource(path); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("expected size limit, got %v", err)
+	}
+}
+
+func TestAdapterChecksumPinning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ALSO_ADAPTERS", dir)
+	resetExternalAdapters()
+	defer resetExternalAdapters()
+
+	src := filepath.Join(t.TempDir(), "pinned.json")
+	data := []byte(adapterJSON("pinnedunit"))
+	if err := os.WriteFile(src, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	good := hex.EncodeToString(sum[:])
+	if _, _, err := AddAdapterFileSHA256(src, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected a checksum mismatch")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pinnedunit.json")); !os.IsNotExist(err) {
+		t.Fatal("adapter with a bad checksum was written")
+	}
+	if _, _, err := AddAdapterFileSHA256(src, good); err != nil {
+		t.Fatalf("pinned adapter was rejected: %v", err)
 	}
 }
