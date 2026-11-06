@@ -59,7 +59,7 @@ reversible bookkeeping.`
 		installSet := setFlag
 		if spec.Ref.Namespace != "" {
 			if installSet != "" && installSet != spec.Ref.Namespace {
-				return fmt.Errorf("namespace %q conflicts with --set %q", spec.Ref.Namespace, installSet)
+				return fmt.Errorf("namespace %q conflicts with --namespace %q", spec.Ref.Namespace, installSet)
 			}
 			if from != "" {
 				return fmt.Errorf("namespace %q cannot be combined with --from <url>", spec.Ref.Namespace)
@@ -88,8 +88,8 @@ reversible bookkeeping.`
 			return nil
 		})
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "set/namespace name")
-	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
+	addNamespaceFlag(c, &setFlag)
+	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().StringVarP(&harness, "harness", "h", "", "target harness (claude, opencode, codex, qwen, ...)")
 	c.Flags().StringVar(&scope, "scope", "", "global or project (default from config)")
 	c.Flags().StringVarP(&project, "project", "p", "", "project directory for --scope project (default: cwd)")
@@ -711,7 +711,7 @@ the remote namespace. The bundle is temporary unless --into is given.`
 	c.Flags().StringVar(&name, "name", "", "package name (default: project directory name)")
 	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness; auto-detected by default")
 	c.Flags().StringVar(&into, "into", "", "keep the extracted bundle in this directory (debugging)")
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
+	addNamespaceFlag(c, &setFlag)
 	c.Flags().BoolVar(&noPush, "no-push", false, "only write the local bundle")
 	c.Flags().BoolVar(&force, "force", false, "replace an existing bundle (kept as a backup)")
 	c.Flags().StringVarP(&message, "message", "m", "", "git commit message")

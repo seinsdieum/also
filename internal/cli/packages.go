@@ -119,8 +119,8 @@ func newListCmd() *cobra.Command {
 		}
 		return w.Flush()
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
-	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
+	addNamespaceFlag(c, &setFlag)
+	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before listing")
 	c.Flags().BoolVar(&versions, "versions", false, "show every version")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
@@ -159,7 +159,7 @@ func newShowCmd() *cobra.Command {
 		}
 		if ref.Namespace != "" {
 			if setFlag != "" && setFlag != ref.Namespace {
-				return fmt.Errorf("namespace %q conflicts with --set %q", ref.Namespace, setFlag)
+				return fmt.Errorf("namespace %q conflicts with --namespace %q", ref.Namespace, setFlag)
 			}
 			setFlag = ref.Namespace
 		}
@@ -290,8 +290,8 @@ func newShowCmd() *cobra.Command {
 		fmt.Printf("versions: %d\n", len(allVersions))
 		return nil
 	}
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
-	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a set")
+	addNamespaceFlag(c, &setFlag)
+	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before reading")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
@@ -432,7 +432,7 @@ unchanged content is a no-op.`
 	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness (claude, opencode, codex, qwen); auto-detected by default")
 	c.Flags().StringVar(&label, "label", "", "human version label, e.g. v1.2")
 	c.Flags().StringVarP(&message, "message", "m", "", "git commit message")
-	c.Flags().StringVarP(&setFlag, "set", "s", "", "namespace name")
+	addNamespaceFlag(c, &setFlag)
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pushed")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")

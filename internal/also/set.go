@@ -37,7 +37,7 @@ func openSet(name string, cfg NamespaceConfig, refresh, offline bool) (*SetRepo,
 			return nil, fmt.Errorf("offline: no cached clone for namespace %q (%s)", name, cfg.Remote)
 		}
 		if _, err := cloneOrInit(cfg.Remote, dir); err != nil {
-			return nil, fmt.Errorf("open set %q: %w", name, err)
+			return nil, fmt.Errorf("open namespace %q: %w", name, err)
 		}
 	}
 	if err := ensureLineEndings(dir); err != nil {
@@ -47,10 +47,10 @@ func openSet(name string, cfg NamespaceConfig, refresh, offline bool) (*SetRepo,
 	repo := &SetRepo{Name: name, Cfg: cfg, Dir: dir}
 	remote, err := runGit(dir, "remote", "get-url", "origin")
 	if err != nil {
-		return nil, fmt.Errorf("set %q has no origin remote: %w", name, err)
+		return nil, fmt.Errorf("namespace %q has no origin remote: %w", name, err)
 	}
 	if strings.TrimSpace(remote) != strings.TrimSpace(cfg.Remote) {
-		return nil, fmt.Errorf("set %q points at %s but its remote is %s; refusing to use it", name, cfg.Remote, strings.TrimSpace(remote))
+		return nil, fmt.Errorf("namespace %q points at %s but its remote is %s; refusing to use it", name, cfg.Remote, strings.TrimSpace(remote))
 	}
 	if refresh {
 		if err := repo.Refresh(); err != nil {
@@ -147,7 +147,7 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 				Time: liveMeta.CreatedAt,
 			}}, nil
 		}
-		return nil, fmt.Errorf("package %q not found in set %q", pkg, s.Name)
+		return nil, fmt.Errorf("package %q not found in namespace %q", pkg, s.Name)
 	}
 	info, legacyTimes, legacyOrder, err := s.versionData()
 	if err != nil {
@@ -233,7 +233,7 @@ func (s *SetRepo) Latest(pkg string) (VersionInfo, error) {
 		return VersionInfo{}, err
 	}
 	if len(versions) == 0 {
-		return VersionInfo{}, fmt.Errorf("package %q has no committed versions in set %q", pkg, s.Name)
+		return VersionInfo{}, fmt.Errorf("package %q has no committed versions in namespace %q", pkg, s.Name)
 	}
 	return versions[0], nil
 }

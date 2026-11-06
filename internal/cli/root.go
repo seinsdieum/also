@@ -159,6 +159,14 @@ func newTabWriter() *tabwriter.Writer {
 	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 }
 
+// addNamespaceFlag keeps --namespace as the documented spelling and --set as a
+// hidden alias for scripts written against older also versions.
+func addNamespaceFlag(c *cobra.Command, p *string) {
+	c.Flags().StringVarP(p, "namespace", "s", "", "namespace name")
+	c.Flags().StringVar(p, "set", "", "deprecated: use --namespace")
+	_ = c.Flags().MarkHidden("set")
+}
+
 func newConnectCmd() *cobra.Command {
 	var (
 		def     bool
@@ -210,6 +218,7 @@ func newSetCmd() *cobra.Command {
 		migrate bool
 	)
 	c := newCmd("set [name]", "Alias for connect (remote namespace)")
+	c.Hidden = true
 	c.Long = `Attach a git repository that stores also packages. The remote repository
 must already exist. Prefer: also connect <name> <git-url>.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {

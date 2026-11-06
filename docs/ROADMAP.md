@@ -172,15 +172,14 @@ Acceptance criteria:
 - [x] `also verify`: целостность set, тегов, манифестов, state;
 - [x] recovery-команды для dirty clone (`also repair`), понятные подсказки;
 - [ ] осиротевшие теги и битый state (пока только диагностируются);
-- [ ] тесты на corrupted config/state/manifest/tag
-      (config/state/manifest частично покрыты).
+- [x] тесты на corrupted config/state/manifest/tag.
 
 ### V1-6. Стабильный CLI/API
 
 - [x] JSON-вывод для install/push/adopt/upgrade/reshape/uninstall/setup;
 - [x] документированные exit codes;
-- [ ] единая терминология `namespace` (убрать пользовательский `set`)
-      (пользовательские тексты переведены, `also set` и `--set` оставлены алиасами);
+- [x] единая терминология `namespace` (убрать пользовательский `set`)
+      (`--namespace` основной, `--set` и `also set` скрытые алиасы);
 - [x] command reference: natural form, flags, examples, JSON schema;
 - [x] `also version --json`;
 - [x] решить судьбу флагов: оставить как scripting API, natural form — основной.
