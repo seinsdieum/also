@@ -74,6 +74,12 @@ also setup
 бинарник в `~/.local/bin` без sudo. Переменные: `ALSO_VERSION`,
 `ALSO_INSTALL_DIR`. Для Windows есть `install.ps1`.
 
+Через Go:
+
+```sh
+go install github.com/seinsdieum/also@latest
+```
+
 Из исходников:
 
 ```sh
