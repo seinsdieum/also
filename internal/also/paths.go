@@ -13,10 +13,11 @@ const (
 	// Version is the CLI and package-encoder version.
 	Version = "1.0.0"
 
-	SchemaConfig = "also.config/v2"
-	SchemaState  = "also.state/v1"
-	SchemaSet    = "also.set/v1"
-	SchemaPkg    = "also.pkg/v1"
+	SchemaConfig  = "also.config/v2"
+	SchemaState   = "also.state/v1"
+	SchemaSet     = "also.set/v1"
+	SchemaPkg     = "also.pkg/v1"
+	SchemaAdapter = "also.adapter/v1"
 
 	EnvHome = "ALSO_HOME"
 )

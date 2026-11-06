@@ -383,7 +383,8 @@ Claude/Codex/OpenCode/Qwen загружают инструкции, skills и ho
 ## Roadmap
 
 План до 1.0, remote-only namespaces, curl-установка и интерактивный `also setup`:
-[docs/ROADMAP.md](docs/ROADMAP.md).
+[docs/ROADMAP.md](docs/ROADMAP.md). Справочник команд, JSON и exit codes:
+[docs/CLI.md](docs/CLI.md). Контракты форматов: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 ## Разработка
 

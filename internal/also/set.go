@@ -317,16 +317,17 @@ type PushOptions struct {
 }
 
 type PushResult struct {
-	Package  string
-	Version  string
-	Digest   string
-	Label    string
-	Harness  string
-	Files    int
-	Bytes    int64
-	Existing bool
-	Warnings []string
-	Remote   string
+	Package   string   `json:"package"`
+	Version   string   `json:"version"`
+	Digest    string   `json:"digest"`
+	Label     string   `json:"label,omitempty"`
+	Harness   string   `json:"harness"`
+	Files     int      `json:"files"`
+	Bytes     int64    `json:"bytes"`
+	Existing  bool     `json:"existing"`
+	Warnings  []string `json:"warnings,omitempty"`
+	Remote    string   `json:"remote"`
+	Namespace string   `json:"namespace"`
 }
 
 func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) {
@@ -374,7 +375,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	res := &PushResult{
 		Package: opts.Name, Version: version, Digest: digest, Label: opts.Label,
 		Harness: harness, Files: len(snap.Files), Bytes: snap.TotalBytes(),
-		Warnings: warnings, Remote: s.Cfg.Remote,
+		Warnings: warnings, Remote: s.Cfg.Remote, Namespace: s.Name,
 	}
 	if opts.DryRun {
 		return res, nil

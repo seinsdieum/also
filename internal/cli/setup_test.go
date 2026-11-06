@@ -132,3 +132,33 @@ func TestAdoptPushesToRemoteWithoutSource(t *testing.T) {
 		t.Fatal("adopt did not push a version tag to the namespace")
 	}
 }
+
+func TestDoctorAndVerifyAfterPush(t *testing.T) {
+	tmp := setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(tmp, "bundle")
+	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: d\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("push", bundle, "--name", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("doctor"); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if err := runCLI("verify"); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if err := runCLI("verify", "personal", "--json"); err != nil {
+		t.Fatalf("verify --json: %v", err)
+	}
+}

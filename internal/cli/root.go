@@ -56,6 +56,8 @@ func NewRoot() *cobra.Command {
 		newExcludeCmd(),
 		newIncludeCmd(),
 		newListCmd(),
+		newDoctorCmd(),
+		newVerifyCmd(),
 		newShowCmd(),
 		newPushCmd(),
 		newAdoptCmd(),
@@ -69,12 +71,20 @@ func NewRoot() *cobra.Command {
 }
 
 func newVersionCmd() *cobra.Command {
+	var jsonOut bool
 	c := newCmd("version", "Print the also version")
-	c.Run = func(cmd *cobra.Command, args []string) {
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if jsonOut {
+			return printJSON(map[string]string{
+				"version": also.Version, "commit": also.Commit, "built": also.BuildDate,
+			})
+		}
 		fmt.Printf("also %s\n", also.Version)
 		fmt.Printf("commit: %s\n", also.Commit)
 		fmt.Printf("built:  %s\n", also.BuildDate)
+		return nil
 	}
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
 

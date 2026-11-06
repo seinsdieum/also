@@ -3,6 +3,7 @@ package also
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -193,5 +194,19 @@ func TestAdapterChecksumPinning(t *testing.T) {
 	}
 	if _, _, err := AddAdapterFileSHA256(src, good); err != nil {
 		t.Fatalf("pinned adapter was rejected: %v", err)
+	}
+}
+
+func TestAdapterSchemaVersion(t *testing.T) {
+	var spec AdapterSpec
+	if err := json.Unmarshal([]byte(adapterJSON("schemav1")), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := spec.Harness(); err != nil {
+		t.Fatalf("adapter without an explicit schema must stay valid: %v", err)
+	}
+	spec.Schema = "also.adapter/v2"
+	if _, err := spec.Harness(); err == nil || !strings.Contains(err.Error(), "unsupported adapter schema") {
+		t.Fatalf("expected an unsupported schema error, got %v", err)
 	}
 }

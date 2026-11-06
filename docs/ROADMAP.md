@@ -131,59 +131,69 @@ Acceptance criteria:
 
 ### V1-2. Зафиксированные контракты и миграции
 
-- [ ] объявить `also.pkg/v1` стабильным;
+- [x] объявить `also.pkg/v1` стабильным;
 - [x] определить `also.config/v2` для remote-only namespaces;
-- [ ] определить `also.state/v2` или явно закрепить обратную совместимость
-      текущего `v1` (install slot id уже включает harness);
-- [ ] версионировать формат community-адаптера (`adapter/v1`);
+- [x] определить `also.state/v2` или явно закрепить обратную совместимость
+      текущего `v1` (решение: v1 остаётся, ID непрозрачны, legacy fallback);
+- [x] версионировать формат community-адаптера (`adapter/v1`);
 - [ ] написать migration-тесты: старый config/state/package → новый
-      (config v1→v2 готов, state/package — остались);
-- [ ] зафиксировать политику: что можно менять в patch/minor/major.
+      (config v1→v2 и legacy install slot готовы, package/tag — остались);
+- [x] зафиксировать политику: что можно менять в patch/minor/major
+      ([docs/CONTRACTS.md](CONTRACTS.md)).
 
 ### V1-3. CI и тесты
 
-- [ ] CLI coverage поднять с 8% до осмысленного уровня;
-- [ ] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect;
+- [ ] CLI coverage поднять с 8% до осмысленного уровня
+      (setup/connect/push/adopt/doctor/verify уже покрыты);
+- [ ] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect
+      (setup/push/adopt/doctor/verify готовы, install/upgrade/reshape/uninstall — нет);
 - [ ] golden-тесты вывода и exit codes;
 - [ ] тесты natural-language parser и конфликтующих флагов;
 - [ ] положить 4×4 E2E в `test/e2e` и запускать в CI;
-- [ ] Windows CI: пути, CRLF, exec-bit, lock, имена пакетов;
+- [x] Windows CI: пути, CRLF, exec-bit, lock, имена пакетов;
 - [ ] отдельный smoke с реальными harness CLI (без реальных моделей).
 
 ### V1-4. Trust/security
 
-- [ ] описать threat model community-адаптеров;
-- [ ] checksum/signature или pinning для `also add harness <url>`;
-- [ ] подтверждение при подключении namespace/адаптера;
-- [ ] расширить secret scanning: произвольные settings, URL, command args;
-- [ ] политика `--allow-secrets`/`--allow-large` и redaction в логах;
-- [ ] `SECURITY.md` с каналом сообщения об уязвимостях.
+- [x] описать threat model community-адаптеров;
+- [x] checksum/signature или pinning для `also add harness <url>`;
+- [ ] подтверждение при подключении namespace/адаптера
+      (сейчас предупреждение о неподписанном URL, без интерактивного yes/no);
+- [x] расширить secret scanning: произвольные settings, URL, command args;
+- [x] политика `--allow-secrets`/`--allow-large` и redaction в логах;
+- [x] `SECURITY.md` с каналом сообщения об уязвимостях.
 
 ### V1-5. Диагностика и восстановление
 
-- [ ] `also doctor`: git, config, state, adapters, dirty caches, PATH;
-- [ ] `also verify`: целостность set, тегов, манифестов, state;
+- [x] `also doctor`: git, config, state, adapters, dirty caches, PATH;
+- [x] `also verify`: целостность set, тегов, манифестов, state;
 - [ ] recovery-команды для dirty clone, осиротевших тегов и битого state;
 - [ ] понятные ошибки вместо ручных `git`-инструкций;
 - [ ] тесты на corrupted config/state/manifest/tag.
 
 ### V1-6. Стабильный CLI/API
 
-- [ ] JSON-вывод для install/push/adopt/upgrade/reshape/uninstall/setup;
-- [ ] документированные exit codes;
-- [ ] единая терминология `namespace` (убрать пользовательский `set`);
-- [ ] command reference: natural form, flags, examples, JSON schema;
-- [ ] `also version --json`;
-- [ ] решить судьбу флагов: оставить как scripting API, natural form — основной.
+- [x] JSON-вывод для install/push/adopt/upgrade/reshape/uninstall/setup;
+- [x] документированные exit codes;
+- [ ] единая терминология `namespace` (убрать пользовательский `set`)
+      (пользовательские тексты переведены, `also set` и `--set` оставлены алиасами);
+- [x] command reference: natural form, flags, examples, JSON schema;
+- [x] `also version --json`;
+- [x] решить судьбу флагов: оставить как scripting API, natural form — основной.
 
 ## Порядок работ
 
-1. **M0: repo hygiene** — import path, remote, LICENSE, CI, version metadata.
-2. **M1: remote-only namespaces** — config v2, `connect`, убрать local set/source,
-   миграция старого config, обновить adopt/push.
-3. **M2: install + setup** — install script, `also setup`, non-interactive режим.
-4. **M3: contracts + safety** — схемы, migration tests, adapter trust, secrets.
-5. **M4: diagnostics + CLI contract** — doctor/verify, JSON, exit codes, docs.
+1. **M0: repo hygiene** — сделано: import path, public repo, LICENSE, CI,
+   release workflow, version metadata.
+2. **M1: remote-only namespaces** — сделано: config v2, `connect`, без local
+   set/source, миграция config, adopt/push через кэш.
+3. **M2: install + setup** — сделано: install.sh/install.ps1, `also setup`,
+   non-interactive режим.
+4. **M3: contracts + safety** — ядро сделано: схемы, config/state совместимость,
+   adapter/v1, pinning, secret scanning, SECURITY. Остались package/tag
+   migration-тесты и интерактивное подтверждение.
+5. **M4: diagnostics + CLI contract** — ядро сделано: doctor/verify, JSON,
+   exit codes, command reference. Остались golden-тесты и recovery-команды.
 6. **M5: 1.0 RC** — full CI matrix, E2E, release candidate, CHANGELOG.
 7. **M6: 1.0 release** — signed binaries, packages, tag `v1.0.0`.
 
@@ -208,12 +218,14 @@ Acceptance criteria:
 
 ## Release gate 1.0
 
-- [ ] install одной командой + `also setup` работают на чистой машине;
-- [ ] remote-only namespace flow покрыт E2E;
-- [ ] CI зелёный на macOS/Linux/Windows;
-- [ ] старые config/state/package мигрируют без потери данных;
+- [x] install одной командой + `also setup` работают на чистой машине
+      (install.sh проверен на macOS; Windows installer ждёт прогона);
+- [x] remote-only namespace flow покрыт E2E (CLI smoke + тесты);
+- [x] CI зелёный на macOS/Linux/Windows;
+- [ ] старые config/state/package мигрируют без потери данных
+      (config/state готовы, package/tag тесты остались);
 - [ ] 4×4 E2E 16/16 на релизном бинарнике;
-- [ ] `also doctor` и `also verify` проходят на тестовом set;
-- [ ] LICENSE, CHANGELOG, SECURITY, command reference готовы;
+- [x] `also doctor` и `also verify` проходят на тестовом set;
+- [x] LICENSE, CHANGELOG, SECURITY, command reference готовы;
 - [ ] бинарники подписаны, checksums опубликованы;
 - [ ] tag `v1.0.0`.

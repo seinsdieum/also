@@ -335,6 +335,7 @@ func newPushCmd() *cobra.Command {
 		dryRun      bool
 		allowSecret bool
 		allowLarge  bool
+		jsonOut     bool
 	)
 	c := newCmd("push <bundle-dir>", "Encode a bundle and push a new package version")
 	c.Long = `Encodes a hand-written harness bundle into the universal also package format,
@@ -396,15 +397,24 @@ unchanged content is a no-op.`
 				return err
 			}
 			if dryRun {
+				if jsonOut {
+					return printJSON(map[string]any{"dry_run": true, "result": res})
+				}
 				fmt.Printf("would push %s@%s (%s) to %s\n", res.Package, short(res.Version), res.Harness, res.Remote)
 				fmt.Printf("files: %d (%s)\n", res.Files, also.FormatBytes(res.Bytes))
 				printWarnings("warnings", res.Warnings)
 				return nil
 			}
 			if res.Existing {
+				if jsonOut {
+					return printJSON(res)
+				}
 				fmt.Printf("no changes: %s@%s already exists in namespace %s\n", res.Package, short(res.Version), setName)
 				printWarnings("warnings", res.Warnings)
 				return nil
+			}
+			if jsonOut {
+				return printJSON(res)
 			}
 			fmt.Printf("pushed %s@%s", res.Package, res.Version)
 			if res.Label != "" {
@@ -426,5 +436,6 @@ unchanged content is a no-op.`
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pushed")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

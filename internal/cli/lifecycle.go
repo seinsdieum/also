@@ -22,6 +22,7 @@ func newInstallCmd() *cobra.Command {
 		force    bool
 		offline  bool
 		noConfig bool
+		jsonOut  bool
 	)
 	c := newCmd("install [part kind] from <package> [for <harness>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
@@ -80,6 +81,9 @@ reversible bookkeeping.`
 			if err != nil {
 				return err
 			}
+			if jsonOut {
+				return printJSON(planOutput(plan))
+			}
 			printPlan(plan)
 			return nil
 		})
@@ -92,7 +96,49 @@ reversible bookkeeping.`
 	c.Flags().BoolVar(&force, "force", false, "overwrite conflicting files and modified content (backups are kept)")
 	c.Flags().BoolVar(&offline, "offline", false, "use the local clone without fetching")
 	c.Flags().BoolVar(&noConfig, "no-config", false, "do not install MCP servers or hooks")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
+}
+
+type configChange struct {
+	File   string   `json:"file"`
+	Kind   string   `json:"kind"`
+	Path   []string `json:"path,omitempty"`
+	Marker string   `json:"marker,omitempty"`
+}
+
+type installOutput struct {
+	Package       string         `json:"package"`
+	Version       string         `json:"version"`
+	Label         string         `json:"label,omitempty"`
+	Harness       string         `json:"harness"`
+	Scope         string         `json:"scope"`
+	Project       string         `json:"project,omitempty"`
+	Root          string         `json:"root"`
+	Namespace     string         `json:"namespace"`
+	Parts         []string       `json:"parts,omitempty"`
+	Files         int            `json:"files"`
+	Instructions  string         `json:"instructions,omitempty"`
+	ConfigChanges []configChange `json:"config_changes,omitempty"`
+	Warnings      []string       `json:"warnings,omitempty"`
+	Skipped       []string       `json:"skipped,omitempty"`
+}
+
+func planOutput(plan *also.Plan) installOutput {
+	in := plan.Install
+	out := installOutput{
+		Package: in.Package, Version: in.Version, Label: in.Label,
+		Harness: in.Harness, Scope: in.Scope, Project: in.Project, Root: in.Root,
+		Namespace: in.Set, Parts: in.Parts, Files: len(plan.NewFiles),
+		Warnings: unique(plan.Warnings), Skipped: unique(plan.Skipped),
+	}
+	if plan.Block != nil {
+		out.Instructions = plan.Block.File
+	}
+	for _, e := range plan.Edits {
+		out.ConfigChanges = append(out.ConfigChanges, configChange{File: e.File, Kind: e.Kind, Path: e.Path, Marker: e.Marker})
+	}
+	return out
 }
 
 func resolveHarnessWord(cfg *also.Config, requested string, sawFor bool) (string, error) {
@@ -146,8 +192,9 @@ func printPlan(plan *also.Plan) {
 
 func newUpgradeCmd() *cobra.Command {
 	var (
-		check bool
-		force bool
+		check   bool
+		force   bool
+		jsonOut bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade installed packages to their latest version")
 	c.Aliases = []string{"update"}
@@ -167,6 +214,28 @@ func newUpgradeCmd() *cobra.Command {
 				return err
 			}
 			failed := 0
+			if jsonOut {
+				out := make([]upgradeOutput, 0, len(results))
+				for _, r := range results {
+					item := upgradeOutput{
+						Package: r.Install.Package, Harness: r.Install.Harness,
+						Scope: r.Install.Scope, Old: r.Old, New: r.New, Status: r.Status,
+					}
+					if r.Err != nil {
+						item.Status = "error"
+						item.Error = r.Err.Error()
+						failed++
+					}
+					out = append(out, item)
+				}
+				if err := printJSON(out); err != nil {
+					return err
+				}
+				if failed > 0 {
+					return fmt.Errorf("%d upgrade(s) failed", failed)
+				}
+				return nil
+			}
 			w := newTabWriter()
 			fmt.Fprintf(w, "PACKAGE\tHARNESS\tSCOPE\tOLD\tNEW\tSTATUS\n")
 			for _, r := range results {
@@ -188,11 +257,25 @@ func newUpgradeCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&check, "check", false, "only report available updates")
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
 
+type upgradeOutput struct {
+	Package string `json:"package"`
+	Harness string `json:"harness"`
+	Scope   string `json:"scope"`
+	Old     string `json:"old"`
+	New     string `json:"new"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
+}
+
 func newReshapeCmd() *cobra.Command {
-	var force bool
+	var (
+		force   bool
+		jsonOut bool
+	)
 	c := newCmd("reshape <harness> [package...]", "Re-materialize installed packages for another harness")
 	c.Long = `Transforms installed packages into the layout of another harness, keeping the
 installed version and scope. Files are transactional: on failure the previous
@@ -219,6 +302,28 @@ harness layout is restored.`
 				return err
 			}
 			failed := 0
+			if jsonOut {
+				out := make([]reshapeOutput, 0, len(results))
+				for _, r := range results {
+					item := reshapeOutput{
+						Package: r.Install.Package, From: r.Install.Harness,
+						To: r.To, Scope: r.Install.Scope, Status: r.Status,
+					}
+					if r.Err != nil {
+						item.Status = "error"
+						item.Error = r.Err.Error()
+						failed++
+					}
+					out = append(out, item)
+				}
+				if err := printJSON(out); err != nil {
+					return err
+				}
+				if failed > 0 {
+					return fmt.Errorf("%d reshape(s) failed", failed)
+				}
+				return nil
+			}
 			w := newTabWriter()
 			fmt.Fprintf(w, "PACKAGE\tFROM\tTO\tSCOPE\tSTATUS\n")
 			for _, r := range results {
@@ -239,7 +344,17 @@ harness layout is restored.`
 		})
 	}
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
+}
+
+type reshapeOutput struct {
+	Package string `json:"package"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Scope   string `json:"scope"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
 }
 
 func newTreeCmd() *cobra.Command {
@@ -360,6 +475,7 @@ func newUninstallCmd() *cobra.Command {
 		scope   string
 		harness string
 		project string
+		jsonOut bool
 	)
 	c := newCmd("uninstall <package>", "Remove an installed package and its reversible config edits")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -417,6 +533,15 @@ func newUninstallCmd() *cobra.Command {
 			ids = append(ids, in.ID)
 		}
 		return withLock(func() error {
+			type uninstallOutput struct {
+				Namespace string   `json:"namespace"`
+				Package   string   `json:"package"`
+				Version   string   `json:"version"`
+				Harness   string   `json:"harness"`
+				Scope     string   `json:"scope"`
+				Warnings  []string `json:"warnings,omitempty"`
+			}
+			var out []uninstallOutput
 			for _, id := range ids {
 				in := st.FindByID(id)
 				if in == nil {
@@ -426,8 +551,18 @@ func newUninstallCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("uninstalled %s/%s@%s from %s (%s)\n", in.Set, in.Package, short(in.Version), in.Harness, in.Scope)
-				printWarnings("warnings", warnings)
+				item := uninstallOutput{
+					Namespace: in.Set, Package: in.Package, Version: in.Version,
+					Harness: in.Harness, Scope: in.Scope, Warnings: unique(warnings),
+				}
+				out = append(out, item)
+				if !jsonOut {
+					fmt.Printf("uninstalled %s/%s@%s from %s (%s)\n", in.Set, in.Package, short(in.Version), in.Harness, in.Scope)
+					printWarnings("warnings", warnings)
+				}
+			}
+			if jsonOut {
+				return printJSON(out)
 			}
 			return nil
 		})
@@ -437,6 +572,7 @@ func newUninstallCmd() *cobra.Command {
 	c.Flags().StringVar(&scope, "scope", "", "filter by scope")
 	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
 	c.Flags().StringVarP(&project, "project", "p", "", "filter by project directory")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
 
@@ -452,6 +588,7 @@ func newAdoptCmd() *cobra.Command {
 		desc        string
 		allowSecret bool
 		allowLarge  bool
+		jsonOut     bool
 	)
 	c := newCmd("adopt <project-dir>", "Capture a live project's infrastructure into a bundle and push it")
 	c.Long = `Extracts project-scoped instructions, skills, commands, agents, plugins, hook
@@ -525,14 +662,23 @@ the remote namespace. The bundle is temporary unless --into is given.`
 			if err != nil {
 				return err
 			}
-			if noPush || into != "" {
-				fmt.Printf("captured %s -> %s\n", harnessID, res.BundleDir)
-			} else {
-				fmt.Printf("captured %s\n", harnessID)
+			if !jsonOut {
+				if noPush || into != "" {
+					fmt.Printf("captured %s -> %s\n", harnessID, res.BundleDir)
+				} else {
+					fmt.Printf("captured %s\n", harnessID)
+				}
+				fmt.Printf("files: %d\n", res.Files)
+				printWarnings("warnings", res.Warnings)
 			}
-			fmt.Printf("files: %d\n", res.Files)
-			printWarnings("warnings", res.Warnings)
 			if noPush {
+				if jsonOut {
+					out := map[string]any{"files": res.Files, "warnings": unique(res.Warnings)}
+					if into != "" {
+						out["bundle"] = res.BundleDir
+					}
+					return printJSON(out)
+				}
 				return nil
 			}
 			repo, err := also.OpenSet(setName, sc, false)
@@ -545,6 +691,13 @@ the remote namespace. The bundle is temporary unless --into is given.`
 			})
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				out := map[string]any{"files": res.Files, "warnings": unique(res.Warnings), "push": pushRes}
+				if into != "" {
+					out["bundle"] = res.BundleDir
+				}
+				return printJSON(out)
 			}
 			if pushRes.Existing {
 				fmt.Printf("no changes: %s@%s already exists\n", name, short(pushRes.Version))
@@ -565,5 +718,6 @@ the remote namespace. The bundle is temporary unless --into is given.`
 	c.Flags().StringVar(&desc, "description", "", "package description")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secrets")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

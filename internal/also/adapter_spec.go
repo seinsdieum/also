@@ -19,6 +19,7 @@ import (
 )
 
 type AdapterSpec struct {
+	Schema       string          `json:"schema,omitempty"`
 	ID           string          `json:"id"`
 	Display      string          `json:"display"`
 	Aliases      []string        `json:"aliases,omitempty"`
@@ -61,6 +62,9 @@ type SettingsSpec struct {
 }
 
 func (s AdapterSpec) Harness() (*Harness, error) {
+	if s.Schema != "" && s.Schema != SchemaAdapter {
+		return nil, fmt.Errorf("unsupported adapter schema %q; this also reads %s", s.Schema, SchemaAdapter)
+	}
 	settingsFile := targetFunc(s.SettingsTarget())
 	h := &Harness{
 		ID: s.ID, Display: s.Display, Aliases: s.Aliases,

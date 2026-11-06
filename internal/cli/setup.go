@@ -58,6 +58,7 @@ func newSetupCmd() *cobra.Command {
 		defaultNS  string
 		starter    string
 		project    string
+		jsonOut    bool
 	)
 	c := newCmd("setup", "Connect harnesses and namespaces for first use")
 	c.Long = `Interactive first-run setup: detect installed harness CLIs, choose a default
@@ -150,11 +151,24 @@ For CI or scripts use --yes plus flags:
 			return err
 		}
 
-		fmt.Printf("harness: %s\n", harnessID)
-		fmt.Printf("scope:   %s\n", scopeID)
-		fmt.Printf("default namespace: %s\n", defaultNS)
+		type setupOutput struct {
+			Harness          string            `json:"harness"`
+			Scope            string            `json:"scope"`
+			DefaultNamespace string            `json:"default_namespace"`
+			Namespaces       map[string]string `json:"namespaces"`
+			Installed        string            `json:"installed,omitempty"`
+		}
+		out := setupOutput{Harness: harnessID, Scope: scopeID, DefaultNamespace: defaultNS, Namespaces: map[string]string{}}
 		for _, name := range cfg.NamespaceNames() {
-			fmt.Printf("  %s  %s\n", name, cfg.Namespaces[name].Remote)
+			out.Namespaces[name] = cfg.Namespaces[name].Remote
+		}
+		if !jsonOut {
+			fmt.Printf("harness: %s\n", harnessID)
+			fmt.Printf("scope:   %s\n", scopeID)
+			fmt.Printf("default namespace: %s\n", defaultNS)
+			for _, name := range cfg.NamespaceNames() {
+				fmt.Printf("  %s  %s\n", name, cfg.Namespaces[name].Remote)
+			}
 		}
 		if starter != "" {
 			proj := project
@@ -169,7 +183,13 @@ For CI or scripts use --yes plus flags:
 			}, defaultNS, ""); err != nil {
 				return err
 			}
-			fmt.Printf("installed starter package %s\n", starter)
+			out.Installed = starter
+			if !jsonOut {
+				fmt.Printf("installed starter package %s\n", starter)
+			}
+		}
+		if jsonOut {
+			return printJSON(out)
 		}
 		fmt.Println("next: also list")
 		return nil
@@ -181,6 +201,7 @@ For CI or scripts use --yes plus flags:
 	c.Flags().StringVar(&defaultNS, "default-namespace", "", "active namespace")
 	c.Flags().StringVar(&starter, "install", "", "package to install after setup")
 	c.Flags().StringVarP(&project, "project", "p", "", "project directory for a project-scope starter install")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
 
