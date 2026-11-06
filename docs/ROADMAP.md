@@ -148,8 +148,7 @@ Acceptance criteria:
 ### V1-3. CI и тесты
 
 - [x] CLI coverage поднять с 8% до осмысленного уровня (8% → 39%);
-- [ ] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect
-      (setup/push/adopt/install/uninstall/doctor/verify готовы; upgrade/reshape — нет);
+- [x] тесты команд: install/push/adopt/upgrade/reshape/uninstall/setup/connect;
 - [x] тесты JSON-вывода и exit codes (golden-текст не фиксируется);
 - [x] тесты natural-language parser и конфликтующих флагов;
 - [x] положить 4×4 E2E в `test/e2e` и запускать в CI

@@ -193,3 +193,24 @@ func TestRepairReclonesDirtyCache(t *testing.T) {
 		t.Fatal("repair kept an untracked file")
 	}
 }
+
+func TestConnectAndUse(t *testing.T) {
+	setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("connect", "personal", remote, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("use", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := also.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultNamespace != "personal" || cfg.Namespaces["personal"].Remote != remote {
+		t.Fatalf("connect/use did not persist the namespace: %+v", cfg)
+	}
+	if err := runCLI("connect", "personal", filepath.Join(t.TempDir(), "other.git"), "--yes"); err == nil {
+		t.Fatal("replacing a namespace without --force must fail")
+	}
+}
