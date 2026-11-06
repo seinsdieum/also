@@ -1,7 +1,7 @@
 # also roadmap
 
-Статус: 2026-11-06, версия `1.0.0` выпущена. Релиз:
-https://github.com/seinsdieum/also/releases/tag/v1.0.0
+Статус: 2026-11-06, версия `1.0.2` выпущена. Релиз:
+https://github.com/seinsdieum/also/releases/tag/v1.0.2
 
 ## Текущее состояние
 
@@ -207,11 +207,13 @@ Acceptance criteria:
 
 ## Выпущено
 
-Релиз `v1.0.0`: https://github.com/seinsdieum/also/releases/tag/v1.0.0
+Релиз `v1.0.2`: https://github.com/seinsdieum/also/releases/tag/v1.0.2
 
 Проверено после публикации: `install.sh` скачал релиз, checksum совпал,
-`gh attestation verify` прошёл, `also version` показывает `1.0.0`, а
-`also update --check` отвечает, что версия актуальна.
+`gh attestation verify` прошёл, `also version` показывает `1.0.2`, а
+`also update --check` отвечает, что версия актуальна. Замена бинарника
+проверена отдельным локальным release-сервером: `1.0.2 → v1.0.3`, checksum
+совпал, файл заменился и запустился.
 
 ## После 1.0
 
