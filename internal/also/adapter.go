@@ -50,6 +50,8 @@ type HookAdapter struct {
 	Configs []string // bundle-relative config files that may contain hooks
 	Events  []string // supported event names
 	Target  func(Target) (file, rootKey string)
+	// Extract overrides the default JSON/TOML extraction for a new format.
+	Extract func(configs []string, files map[string]*SnapshotFile, roots []string) (HookSet, []string, error)
 }
 
 // MCPAdapter describes where a harness keeps MCP servers and how they are
@@ -67,6 +69,8 @@ type SettingsAdapter struct {
 	Keys    []string
 	Configs []string
 	Target  func(Target) string
+	// Extract overrides the default JSONC key extraction for a new format.
+	Extract func(keys, configs []string, files map[string]*SnapshotFile, roots []string) (map[string]any, []string, error)
 }
 
 // CommandAdapter declares the command placeholder dialect.
@@ -81,16 +85,30 @@ type PluginAdapter struct{ Format string }
 
 // DetectRule contributes weight when any of Paths exists in a directory.
 type DetectRule struct {
-	Paths  []string
-	Weight int
+	Paths  []string `json:"paths"`
+	Weight int      `json:"weight"`
 }
 
 // InstallHint is emitted for project installs when the conditions match.
 // With neither flag set the hint is unconditional.
 type InstallHint struct {
-	WhenMCP      bool
-	WhenSettings bool
-	Text         string
+	WhenMCP      bool   `json:"when_mcp,omitempty"`
+	WhenSettings bool   `json:"when_settings,omitempty"`
+	Text         string `json:"text"`
+}
+
+// Component declares an additional file collection (workflows, prompts, ...).
+// Standard kinds (instructions, skills, commands, agents, plugins, hooks) have
+// dedicated fields; custom kinds are copied by default and may set Convert.
+type Component struct {
+	Kind       string                                                                            `json:"kind"`
+	BundleDir  string                                                                            `json:"bundle_dir"`
+	ProjectDir string                                                                            `json:"project_dir,omitempty"`
+	GlobalDir  string                                                                            `json:"global_dir,omitempty"`
+	Extensions []string                                                                          `json:"extensions,omitempty"`
+	Opaque     bool                                                                              `json:"opaque,omitempty"` // only install into the same harness
+	Format     string                                                                            `json:"format,omitempty"` // optional: skip unless source and target agree
+	Convert    func(data []byte, source, target *Harness, name string) ([]byte, []string, error) `json:"-"`
 }
 
 // Harness is the adapter contract. It is called Harness because that is what
@@ -115,6 +133,10 @@ type Harness struct {
 	Agents   AgentAdapter
 	Plugins  PluginAdapter
 
+	// Components adds adapter-declared file collections beyond the standard
+	// kinds (for example workflows or prompts).
+	Components []Component
+
 	// ExtraDirs are opaque harness directories copied verbatim on same-harness
 	// installs (status lines, output styles, themes, extensions).
 	ExtraDirs []string
@@ -128,15 +150,15 @@ type Harness struct {
 // Paths are relative to an adapter base (home config dir, project root, or bundle root).
 // Global paths may use a ~/ prefix; they may not be absolute.
 type Paths struct {
-	Instr     string
-	Skills    string
-	Commands  string
-	Agents    string
-	Plugins   string
-	Hooks     string
-	Settings  string
-	HooksJSON string
-	MCP       string
+	Instr     string `json:"instr,omitempty"`
+	Skills    string `json:"skills,omitempty"`
+	Commands  string `json:"commands,omitempty"`
+	Agents    string `json:"agents,omitempty"`
+	Plugins   string `json:"plugins,omitempty"`
+	Hooks     string `json:"hooks,omitempty"`
+	Settings  string `json:"settings,omitempty"`
+	HooksJSON string `json:"hooks_json,omitempty"`
+	MCP       string `json:"mcp,omitempty"`
 }
 
 var harnesses []*Harness
@@ -144,18 +166,25 @@ var harnesses []*Harness
 // registerAdapter is called by adapter files from init(). Built-in adapters are
 // code, so an invalid one is a programming error and panics during init.
 func registerAdapter(h *Harness) {
+	if err := addAdapter(h); err != nil {
+		panic(err)
+	}
+}
+
+func addAdapter(h *Harness) error {
 	if err := validateAdapter(h); err != nil {
-		panic(fmt.Sprintf("invalid adapter %q: %v", h.ID, err))
+		return fmt.Errorf("invalid adapter %q: %w", h.ID, err)
 	}
 	for _, cur := range harnesses {
 		if cur.ID == h.ID {
-			panic(fmt.Sprintf("duplicate adapter id %q", h.ID))
+			return fmt.Errorf("duplicate adapter id %q", h.ID)
 		}
 		if err := aliasesConflict(cur, h); err != nil {
-			panic(err)
+			return err
 		}
 	}
 	harnesses = append(harnesses, h)
+	return nil
 }
 
 func aliasesConflict(a, b *Harness) error {
@@ -268,17 +297,20 @@ func validateAdapter(h *Harness) error {
 			return err
 		}
 	}
-	if !knownMCPFormat(h.MCP.Format) {
-		return fmt.Errorf("unknown MCP format %q", h.MCP.Format)
-	}
-	for _, c := range h.MCP.Configs {
-		if err := validateConfigName("mcp config", c); err != nil {
-			return err
-		}
-	}
 	if h.MCP.Format != MCPNone {
+		if h.Bundle.MCP == "" {
+			return fmt.Errorf("MCP format %q requires bundle.mcp", h.MCP.Format)
+		}
+		if _, ok := mcpCodecs[string(h.MCP.Format)]; !ok {
+			return fmt.Errorf("unknown MCP format %q", h.MCP.Format)
+		}
 		if len(h.MCP.Configs) == 0 {
 			return fmt.Errorf("MCP format %q requires at least one source config", h.MCP.Format)
+		}
+		for _, c := range h.MCP.Configs {
+			if err := validateConfigName("mcp config", c); err != nil {
+				return err
+			}
 		}
 		if h.Project.MCP == "" && h.Global.MCP == "" && h.MCP.Resolve == nil {
 			return fmt.Errorf("MCP format %q requires an MCP destination", h.MCP.Format)
@@ -298,6 +330,9 @@ func validateAdapter(h *Harness) error {
 		}
 	}
 	if len(h.Settings.Keys) > 0 {
+		if h.Bundle.Settings == "" && h.Bundle.MCP == "" {
+			return fmt.Errorf("settings keys require bundle.settings or bundle.mcp")
+		}
 		if len(h.Settings.Configs) == 0 || h.Settings.Target == nil {
 			return fmt.Errorf("settings keys require source configs and a target")
 		}
@@ -334,6 +369,47 @@ func validateAdapter(h *Harness) error {
 		for _, c := range h.MCP.Configs {
 			if !strings.HasSuffix(strings.ToLower(c), ".toml") {
 				return fmt.Errorf("codex-toml MCP requires TOML configs, got %s", c)
+			}
+		}
+	}
+	standard := map[string]bool{
+		"instructions": true, "skills": true, "commands": true,
+		"agents": true, "plugins": true, "hooks": true, "extras": true,
+	}
+	seenKinds := map[string]bool{}
+	for _, c := range h.Components {
+		if !ValidName(c.Kind) || standard[c.Kind] || seenKinds[c.Kind] {
+			return fmt.Errorf("invalid or duplicate component kind %q", c.Kind)
+		}
+		seenKinds[c.Kind] = true
+		if c.BundleDir == "" {
+			return fmt.Errorf("component %q needs a bundle dir", c.Kind)
+		}
+		if err := validateRel("component "+c.Kind+" bundle", c.BundleDir); err != nil {
+			return err
+		}
+		if c.ProjectDir == "" && c.GlobalDir == "" {
+			return fmt.Errorf("component %q needs a project or global dir", c.Kind)
+		}
+		if c.ProjectDir != "" {
+			if strings.HasPrefix(c.ProjectDir, "~/") || filepath.IsAbs(c.ProjectDir) {
+				return fmt.Errorf("component %q project dir must be relative to the project", c.Kind)
+			}
+			if err := validateRel("component "+c.Kind+" project", c.ProjectDir); err != nil {
+				return err
+			}
+		}
+		if c.GlobalDir != "" {
+			if filepath.IsAbs(c.GlobalDir) {
+				return fmt.Errorf("component %q global dir must be relative to home", c.Kind)
+			}
+			if err := validateBasePath("component "+c.Kind+" global", c.GlobalDir); err != nil {
+				return err
+			}
+		}
+		for _, ext := range c.Extensions {
+			if !strings.HasPrefix(ext, ".") || strings.ContainsAny(ext, `/\`) {
+				return fmt.Errorf("component %q has invalid extension %q", c.Kind, ext)
 			}
 		}
 	}
@@ -410,36 +486,17 @@ func hasReservedSegment(p string) bool {
 	return false
 }
 
-func knownMCPFormat(f MCPFormat) bool {
-	switch f {
-	case MCPNone, MCPClaudeJSON, MCPQwenJSON, MCPOpenCodeJSON, MCPCodexTOML:
-		return true
-	}
-	return false
-}
+var pluginFormats = map[string]bool{PluginOpenCode: true}
 
-func commandFormatKnown(f string) bool {
-	switch f {
-	case "", CommandClaude, CommandQwen:
-		return true
+func RegisterPluginFormat(name string) {
+	if strings.TrimSpace(name) == "" {
+		panic("plugin format needs a name")
 	}
-	return false
-}
-
-func agentFormatKnown(f string) bool {
-	switch f {
-	case "", AgentClaude, AgentOpenCode:
-		return true
-	}
-	return false
+	pluginFormats[name] = true
 }
 
 func pluginFormatKnown(f string) bool {
-	switch f {
-	case "", PluginOpenCode:
-		return true
-	}
-	return false
+	return pluginFormats[f]
 }
 
 // ConfigNames returns the bundle-relative config basenames for this adapter.
@@ -491,6 +548,7 @@ func (h *Harness) SettingsTarget(t Target) string {
 
 // Harnesses returns the registered adapters sorted by id.
 func Harnesses() []*Harness {
+	ensureExternalAdapters()
 	out := append([]*Harness{}, harnesses...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

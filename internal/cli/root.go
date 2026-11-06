@@ -135,10 +135,11 @@ func newTabWriter() *tabwriter.Writer {
 
 func newSetCmd() *cobra.Command {
 	var (
-		remote string
-		source string
-		def    bool
-		force  bool
+		remote  string
+		source  string
+		def     bool
+		force   bool
+		migrate bool
 	)
 	c := newCmd("set [name]", "Configure a remote set and its local clone")
 	c.Long = `Attach a git repository that stores also packages. The remote repository
@@ -174,6 +175,30 @@ it is used by 'also adopt' to write the extracted bundle back.`
 		name := args[0]
 		if !also.ValidName(name) {
 			return fmt.Errorf("invalid set name %q; use lowercase letters, digits, '.', '_' or '-'", name)
+		}
+		if migrate {
+			existing, ok := cfg.Sets[name]
+			if !ok {
+				return fmt.Errorf("unknown set %q", name)
+			}
+			return withLock(func() error {
+				repo, err := also.OpenSet(name, existing, true)
+				if err != nil {
+					return err
+				}
+				migrated, err := repo.Migrate()
+				if err != nil {
+					return err
+				}
+				if len(migrated) == 0 {
+					fmt.Printf("set %s already uses the tree+tags layout\n", name)
+					return nil
+				}
+				for _, m := range migrated {
+					fmt.Printf("migrated %s@%s\n", m.Package, m.Version)
+				}
+				return nil
+			})
 		}
 		if source != "" {
 			abs, err := also.AbsPath(source)
@@ -250,6 +275,7 @@ it is used by 'also adopt' to write the extracted bundle back.`
 	c.Flags().StringVar(&source, "source", "", "local directory containing hand-written bundles")
 	c.Flags().BoolVar(&def, "default", false, "make this the default set")
 	c.Flags().BoolVar(&force, "force", false, "replace the local clone when the remote changes")
+	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
 	return c
 }
 

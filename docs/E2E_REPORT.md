@@ -86,6 +86,29 @@ Harness-специфичная логика вынесена из `install/rende
 Итог: **16/16 `RESULT OK`** (`compare6.out`), полный цикл adopt/push не потерял
 данные. Дополнительно `make check` (gofmt, `go vet`, `go test`) — чисто.
 
+## Версионирование без папок на версию
+
+Старый layout `packages/<pkg>/<version>/` заменён:
+
+- `packages/<pkg>/{also-pkg.json,origin}` — только актуальное дерево;
+- `refs/tags/also/<pkg>/<version>` — неизменяемый snapshot каждой версии;
+- старые версии читаются из git через `git archive`;
+- `created_at` в манифесте и аннотированные теги сохраняют порядок версий;
+- `also set <name> --migrate` конвертирует старый layout, сохраняя даты.
+
+Проверено на реальном set: миграция всех пакетов, **0** лишних version-каталогов,
+72+ тегов, `install` старых и новых версий, свежий clone с GitHub.
+
+После этого полный E2E прогнан ещё раз с пакетами `rt7-*`:
+`install → adopt → push → reverse install` для всех 16 пар — **16/16 `RESULT OK`**
+(`compare7.out`).
+
+Дополнительно проверен внешний декларативный адаптер `acme` (JSON в
+`ALSO_ADAPTERS`): `push --harness acme` → `install --harness acme` → `adopt`
+вернул `AGENTS.md`, skills, commands, agents, settings, MCP и custom-компонент
+`workflows/deploy.md`. Это подтверждает, что новый harness можно добавить без
+перекомпиляции, если он переиспользует зарегистрированные форматы.
+
 ## Проверка «на уровне софта»
 
 - **Claude Code**

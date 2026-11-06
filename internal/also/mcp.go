@@ -1,7 +1,6 @@
 package also
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -19,6 +18,31 @@ type MCPServer struct {
 	// verbatim when installing back into the same harness, preserving fields
 	// also does not understand.
 	Raw map[string]any `json:"-"`
+}
+
+// MCPCodec is the extension point for a native MCP encoding. New encodings
+// register themselves instead of editing the installer.
+type MCPCodec interface {
+	Extract(configs []string, files map[string]*SnapshotFile, roots []string) (map[string]MCPServer, []string, error)
+	Render(name string, s MCPServer, native bool) (MCPRender, []string)
+	Plan(st *State, old *Install, file, name string, r MCPRender, force bool) (*ConfigEdit, string, error)
+}
+
+var mcpCodecs = builtinMCPCodecs()
+
+func RegisterMCPCodec(name string, codec MCPCodec) {
+	if name == "" || codec == nil {
+		panic("MCP codec needs a name and implementation")
+	}
+	if _, exists := mcpCodecs[name]; exists {
+		panic("duplicate MCP codec " + name)
+	}
+	mcpCodecs[name] = codec
+}
+
+func mcpCodec(format MCPFormat) (MCPCodec, bool) {
+	c, ok := mcpCodecs[string(format)]
+	return c, ok
 }
 
 func asStringMap(v any) map[string]string {
@@ -123,132 +147,14 @@ func mcpServersFromMap(source string, m map[string]any) (map[string]MCPServer, [
 
 // ExtractBundleMCP reads MCP servers declared in the bundle in its native layout.
 func ExtractBundleMCP(h *Harness, files map[string]*SnapshotFile, bundleRoots []string) (map[string]MCPServer, []string, error) {
-	out := map[string]MCPServer{}
-	var warnings []string
-	merge := func(name string, servers map[string]MCPServer, warnings2 []string) error {
-		warnings = append(warnings, warnings2...)
-		for n, s := range servers {
-			if prev, ok := out[n]; ok {
-				a, _ := json.Marshal(prev)
-				b, _ := json.Marshal(s)
-				if string(a) != string(b) {
-					return fmt.Errorf("MCP server %q is defined twice with different settings", n)
-				}
-			}
-			out[n] = s
-		}
-		return nil
+	if h.MCP.Format == MCPNone {
+		return map[string]MCPServer{}, nil, nil
 	}
-	find := func(candidates ...string) ([]byte, string, bool) {
-		for _, root := range bundleRoots {
-			for _, c := range candidates {
-				p := c
-				if root != "" {
-					p = root + "/" + c
-				}
-				if f, ok := files[p]; ok {
-					return f.Data, p, true
-				}
-			}
-		}
-		return nil, "", false
+	codec, ok := mcpCodec(h.MCP.Format)
+	if !ok {
+		return nil, nil, fmt.Errorf("MCP format %q has no codec", h.MCP.Format)
 	}
-
-	switch h.MCP.Format {
-	case MCPClaudeJSON, MCPQwenJSON:
-		var data []byte
-		var ok bool
-		for _, p := range h.MCP.Configs {
-			if d, _, found := find(p); found {
-				data, ok = d, true
-				break
-			}
-		}
-		if ok {
-			doc, err := ParseJSONC(data)
-			if err != nil {
-				return nil, warnings, fmt.Errorf("parse MCP config: %w", err)
-			}
-			raw, _ := doc.RawAt("mcpServers")
-			if len(raw) > 0 {
-				var m map[string]any
-				if err := json.Unmarshal(raw, &m); err != nil {
-					return nil, warnings, err
-				}
-				servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
-				if err != nil {
-					return nil, warnings, err
-				}
-				if err := merge("", servers, w); err != nil {
-					return nil, warnings, err
-				}
-			}
-		}
-	case MCPOpenCodeJSON:
-		for _, cfgName := range h.MCP.Configs {
-			data, _, ok := find(cfgName)
-			if !ok {
-				continue
-			}
-			doc, err := ParseJSONC(data)
-			if err != nil {
-				return nil, warnings, fmt.Errorf("parse %s: %w", cfgName, err)
-			}
-			raw, _ := doc.RawAt("mcp", "servers")
-			if len(raw) == 0 {
-				// Legacy V1 shape: mcp.<name> directly under mcp.
-				raw, _ = doc.RawAt("mcp")
-				if len(raw) > 0 {
-					var probe map[string]any
-					if json.Unmarshal(raw, &probe) == nil {
-						if _, hasServers := probe["servers"]; !hasServers {
-							warnings = append(warnings, "opencode MCP uses the legacy mcp.<name> shape; consider migrating to mcp.servers")
-						}
-					}
-				}
-			}
-			if len(raw) == 0 {
-				continue
-			}
-			var m map[string]any
-			if err := json.Unmarshal(raw, &m); err != nil {
-				return nil, warnings, err
-			}
-			if _, hasServers := m["servers"]; hasServers {
-				if sm, ok := m["servers"].(map[string]any); ok {
-					m = sm
-				}
-			}
-			servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
-			if err != nil {
-				return nil, warnings, err
-			}
-			if err := merge("", servers, w); err != nil {
-				return nil, warnings, err
-			}
-		}
-	case MCPCodexTOML:
-		for _, cfgName := range h.MCP.Configs {
-			data, _, ok := find(cfgName)
-			if !ok {
-				continue
-			}
-			root, err := parseTOMLMap(data)
-			if err != nil {
-				return nil, warnings, fmt.Errorf("parse %s: %w", cfgName, err)
-			}
-			if m, ok := root["mcp_servers"].(map[string]any); ok {
-				servers, w, err := mcpServersFromMap(string(h.MCP.Format), m)
-				if err != nil {
-					return nil, warnings, err
-				}
-				if err := merge("", servers, w); err != nil {
-					return nil, warnings, err
-				}
-			}
-		}
-	}
-	return out, warnings, nil
+	return codec.Extract(h.MCP.Configs, files, bundleRoots)
 }
 
 var secretKeyRe = regexp.MustCompile(`(?i)(token|secret|passw|api[-_]?key|authorization|credential|private[-_]?key)`)
@@ -287,104 +193,26 @@ type MCPRender struct {
 func RenderMCP(target, source *Harness, servers map[string]MCPServer) ([]MCPRender, []string) {
 	var out []MCPRender
 	var warnings []string
+	if target.MCP.Format == MCPNone {
+		if len(servers) > 0 {
+			warnings = append(warnings, "MCP is not supported for this harness")
+		}
+		return out, warnings
+	}
+	codec, ok := mcpCodec(target.MCP.Format)
+	if !ok {
+		return nil, []string{fmt.Sprintf("MCP format %q has no codec", target.MCP.Format)}
+	}
 	names := make([]string, 0, len(servers))
 	for n := range servers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	native := source != nil && source.ID == target.ID
 	for _, name := range names {
-		s := servers[name]
-		if source != nil && source.ID == target.ID && s.Raw != nil {
-			if target.MCP.Format == MCPCodexTOML {
-				block, err := tomlServerBlock(name, s.Raw)
-				if err == nil {
-					out = append(out, MCPRender{Name: name, TOML: block})
-					continue
-				}
-				warnings = append(warnings, fmt.Sprintf("MCP server %s: could not re-encode native TOML: %v", name, err))
-			} else {
-				out = append(out, MCPRender{Name: name, Value: s.Raw})
-				continue
-			}
-		}
-		if rt, _ := s.Raw["type"].(string); rt == "sse" {
-			warnings = append(warnings, fmt.Sprintf("MCP server %s: transport sse was converted to streamable http", name))
-		}
-		switch target.MCP.Format {
-		case MCPClaudeJSON:
-			if s.Transport == "http" {
-				v := map[string]any{"type": "http", "url": s.URL}
-				if len(s.Headers) > 0 {
-					v["headers"] = s.Headers
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			} else {
-				v := map[string]any{"command": s.Command[0]}
-				if len(s.Command) > 1 {
-					v["args"] = s.Command[1:]
-				}
-				if len(s.Env) > 0 {
-					v["env"] = s.Env
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			}
-		case MCPQwenJSON:
-			if s.Transport == "http" {
-				v := map[string]any{"httpUrl": s.URL}
-				if len(s.Headers) > 0 {
-					v["headers"] = s.Headers
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			} else {
-				v := map[string]any{"command": s.Command[0]}
-				if len(s.Command) > 1 {
-					v["args"] = s.Command[1:]
-				}
-				if len(s.Env) > 0 {
-					v["env"] = s.Env
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			}
-		case MCPOpenCodeJSON:
-			if s.Transport == "http" {
-				v := map[string]any{"type": "remote", "url": s.URL}
-				if len(s.Headers) > 0 {
-					v["headers"] = s.Headers
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			} else {
-				v := map[string]any{"type": "local", "command": s.Command}
-				if len(s.Env) > 0 {
-					v["environment"] = s.Env
-				}
-				if s.Cwd != "" {
-					v["cwd"] = s.Cwd
-				}
-				out = append(out, MCPRender{Name: name, Value: v})
-			}
-		case MCPCodexTOML:
-			var b strings.Builder
-			b.WriteString("[mcp_servers.")
-			b.WriteString(tomlKey(name))
-			b.WriteString("]\n")
-			if s.Transport == "http" {
-				b.WriteString("url = " + tomlString(s.URL) + "\n")
-				if len(s.Headers) > 0 {
-					b.WriteString("http_headers = " + tomlInlineTable(s.Headers) + "\n")
-				}
-			} else {
-				b.WriteString("command = " + tomlString(s.Command[0]) + "\n")
-				if len(s.Command) > 1 {
-					b.WriteString("args = " + tomlStringArray(s.Command[1:]) + "\n")
-				}
-				if len(s.Env) > 0 {
-					b.WriteString("env = " + tomlInlineTable(s.Env) + "\n")
-				}
-			}
-			out = append(out, MCPRender{Name: name, TOML: b.String()})
-		default:
-			warnings = append(warnings, "MCP is not supported for this harness")
-		}
+		r, w := codec.Render(name, servers[name], native)
+		out = append(out, r)
+		warnings = append(warnings, w...)
 	}
 	return out, warnings
 }

@@ -1,9 +1,16 @@
 package also
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	// Never load the developer's real declarative adapters into tests.
+	os.Setenv("ALSO_ADAPTERS", filepath.Join(os.TempDir(), "also-test-no-adapters"))
+	os.Exit(m.Run())
+}
 
 func TestAdaptersAreValid(t *testing.T) {
 	list := Harnesses()
@@ -117,6 +124,101 @@ func TestAdapterReusesExistingFormats(t *testing.T) {
 	target := acme.TargetPath("project", project)
 	if target.Instr != filepath.Join(project, "AGENTS.md") {
 		t.Fatalf("unexpected target: %s", target.Instr)
+	}
+}
+
+func TestCustomComponentRenders(t *testing.T) {
+	acme := &Harness{
+		ID: "acme", Display: "Acme", GlobalBase: "~/.acme",
+		Project: Paths{Instr: "AGENTS.md", MCP: ".acme/mcp.json"},
+		Bundle:  Paths{Instr: "AGENTS.md", MCP: ".mcp.json"},
+		Roots:   []string{""},
+		Components: []Component{{
+			Kind: "workflows", BundleDir: "workflows", ProjectDir: ".acme/workflows",
+			Extensions: []string{".md"},
+		}},
+	}
+	if err := ValidateAdapters([]*Harness{acme}); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &Package{
+		Meta: PackageMeta{Schema: SchemaPkg, Name: "p", SourceHarness: "acme"},
+		Files: map[string]*SnapshotFile{
+			"AGENTS.md":           {Data: []byte("rules\n"), Mode: 0o644},
+			"workflows/deploy.md": {Data: []byte("steps\n"), Mode: 0o644},
+			"workflows/notes.txt": {Data: []byte("ignored\n"), Mode: 0o644},
+		},
+	}
+	project := t.TempDir()
+	target := acme.TargetPath("project", project)
+	plan, err := RenderPackage(pkg, acme, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(project, ".acme", "workflows", "deploy.md")
+	found := false
+	for _, f := range plan.Files {
+		if f.Dest == dest && string(f.Data) == "steps\n" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("custom component was not rendered: %+v", plan.Files)
+	}
+	parts, err := ClassifyPackage(pkg, acme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts.Custom["workflows"]) != 1 {
+		t.Fatalf("extension filter failed: %+v", parts.Custom)
+	}
+}
+
+func TestAdapterSpecBuildsValidHarness(t *testing.T) {
+	spec := AdapterSpec{
+		ID: "acme", Display: "Acme", Aliases: []string{"ac"},
+		GlobalBase: "~/.acme",
+		Global:     Paths{Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents", MCP: "mcp.json"},
+		Project:    Paths{Instr: "AGENTS.md", Skills: ".acme/skills", Commands: ".acme/commands", Agents: ".acme/agents", MCP: ".acme/mcp.json"},
+		Bundle:     Paths{Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents", Settings: "settings.json", MCP: ".mcp.json"},
+		Roots:      []string{"", ".acme"},
+		Hooks: &HookSpec{
+			Configs: []string{"settings.json"}, Events: claudeHookEvents,
+			Target: "settings",
+		},
+		MCP:      &MCPSpec{Format: MCPClaudeJSON, Configs: []string{".mcp.json"}},
+		Settings: &SettingsSpec{Keys: []string{"permissions"}, Configs: []string{"settings.json"}, Target: "settings"},
+		Commands: &CommandAdapter{Format: CommandClaude},
+		Agents:   &AgentAdapter{Format: AgentClaude},
+		Detect:   []DetectRule{{Paths: []string{".acme"}, Weight: 10}},
+	}
+	h, err := spec.Harness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAdapters([]*Harness{h}); err != nil {
+		t.Fatal(err)
+	}
+	target := h.TargetPath("project", t.TempDir())
+	if target.HooksJSON != "" {
+		t.Fatalf("unexpected hooks_json path: %s", target.HooksJSON)
+	}
+	file, key := h.Hooks.Target(target)
+	if file != target.Settings || key != "hooks" {
+		t.Fatalf("hook target: %s %s", file, key)
+	}
+}
+
+func TestAdapterSpecRejectsUnsafeMCPCandidate(t *testing.T) {
+	spec := AdapterSpec{
+		ID: "acme", Display: "Acme",
+		Global:  Paths{Instr: "AGENTS.md", MCP: "mcp.json"},
+		Project: Paths{Instr: "AGENTS.md", MCP: ".acme/mcp.json"},
+		Bundle:  Paths{Instr: "AGENTS.md", MCP: ".mcp.json"},
+		MCP:     &MCPSpec{Format: MCPClaudeJSON, Configs: []string{".mcp.json"}, ProjectCandidates: []string{"../escape.json"}},
+	}
+	if _, err := spec.Harness(); err == nil {
+		t.Fatal("expected unsafe MCP candidate to be rejected")
 	}
 }
 

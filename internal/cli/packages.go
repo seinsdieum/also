@@ -162,9 +162,9 @@ func newShowCmd() *cobra.Command {
 			return err
 		}
 		allVersions, _ := repo.Versions(pkgName)
-		originDir := filepath.Join(pkg.Dir, also.OriginDir)
-		mcp, mcpWarn, mcpErr := also.ExtractBundleMCP(source, pkg.Files, source.BundleRoots(originDir))
-		hooks, hookWarn, hookErr := also.ExtractBundleHooks(source, pkg.Files, source.BundleRoots(originDir))
+		roots := source.BundleRootsFromFiles(pkg.Files)
+		mcp, mcpWarn, mcpErr := also.ExtractBundleMCP(source, pkg.Files, roots)
+		hooks, hookWarn, hookErr := also.ExtractBundleHooks(source, pkg.Files, roots)
 		for _, w := range append(mcpWarn, hookWarn...) {
 			fmt.Fprintln(os.Stderr, "warning: "+w)
 		}

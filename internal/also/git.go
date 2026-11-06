@@ -27,6 +27,24 @@ func runGit(dir string, args ...string) (string, error) {
 	return out.String(), nil
 }
 
+// runGitBytes returns raw stdout (for git archive) with stderr kept separate.
+func runGitBytes(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(errOut.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+	}
+	return out.Bytes(), nil
+}
+
 // gitCommitArgs adds a fallback identity when the machine has none configured.
 func gitCommitArgs(dir string, args ...string) []string {
 	if _, err := runGit(dir, "var", "GIT_AUTHOR_IDENT"); err == nil {
@@ -145,6 +163,17 @@ func pullFF(dir string) error {
 	if _, err := runGit(dir, "pull", "--ff-only", "--quiet"); err != nil {
 		return fmt.Errorf("cannot fast-forward the local also clone (run 'git -C %s status' and resolve): %w", dir, err)
 	}
+	// Version snapshots live in tags; branch pulls do not always fetch them.
+	if _, err := runGit(dir, "fetch", "--tags", "--quiet"); err != nil {
+		return fmt.Errorf("cannot fetch version tags: %w", err)
+	}
+	return nil
+}
+
+func pushTag(dir, tag string) error {
+	if _, err := runGit(dir, "push", "--quiet", "origin", "refs/tags/"+tag); err != nil {
+		return fmt.Errorf("cannot push version tag %s: %w", tag, err)
+	}
 	return nil
 }
 
@@ -223,30 +252,7 @@ func versionTimes(dir string) (map[string]time.Time, map[string]int, error) {
 	return times, order, nil
 }
 
-// committedVersions returns pkg/version keys present at HEAD, derived from the package manifest.
-func committedVersions(dir string) (map[string]bool, error) {
-	if !hasCommits(dir) {
-		return map[string]bool{}, nil
-	}
-	out, err := runGit(dir, "ls-tree", "-r", "--name-only", "HEAD", "--", "packages")
-	if err != nil {
-		return nil, err
-	}
-	set := map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
-		parts := strings.Split(strings.TrimSpace(line), "/")
-		if len(parts) == 4 && parts[0] == "packages" && parts[3] == PackageManifestFile {
-			set[parts[1]+"/"+parts[2]] = true
-		}
-	}
-	return set, nil
-}
-
-func isVersionCommitted(dir, pkg, version string) bool {
-	_, err := runGit(dir, "cat-file", "-e", "HEAD:packages/"+pkg+"/"+version+"/"+PackageManifestFile)
-	return err == nil
-}
-
+// aheadOfUpstream reports whether the current branch has commits to push.
 func aheadOfUpstream(dir string) bool {
 	out, err := runGit(dir, "rev-list", "--count", "@{u}..HEAD")
 	if err != nil {

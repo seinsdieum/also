@@ -18,6 +18,7 @@ func HarnessIDs() []string {
 }
 
 func ResolveHarness(s string) (*Harness, bool) {
+	ensureExternalAdapters()
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(s, "@")
 	for _, h := range harnesses {
@@ -57,10 +58,16 @@ type Target struct {
 	MCP       string
 	ExtraDir  string
 	Root      string
+	// CustomDirs maps adapter-declared component kinds to absolute dirs.
+	CustomDirs map[string]string
 }
 
 func (t Target) ComponentDirs() []string {
-	return []string{t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks}
+	dirs := []string{t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks}
+	for _, d := range t.CustomDirs {
+		dirs = append(dirs, d)
+	}
+	return dirs
 }
 
 func (t Target) Supports(kind string) bool {
@@ -72,7 +79,15 @@ func (t Target) Supports(kind string) bool {
 	case "plugins":
 		return t.Harness.Plugins.Format != ""
 	}
-	return true
+	if kind == "" {
+		return false
+	}
+	_, ok := t.CustomDirs[kind]
+	return ok
+}
+
+func (t Target) ComponentDir(kind string) string {
+	return t.CustomDirs[kind]
 }
 
 func (h *Harness) targetBase(scope, project string) string {
@@ -123,12 +138,24 @@ func (h *Harness) TargetPath(scope, project string) Target {
 	} else {
 		t.ExtraDir = filepath.Join(project, h.ExtraBase)
 	}
+	t.CustomDirs = map[string]string{}
+	for _, c := range h.Components {
+		rel := c.ProjectDir
+		if scope == "global" {
+			rel = c.GlobalDir
+		}
+		if rel == "" {
+			continue
+		}
+		t.CustomDirs[c.Kind] = h.resolve(scope, project, rel)
+	}
 	return t
 }
 
 // DetectHarness identifies a harness from a bundle or project directory.
 // Returns an error listing candidates when the layout is ambiguous.
 func DetectHarness(dir string) (string, error) {
+	ensureExternalAdapters()
 	type score struct {
 		id string
 		n  int
@@ -168,6 +195,25 @@ func DetectHarness(dir string) (string, error) {
 	return best[0].id, nil
 }
 
+func (h *Harness) Component(kind string) *Component {
+	for i := range h.Components {
+		if h.Components[i].Kind == kind {
+			return &h.Components[i]
+		}
+	}
+	return nil
+}
+
+func hasExtension(rel string, exts []string) bool {
+	ext := strings.ToLower(filepath.Ext(rel))
+	for _, e := range exts {
+		if ext == strings.ToLower(e) {
+			return true
+		}
+	}
+	return false
+}
+
 // BundleRoots returns candidate relative roots present in a bundle, in priority order.
 func (h *Harness) BundleRoots(bundleDir string) []string {
 	var out []string
@@ -178,6 +224,26 @@ func (h *Harness) BundleRoots(bundleDir string) []string {
 		}
 		if st, err := os.Stat(filepath.Join(bundleDir, r)); err == nil && st.IsDir() {
 			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// BundleRootsFromFiles is BundleRoots for a package loaded from git, where
+// there is no worktree to stat.
+func (h *Harness) BundleRootsFromFiles(files map[string]*SnapshotFile) []string {
+	var out []string
+	for _, r := range h.Roots {
+		if r == "" {
+			out = append(out, "")
+			continue
+		}
+		prefix := r + "/"
+		for rel := range files {
+			if strings.HasPrefix(rel, prefix) {
+				out = append(out, r)
+				break
+			}
 		}
 	}
 	return out

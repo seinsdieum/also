@@ -104,12 +104,69 @@ func toStringList(v any) ([]string, bool) {
 	return nil, false
 }
 
+// Agent conversion is a registry of dialect pairs, mirroring commands.
+type AgentConverter func(data []byte, from, to, filename string) ([]byte, []string, error)
+
+var agentFormats = map[string]bool{
+	AgentClaude:   true,
+	AgentOpenCode: true,
+}
+
+var agentConverters = map[string]AgentConverter{
+	AgentClaude + ">" + AgentOpenCode: agentToOpenCode,
+	AgentOpenCode + ">" + AgentClaude: agentToClaude,
+}
+
+func RegisterAgentFormat(name string) {
+	if strings.TrimSpace(name) == "" {
+		panic("agent format needs a name")
+	}
+	agentFormats[name] = true
+}
+
+func RegisterAgentConverter(from, to string, fn AgentConverter) {
+	if fn == nil || from == "" || to == "" {
+		panic("agent converter needs from, to and implementation")
+	}
+	RegisterAgentFormat(from)
+	RegisterAgentFormat(to)
+	agentConverters[from+">"+to] = fn
+}
+
+func agentFormatKnown(f string) bool {
+	return agentFormats[f]
+}
+
+func agentFormatOf(harness string) string {
+	if h, ok := ResolveHarness(harness); ok {
+		return h.Agents.Format
+	}
+	return ""
+}
+
 // ConvertAgent rewrites agent frontmatter for a different harness.
 func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []string, error) {
-	fromFormat, toFormat := agentFormat(from), agentFormat(to)
+	fromFormat, toFormat := agentFormatOf(from), agentFormatOf(to)
 	if fromFormat == "" || toFormat == "" || fromFormat == toFormat {
 		return data, nil, nil
 	}
+	if fn, ok := agentConverters[fromFormat+">"+toFormat]; ok {
+		return fn(data, fromFormat, toFormat, filename)
+	}
+	return data, []string{fmt.Sprintf("agent %s: no converter from %s to %s; copied verbatim", filename, fromFormat, toFormat)}, nil
+}
+
+func dropAgentFields(fm map[string]any, warnings []string, to, filename string, keys ...string) []string {
+	for _, k := range keys {
+		if _, exists := fm[k]; exists {
+			warnings = append(warnings, fmt.Sprintf("agent %s: frontmatter field %q is not supported by %s and was dropped", filename, k, to))
+			delete(fm, k)
+		}
+	}
+	return warnings
+}
+
+func agentToOpenCode(data []byte, fromFormat, _, filename string) ([]byte, []string, error) {
 	fm, body, ok, err := splitFrontmatter(data)
 	if err != nil {
 		return nil, nil, err
@@ -118,83 +175,75 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 		return data, nil, nil
 	}
 	var warnings []string
-	dropped := func(keys ...string) {
-		for _, k := range keys {
-			if _, exists := fm[k]; exists {
-				warnings = append(warnings, fmt.Sprintf("agent %s: frontmatter field %q is not supported by %s and was dropped", filename, k, to))
-				delete(fm, k)
+	if v, ok := fm["tools"]; ok {
+		names, isList := toStringList(v)
+		if isList {
+			obj := map[string]any{}
+			for _, n := range names {
+				c, ok := canonicalTool(n)
+				if !ok {
+					warnings = append(warnings, fmt.Sprintf("agent %s: unknown tool %q", filename, n))
+					obj[strings.ToLower(n)] = true
+					continue
+				}
+				obj[strings.ToLower(c)] = true
 			}
+			fm["tools"] = obj
 		}
 	}
-
-	switch toFormat {
-	case AgentOpenCode:
-		if v, ok := fm["tools"]; ok {
-			names, isList := toStringList(v)
-			if isList {
-				obj := map[string]any{}
-				for _, n := range names {
-					c, ok := canonicalTool(n)
-					if !ok {
-						warnings = append(warnings, fmt.Sprintf("agent %s: unknown tool %q", filename, n))
-						obj[strings.ToLower(n)] = true
-						continue
-					}
-					obj[strings.ToLower(c)] = true
-				}
-				fm["tools"] = obj
-			}
-		}
-		if fromFormat != AgentOpenCode {
-			// Claude and Qwen agent files describe subagents; do not leak a
-			// missing/legacy mode into OpenCode, where new agents default to primary.
-			fm["mode"] = "subagent"
-		} else if _, ok := fm["mode"]; !ok {
-			fm["mode"] = "subagent"
-		}
-		dropped("name", "permissionMode", "approvalMode", "maxTurns", "disallowedTools", "mcpServers", "hooks")
-	case AgentClaude:
-		if _, ok := fm["name"]; !ok {
-			name := strings.TrimSuffix(filepath.Base(filename), ".md")
-			if name != "" {
-				fm["name"] = name
-			}
-		}
-		if v, ok := fm["tools"]; ok {
-			if m, isMap := v.(map[string]any); isMap {
-				var names []string
-				keys := make([]string, 0, len(m))
-				for k := range m {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-				for _, k := range keys {
-					on, _ := m[k].(bool)
-					if !on {
-						continue
-					}
-					if c, ok := canonicalTool(k); ok {
-						names = append(names, c)
-					} else {
-						warnings = append(warnings, fmt.Sprintf("agent %s: unknown tool %q", filename, k))
-						names = append(names, k)
-					}
-				}
-				fm["tools"] = strings.Join(names, ", ")
-			}
-		}
-		dropped("mode", "permissions", "hidden", "steps", "temperature", "top_p", "request", "disabled", "subtask")
+	if fromFormat != AgentOpenCode {
+		// Claude and Qwen agent files describe subagents; do not leak a
+		// missing/legacy mode into OpenCode, where new agents default to primary.
+		fm["mode"] = "subagent"
+	} else if _, ok := fm["mode"]; !ok {
+		fm["mode"] = "subagent"
 	}
+	warnings = dropAgentFields(fm, warnings, AgentOpenCode, filename,
+		"name", "permissionMode", "approvalMode", "maxTurns", "disallowedTools", "mcpServers", "hooks")
 	out, err := renderFrontmatter(fm, body)
-	if err != nil {
-		return nil, warnings, err
-	}
-	return out, warnings, nil
+	return out, warnings, err
 }
 
-func agentFormat(harness string) string {
-	if h, ok := ResolveHarness(harness); ok {
-		return h.Agents.Format
+func agentToClaude(data []byte, _, _, filename string) ([]byte, []string, error) {
+	fm, body, ok, err := splitFrontmatter(data)
+	if err != nil {
+		return nil, nil, err
 	}
-	return ""
+	if !ok || len(fm) == 0 {
+		return data, nil, nil
+	}
+	var warnings []string
+	if _, ok := fm["name"]; !ok {
+		name := strings.TrimSuffix(filepath.Base(filename), ".md")
+		if name != "" {
+			fm["name"] = name
+		}
+	}
+	if v, ok := fm["tools"]; ok {
+		if m, isMap := v.(map[string]any); isMap {
+			var names []string
+			keys := make([]string, 0, len(m))
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				on, _ := m[k].(bool)
+				if !on {
+					continue
+				}
+				if c, ok := canonicalTool(k); ok {
+					names = append(names, c)
+				} else {
+					warnings = append(warnings, fmt.Sprintf("agent %s: unknown tool %q", filename, k))
+					names = append(names, k)
+				}
+			}
+			fm["tools"] = strings.Join(names, ", ")
+		}
+	}
+	warnings = dropAgentFields(fm, warnings, AgentClaude, filename,
+		"mode", "permissions", "hidden", "steps", "temperature", "top_p", "request", "disabled", "subtask")
+	out, err := renderFrontmatter(fm, body)
+	return out, warnings, err
 }

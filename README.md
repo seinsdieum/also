@@ -39,6 +39,30 @@ Claude bundle ──push──> also package (v=content hash) ──install -h o
 
 Подробности и шаблон: [`docs/ADAPTERS.md`](docs/ADAPTERS.md).
 
+## Версии и чистота репозитория
+
+Версия пакета — content hash, но она **не создаёт папку на каждую версию**.
+В set-репозитории живёт ровно одно актуальное дерево пакета:
+
+```
+packages/<name>/
+├── also-pkg.json      # метаданные, label, digest, created_at
+└── origin/...         # файлы инфраструктуры
+```
+
+Каждая версия закреплена неизменяемым git-тегом
+`refs/tags/also/<name>/<version>`. Старые версии достаются из истории git
+(`git archive`), а не из копий каталогов. Поэтому:
+
+- новая версия переписывает только одно дерево пакета;
+- `install pkg@version` и `install pkg@label` работают через теги;
+- `list --versions` видит всю историю, включая миграцию старого layout;
+- репозиторий остаётся чистым: `packages/<name>/{also-pkg.json,origin}`.
+
+Старый layout с `packages/<name>/<version>/` читается автоматически и
+конвертируется командой `also set <name> --migrate`; миграция сохраняет
+оригинальные timestamps версий в аннотированных тегах.
+
 ## Сборка
 
 ```sh
@@ -86,6 +110,7 @@ code-review/
 | Команда | Что делает |
 |---|---|
 | `also set <name> --remote <url> [--source <dir>] [--default]` | Подключить набор. Локальный клон: `~/.also/sets/<name>`. |
+| `also set <name> --migrate` | Перевести старый layout `packages/<pkg>/<version>/` на одно дерево + git-теги. |
 | `also set` | Показать настроенные наборы. |
 | `also config` / `also config set <key> <value>` | `default_set`, `default_harness`, `default_scope`. |
 | `also list [--refresh] [--versions] [--from <url>]` | Пакеты и версии в наборе. |

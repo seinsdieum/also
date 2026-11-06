@@ -52,8 +52,9 @@ type bundleParts struct {
 	Plugins  []string
 	Hooks    []string
 	Extras   []string
-	Other    []string
 	Configs  []string
+	Custom   map[string][]string
+	Other    []string
 	Warnings []string
 }
 
@@ -79,7 +80,7 @@ func isMetaFile(rel string) bool {
 
 // ClassifyPackage maps an encoded origin tree back to harness components.
 func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
-	parts := &bundleParts{}
+	parts := &bundleParts{Custom: map[string][]string{}}
 	roots := make([]string, 0, len(h.Roots))
 	for _, r := range h.Roots {
 		roots = append(roots, r)
@@ -163,6 +164,22 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 		if rem, ok := under(h.Bundle.Hooks); ok {
 			_ = rem
 			parts.Hooks = append(parts.Hooks, rel)
+			continue
+		}
+		custom := false
+		for _, c := range h.Components {
+			rem, ok := under(c.BundleDir)
+			if !ok {
+				continue
+			}
+			if len(c.Extensions) > 0 && !hasExtension(rem, c.Extensions) {
+				continue
+			}
+			parts.Custom[c.Kind] = append(parts.Custom[c.Kind], rel)
+			custom = true
+			break
+		}
+		if custom {
 			continue
 		}
 		extra := false
@@ -274,6 +291,9 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 	sort.Strings(parts.Extras)
 	sort.Strings(parts.Other)
 	sort.Strings(parts.Configs)
+	for _, rels := range parts.Custom {
+		sort.Strings(rels)
+	}
 	return parts, nil
 }
 
@@ -289,7 +309,7 @@ func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, e
 	}
 	layerPkg := &Package{
 		Meta:  PackageMeta{Schema: SchemaPkg, Name: pkg.Meta.Name, SourceHarness: target.Harness.ID},
-		Files: layer, Dir: pkg.Dir,
+		Files: layer,
 	}
 	layerPlan, err := renderPackageMain(layerPkg, target.Harness, target)
 	if err != nil {
@@ -444,6 +464,40 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 			return nil, err
 		}
 	}
+	for _, c := range source.Components {
+		rels := parts.Custom[c.Kind]
+		if len(rels) == 0 {
+			continue
+		}
+		tc := target.Harness.Component(c.Kind)
+		dir := target.ComponentDir(c.Kind)
+		skip := dir == "" || target.Harness.ID != source.ID && c.Opaque
+		if !skip && c.Format != "" {
+			skip = tc == nil || tc.Format != c.Format
+		}
+		if skip {
+			for _, rel := range rels {
+				plan.Skipped = append(plan.Skipped, c.Kind+":"+rel)
+			}
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s components cannot be installed into %s; skipped", c.Kind, target.Harness.Display))
+			continue
+		}
+		for _, rel := range rels {
+			sub := trimRootPrefix(rel, source)
+			sub = trimComponentPrefix(sub, c.BundleDir)
+			data := pkg.Files[rel].Data
+			if c.Convert != nil && source.ID != target.Harness.ID {
+				converted, warns, err := c.Convert(data, source, target.Harness, sub)
+				if err != nil {
+					return nil, fmt.Errorf("convert %s/%s: %w", c.Kind, rel, err)
+				}
+				plan.Warnings = append(plan.Warnings, warns...)
+				data = converted
+			}
+			dest := filepath.Join(dir, filepath.FromSlash(sub))
+			plan.Files = append(plan.Files, RenderedFile{Dest: dest, Data: data, Mode: pkg.Files[rel].Mode, Component: c.Kind, OriginRel: rel})
+		}
+	}
 	if len(parts.Commands) > 0 && source.ID != target.Harness.ID && target.Supports("commands") {
 		plan.Warnings = append(plan.Warnings, "command bodies are copied verbatim; argument placeholders and harness-specific variables may differ in the target harness")
 	}
@@ -467,7 +521,7 @@ func renderPackageMain(pkg *Package, source *Harness, target Target) (*RenderPla
 	plan.Warnings = append(plan.Warnings, parts.Warnings...)
 
 	// MCP and hooks.
-	roots := source.BundleRoots(pkg.Dir + "/" + OriginDir)
+	roots := source.BundleRootsFromFiles(pkg.Files)
 	servers, warn, err := ExtractBundleMCP(source, pkg.Files, roots)
 	if err != nil {
 		return nil, err

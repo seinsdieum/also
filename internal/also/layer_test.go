@@ -27,7 +27,7 @@ func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
 		".also-layers/claude/agents/foo.md": {Data: layerAgent, Mode: 0o644},
 		".also-layers/manifest.json":        {Data: mdata, Mode: 0o644},
 	}
-	pkg := &Package{Meta: PackageMeta{Schema: SchemaPkg, Name: "p", SourceHarness: "opencode"}, Files: files, Dir: t.TempDir()}
+	pkg := &Package{Meta: PackageMeta{Schema: SchemaPkg, Name: "p", SourceHarness: "opencode"}, Files: files}
 	target := MustHarness("claude").TargetPath("project", t.TempDir())
 	plan, err := RenderPackage(pkg, MustHarness("opencode"), target)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
 	// A modified intermediate file must win over the native layer.
 	modified := []byte("---\ndescription: edited\nmode: subagent\n---\nbody\n")
 	files["agents/foo.md"] = &SnapshotFile{Data: modified, Mode: 0o644}
-	pkg2 := &Package{Meta: pkg.Meta, Files: files, Dir: pkg.Dir}
+	pkg2 := &Package{Meta: pkg.Meta, Files: files}
 	plan, err = RenderPackage(pkg2, MustHarness("opencode"), target)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestLayerManifestIsIgnoredByClassification(t *testing.T) {
 		"settings.json":                     {Data: []byte(`{"hooks":{"Setup":[]}}`), Mode: 0o644},
 		".also-layers/claude/settings.json": {Data: []byte(`{"hooks":{"Setup":[]}}`), Mode: 0o644},
 		".also-layers/manifest.json":        {Data: []byte(`{"layers":{}}`), Mode: 0o644},
-	}, Dir: dir}
+	}}
 	parts, err := ClassifyPackage(pkg, MustHarness("claude"))
 	if err != nil {
 		t.Fatal(err)

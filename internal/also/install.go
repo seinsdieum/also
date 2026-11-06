@@ -206,41 +206,20 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			if !configPathAllowed(render.MCPPath(), target) {
 				return nil, fmt.Errorf("adapter %s points MCP config outside the %s root: %s", targetH.ID, target.Scope, render.MCPPath())
 			}
+			codec, ok := mcpCodec(targetH.MCP.Format)
+			if !ok {
+				return nil, fmt.Errorf("MCP format %q has no codec", targetH.MCP.Format)
+			}
 			for _, r := range rendered {
-				switch targetH.MCP.Format {
-				case MCPClaudeJSON, MCPQwenJSON:
-					edit, warn, err := planJSONSet(st, old, render.MCPPath(), []string{"mcpServers", r.Name}, r.Value, opts.Force)
-					if err != nil {
-						return nil, err
-					}
-					if warn != "" {
-						plan.Warnings = append(plan.Warnings, warn)
-					}
-					if edit != nil {
-						plan.Edits = append(plan.Edits, *edit)
-					}
-				case MCPOpenCodeJSON:
-					edit, warn, err := planOpenCodeMCP(st, old, target.MCP, r.Name, r.Value, opts.Force)
-					if err != nil {
-						return nil, err
-					}
-					if warn != "" {
-						plan.Warnings = append(plan.Warnings, warn)
-					}
-					if edit != nil {
-						plan.Edits = append(plan.Edits, *edit)
-					}
-				case MCPCodexTOML:
-					edit, warn, err := planTOMLMCP(st, old, target.MCP, r.Name, r.TOML, opts.Force)
-					if err != nil {
-						return nil, err
-					}
-					if warn != "" {
-						plan.Warnings = append(plan.Warnings, warn)
-					}
-					if edit != nil {
-						plan.Edits = append(plan.Edits, *edit)
-					}
+				edit, warn, err := codec.Plan(st, old, render.MCPPath(), r.Name, r, opts.Force)
+				if err != nil {
+					return nil, err
+				}
+				if warn != "" {
+					plan.Warnings = append(plan.Warnings, warn)
+				}
+				if edit != nil {
+					plan.Edits = append(plan.Edits, *edit)
 				}
 			}
 		}
@@ -322,7 +301,7 @@ func fileAllowedRoot(dest string, t Target) bool {
 	if hasReservedSegment(dest) {
 		return false
 	}
-	roots := []string{t.Root, t.Skills, t.Commands, t.Agents, t.Plugins, t.Hooks, t.ExtraDir}
+	roots := append([]string{t.Root, t.ExtraDir}, t.ComponentDirs()...)
 	if t.Scope == "project" && t.Project != "" {
 		roots = append(roots, t.Project)
 	}

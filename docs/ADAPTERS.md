@@ -78,9 +78,70 @@ func myAdapter() *Harness {
 }
 ```
 
-If the harness has a genuinely new encoding, add a format engine next to the
-existing ones and a new `MCPFormat`/dialect constant. This is the only part that
-requires touching generic code; everything else stays in the adapter.
+If the harness has a genuinely new encoding, register a `MCPCodec` (or set a
+custom `Hooks.Extract`/`Settings.Extract`) in an init function and reference it
+from the adapter. Everything else stays in the adapter.
+
+## Format engines
+
+MCP encodings are registered codecs (`MCPCodec`): extraction, rendering and the
+reversible config edit live together. New encodings call `RegisterMCPCodec` in
+an init function and are selected by `MCP.Format`; the installer has no switch
+over harnesses. Built-ins live in `mcp_formats.go`.
+
+Command and agent dialects are registries too: `RegisterCommandFormat` /
+`RegisterCommandConverter` and `RegisterAgentFormat` / `RegisterAgentConverter`.
+A new dialect registers its pair once; `ConvertCommand`/`ConvertAgent` do not
+grow another switch.
+
+Hooks and settings use a safe default (JSONC/TOML key extraction). An adapter
+with a different format sets `Hooks.Extract` or `Settings.Extract` and owns the
+parsing itself. Rendering still goes through the adapter's `Target` function.
+
+## Custom component kinds
+
+Beyond instructions/skills/commands/agents/plugins/hooks, an adapter can declare
+`Components` such as workflows or prompts:
+
+```go
+Components: []Component{{
+    Kind: "workflows", BundleDir: "workflows",
+    ProjectDir: ".acme/workflows", GlobalDir: "workflows",
+    Extensions: []string{".md"},
+}},
+```
+
+The system validates the paths, classifies the bundle files, renders them into
+the target directory and adopts them back. `Opaque` restricts a kind to the same
+harness; `Format` restricts it to matching formats; `Convert` is optional.
+
+## External declarative adapters
+
+A harness that reuses an existing format can be added without recompiling by
+putting JSON under `~/.also/adapters/` (or `ALSO_ADAPTERS=<dir>`):
+
+```json
+{
+  "id": "acme",
+  "display": "Acme Agent",
+  "aliases": ["ac"],
+  "global_base": "~/.acme",
+  "global":  {"instr": "AGENTS.md", "skills": "skills", "commands": "commands", "agents": "agents", "settings": "settings.json", "mcp": "mcp.json"},
+  "project": {"instr": "AGENTS.md", "skills": ".acme/skills", "commands": ".acme/commands", "agents": ".acme/agents", "settings": ".acme/settings.json", "mcp": ".acme/mcp.json"},
+  "bundle":  {"instr": "AGENTS.md", "skills": "skills", "commands": "commands", "agents": "agents", "settings": "settings.json", "mcp": ".mcp.json"},
+  "roots": ["", ".acme"],
+  "hooks":    {"configs": ["settings.json"], "events": ["PreToolUse"], "target": "settings"},
+  "mcp":      {"format": "claude-json", "configs": [".mcp.json"]},
+  "settings": {"keys": ["permissions"], "configs": ["settings.json"], "target": "settings"},
+  "commands": {"format": "claude"},
+  "agents":   {"format": "claude"},
+  "detect":   [{"paths": [".acme"], "weight": 10}]
+}
+```
+
+External specs cannot execute code. They can only select registered formats and
+declare paths; the same registry validation and runtime path bounds apply. An
+invalid or duplicate spec is skipped with a warning, not trusted.
 
 ## Validation
 
@@ -119,25 +180,22 @@ An adapter may not loosen these rules. They apply identically to every adapter.
 
 ## Limits
 
-Adapters are compiled in; there is no dynamic code loading. A community adapter
-is a Go file in this repository, reviewed and tested like any other code. This
-keeps the security boundary auditable: adapters can choose formats and paths,
-but the system validates and bounds every destination at install time.
+Adapters may be compiled in or loaded as declarative JSON specs. There is no
+dynamic code loading: a spec can only select a registered format/codec, never
+execute arbitrary code. This keeps the security boundary auditable: adapters can
+choose formats and paths, but the system validates and bounds every destination
+at install time.
 
 ## Known next refactors
 
-These are the remaining hardcoded patterns, in priority order:
-
-1. **Component kinds.** `Paths` and `bundleParts` still name instructions,
-   skills, commands, agents, plugins, hooks and extras explicitly. A future
-   component (for example workflows or prompts) needs a core change. The next
-   step is a kind registry where an adapter maps a kind to bundle and target
-   paths; `render` and `install` would iterate kinds instead of struct fields.
-2. **Format engines.** MCP/hook/settings encodings are enum values with a
-   switch. A genuinely new encoding needs a core engine. Moving them behind
-   `MCPEncoder`/`HookEncoder` interfaces would let an adapter ship its own
-   implementation.
-3. **External adapters.** Dynamic loading is intentionally absent. If needed,
-   load declarative specs only (no code), validate them with the same rules, and
-   require an existing format engine. Never let a spec choose an unbounded path.
+1. **Standard component fields.** Instructions/skills/commands/agents/plugins/
+   hooks are still named fields on `Paths`; custom kinds already go through
+   `Components`. Moving the standard kinds into the same collection model would
+   remove the remaining field plumbing without changing behaviour.
+2. **Non-JSON settings formats.** `Settings.Extract` covers reading, but the
+   reversible edit path is JSON/TOML. A YAML/INI settings config would need a
+   matching `SettingsCodec` writer.
+3. **Version store object reuse.** Old versions are reconstructed from git
+   commits on demand. Git already deduplicates objects; a local cache could make
+   repeated installs of old versions cheaper.
 

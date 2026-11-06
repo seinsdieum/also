@@ -16,18 +16,15 @@ func hookEventsFor(h *Harness) map[string]bool {
 }
 
 func ExtractBundleHooks(h *Harness, files map[string]*SnapshotFile, roots []string) (HookSet, []string, error) {
+	if h.Hooks.Extract != nil {
+		return h.Hooks.Extract(h.Hooks.Configs, files, roots)
+	}
 	out := HookSet{}
 	var warnings []string
 	find := func(candidates ...string) ([]byte, string, bool) {
-		for _, root := range roots {
-			for _, c := range candidates {
-				p := c
-				if root != "" {
-					p = root + "/" + c
-				}
-				if f, ok := files[p]; ok {
-					return f.Data, p, true
-				}
+		for _, c := range candidates {
+			if data, p, ok := findBundleFile(files, roots, c); ok {
+				return data, p, true
 			}
 		}
 		return nil, "", false

@@ -78,8 +78,8 @@ func (s *SetRepo) Refresh() error {
 	return pullFF(s.Dir)
 }
 
-func (s *SetRepo) PackageDir(pkg, version string) string {
-	return filepath.Join(s.Dir, "packages", pkg, version)
+func (s *SetRepo) PackageTreeDir(pkg string) string {
+	return filepath.Join(s.Dir, "packages", pkg)
 }
 
 func ReadPackageMeta(dir string) (PackageMeta, error) {
@@ -108,57 +108,72 @@ type VersionInfo struct {
 	Harness string
 }
 
-type versionIndex struct {
-	committed map[string]bool
-	times     map[string]time.Time
-	order     map[string]int
-}
-
-func (s *SetRepo) index() (*versionIndex, error) {
-	committed, err := committedVersions(s.Dir)
-	if err != nil {
-		return nil, err
-	}
-	times, order, err := versionTimes(s.Dir)
-	if err != nil {
-		return nil, err
-	}
-	return &versionIndex{committed: committed, times: times, order: order}, nil
-}
-
 func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 	if !ValidName(pkg) {
 		return nil, fmt.Errorf("invalid package name %q", pkg)
 	}
-	idx, err := s.index()
+	tags, err := listVersionTags(s.Dir, pkg)
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(s.Dir, "packages", pkg)
-	entries, err := os.ReadDir(dir)
+	legacy, err := legacyVersionDirs(s.Dir, pkg)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("package %q not found in set %q", pkg, s.Name)
+		return nil, err
+	}
+	if len(tags) == 0 && len(legacy) == 0 {
+		// A crash between commit and tag creation must not hide the package.
+		if meta, ok := readManifestAtCommit(s.Dir, pkg, "", "HEAD"); ok && meta.Digest != "" {
+			version := VersionFromDigest(meta.Digest)
+			return []VersionInfo{{
+				Version: version, Label: meta.Label, Harness: meta.SourceHarness,
+				Time: meta.CreatedAt,
+			}}, nil
 		}
+		return nil, fmt.Errorf("package %q not found in set %q", pkg, s.Name)
+	}
+	info, err := commitTimes(s.Dir)
+	if err != nil {
+		return nil, err
+	}
+	legacyTimes, legacyOrder, err := versionTimes(s.Dir)
+	if err != nil {
 		return nil, err
 	}
 	var out []VersionInfo
-	for _, e := range entries {
-		if !e.IsDir() {
+	seen := map[string]bool{}
+	for version, commit := range tags {
+		meta, ok := readManifestAtCommit(s.Dir, pkg, version, commit)
+		if !ok {
+			return nil, fmt.Errorf("version tag %s has no package manifest", versionTagName(pkg, version))
+		}
+		ci := info[commit]
+		vi := VersionInfo{
+			Version: version, Label: meta.Label, Harness: meta.SourceHarness,
+			Time: ci.Time, Order: ci.Order,
+		}
+		if !meta.CreatedAt.IsZero() {
+			vi.Time = meta.CreatedAt
+		} else if t := tagCreatedAt(s.Dir, "refs/tags/"+versionTagName(pkg, version)); !t.IsZero() {
+			vi.Time = t
+		} else if t := legacyTimes[pkg+"/"+version]; !t.IsZero() {
+			vi.Time = t
+			vi.Order = legacyOrder[pkg+"/"+version]
+		}
+		out = append(out, vi)
+		seen[version] = true
+	}
+	for version := range legacy {
+		if seen[version] {
 			continue
 		}
-		ver := e.Name()
-		key := pkg + "/" + ver
-		if !idx.committed[key] {
+		meta, ok := readManifestAtCommit(s.Dir, pkg, version, "HEAD")
+		if !ok {
 			continue
 		}
-		meta, err := ReadPackageMeta(filepath.Join(dir, ver))
-		if err != nil {
-			continue
-		}
+		key := pkg + "/" + version
 		out = append(out, VersionInfo{
-			Version: ver, Label: meta.Label, Harness: meta.SourceHarness,
-			Time: idx.times[key], Order: idx.order[key],
+			Version: version, Label: meta.Label, Harness: meta.SourceHarness,
+			Time: legacyTimes[key], Order: legacyOrder[key],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -255,15 +270,25 @@ func (s *SetRepo) LoadPackage(pkg, version string) (*Package, error) {
 	if !ValidName(pkg) {
 		return nil, fmt.Errorf("invalid package name %q", pkg)
 	}
-	if version == "" || strings.ContainsAny(version, `/\`) || strings.Contains(version, "..") {
+	if !validVersion(version) {
 		return nil, fmt.Errorf("invalid version %q", version)
 	}
-	dir := s.PackageDir(pkg, version)
-	p, err := LoadPackage(dir)
-	if err != nil {
-		return nil, fmt.Errorf("load %s@%s: %w", pkg, version, err)
+	if commit, ok := s.tagCommit(pkg, version); ok {
+		p, err := s.loadPackageFromCommit(pkg, version, commit)
+		if err != nil {
+			return nil, fmt.Errorf("load %s@%s: %w", pkg, version, err)
+		}
+		return p, nil
 	}
-	return p, nil
+	// Legacy layout (no tag yet): packages/<pkg>/<version>/.
+	if _, ok := readManifestAtCommit(s.Dir, pkg, version, "HEAD"); ok {
+		p, err := s.loadPackageFromCommit(pkg, version, "HEAD")
+		if err != nil {
+			return nil, fmt.Errorf("load %s@%s: %w", pkg, version, err)
+		}
+		return p, nil
+	}
+	return nil, fmt.Errorf("version %q of %q not found", version, pkg)
 }
 
 type PushOptions struct {
@@ -328,6 +353,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	meta := PackageMeta{
 		Schema: SchemaPkg, Name: opts.Name, Description: opts.Description,
 		SourceHarness: harness, Label: opts.Label, EncodedWith: "also " + Version,
+		CreatedAt: time.Now().UTC(),
 	}
 	digest := snap.Digest(meta)
 	meta.Digest = digest
@@ -340,18 +366,6 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if opts.DryRun {
 		return res, nil
 	}
-	if isVersionCommitted(s.Dir, opts.Name, version) {
-		res.Existing = true
-		if aheadOfUpstream(s.Dir) {
-			if err := pushHead(s.Dir); err != nil {
-				return res, err
-			}
-		}
-		return res, nil
-	}
-	if err := os.RemoveAll(s.PackageDir(opts.Name, version)); err != nil {
-		return nil, err
-	}
 	dirty, status, err := gitDirty(s.Dir)
 	if err != nil {
 		return nil, err
@@ -362,21 +376,19 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err := pullFF(s.Dir); err != nil {
 		return nil, err
 	}
-	if isVersionCommitted(s.Dir, opts.Name, version) {
+	// Tag the live tree and any legacy version dirs before they are replaced.
+	if err := s.ensureTagsForCurrentTree(opts.Name); err != nil {
+		return nil, err
+	}
+	if _, ok := s.tagCommit(opts.Name, version); ok {
 		res.Existing = true
-		if aheadOfUpstream(s.Dir) {
-			if err := pushHead(s.Dir); err != nil {
-				return res, err
-			}
+		if err := s.pushExistingVersion(opts.Name, version); err != nil {
+			return res, err
 		}
 		return res, nil
 	}
-	res.Existing = false
-	if err := os.RemoveAll(s.PackageDir(opts.Name, version)); err != nil {
-		return nil, err
-	}
 
-	paths := []string{filepath.Join("packages", opts.Name, version)}
+	paths := []string{filepath.Join("packages", opts.Name)}
 	if _, err := os.Stat(filepath.Join(s.Dir, SetManifestFile)); os.IsNotExist(err) {
 		setMeta := map[string]string{"schema": SchemaSet, "name": s.Name}
 		data, _ := json.MarshalIndent(setMeta, "", "  ")
@@ -387,10 +399,13 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		res.SetCreated = true
 		paths = append(paths, SetManifestFile)
 	}
-	if err := os.MkdirAll(filepath.Join(s.Dir, "packages", opts.Name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(s.Dir, "packages"), 0o755); err != nil {
 		return nil, err
 	}
-	if err := WritePackage(s.PackageDir(opts.Name, version), meta, snap); err != nil {
+	if err := s.removePackageTree(opts.Name); err != nil {
+		return nil, err
+	}
+	if err := WritePackage(s.PackageTreeDir(opts.Name), meta, snap); err != nil {
 		return nil, err
 	}
 	msg := opts.Message
@@ -406,12 +421,123 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		return res, err
 	}
 	res.Committed = committed
+	if err := s.createTag(opts.Name, version, "HEAD"); err != nil {
+		return res, err
+	}
 	if !committed {
 		res.Existing = true
-		return res, nil
 	}
-	if err := pushHead(s.Dir); err != nil {
+	if err := s.pushExistingVersion(opts.Name, version); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+func (s *SetRepo) pushExistingVersion(pkg, version string) error {
+	if aheadOfUpstream(s.Dir) {
+		if err := pushHead(s.Dir); err != nil {
+			return err
+		}
+	}
+	return pushTag(s.Dir, versionTagName(pkg, version))
+}
+
+// Migration describes a package converted from the legacy per-version layout.
+type Migration struct {
+	Package string
+	Version string
+}
+
+// Migrate converts packages/<pkg>/<version>/ directories into one live tree
+// per package plus immutable version tags. Old snapshots stay readable because
+// tags point at the pre-migration commits.
+func (s *SetRepo) Migrate() ([]Migration, error) {
+	dirty, status, err := gitDirty(s.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if dirty {
+		return nil, fmt.Errorf("the local also clone is dirty:\n%s\nresolve it in %s", status, s.Dir)
+	}
+	if err := pullFF(s.Dir); err != nil {
+		return nil, err
+	}
+	packages, err := s.Packages()
+	if err != nil {
+		return nil, err
+	}
+	var migrated []Migration
+	var latestTags = map[string]string{}
+	for _, pkg := range packages {
+		legacy, err := legacyVersionDirs(s.Dir, pkg)
+		if err != nil {
+			return nil, err
+		}
+		if len(legacy) == 0 {
+			continue
+		}
+		// Choose the latest before creating tags, while versionTimes still has
+		// per-version timestamps.
+		versions, err := s.Versions(pkg)
+		if err != nil {
+			return nil, err
+		}
+		if len(versions) == 0 {
+			continue
+		}
+		latest := versions[0]
+		times := map[string]time.Time{}
+		for _, v := range versions {
+			times[v.Version] = v.Time
+		}
+		for version := range legacy {
+			if _, exists := s.tagCommit(pkg, version); exists {
+				continue
+			}
+			if err := s.createTagAt(pkg, version, "HEAD", times[version]); err != nil {
+				return nil, err
+			}
+		}
+		p, err := s.LoadPackage(pkg, latest.Version)
+		if err != nil {
+			return nil, fmt.Errorf("migrate %s@%s: %w", pkg, latest.Version, err)
+		}
+		p.Meta.CreatedAt = time.Now().UTC()
+		if err := s.removePackageTree(pkg); err != nil {
+			return nil, err
+		}
+		if err := WritePackage(s.PackageTreeDir(pkg), p.Meta, &Snapshot{Files: p.Files}); err != nil {
+			return nil, err
+		}
+		migrated = append(migrated, Migration{Package: pkg, Version: latest.Version})
+		latestTags[pkg] = latest.Version
+	}
+	if len(migrated) == 0 {
+		return nil, nil
+	}
+	if _, err := commitPaths(s.Dir, "also: migrate set to tree+tags layout", "packages"); err != nil {
+		return nil, err
+	}
+	for pkg, version := range latestTags {
+		if err := s.createTag(pkg, version, "HEAD"); err != nil {
+			return nil, err
+		}
+	}
+	if aheadOfUpstream(s.Dir) {
+		if err := pushHead(s.Dir); err != nil {
+			return nil, err
+		}
+	}
+	for _, m := range migrated {
+		tags, err := listVersionTags(s.Dir, m.Package)
+		if err != nil {
+			return nil, err
+		}
+		for version := range tags {
+			if err := pushTag(s.Dir, versionTagName(m.Package, version)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return migrated, nil
 }

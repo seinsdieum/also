@@ -15,23 +15,10 @@ func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []s
 	if len(h.Settings.Keys) == 0 {
 		return out, nil, nil
 	}
-	var data []byte
-	found := false
-	for _, root := range roots {
-		for _, c := range h.Settings.Configs {
-			p := c
-			if root != "" {
-				p = root + "/" + c
-			}
-			if f, ok := files[p]; ok {
-				data, found = f.Data, true
-				break
-			}
-		}
-		if found {
-			break
-		}
+	if h.Settings.Extract != nil {
+		return h.Settings.Extract(h.Settings.Keys, h.Settings.Configs, files, roots)
 	}
+	data, _, found := findBundleConfig(files, roots, h.Settings.Configs)
 	if !found {
 		return out, nil, nil
 	}

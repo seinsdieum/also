@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -34,19 +35,19 @@ type SnapshotOptions struct {
 }
 
 type PackageMeta struct {
-	Schema        string `json:"schema"`
-	Name          string `json:"name"`
-	Description   string `json:"description,omitempty"`
-	SourceHarness string `json:"source_harness"`
-	Label         string `json:"label,omitempty"`
-	Digest        string `json:"digest"`
-	EncodedWith   string `json:"encoded_with,omitempty"`
+	Schema        string    `json:"schema"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description,omitempty"`
+	SourceHarness string    `json:"source_harness"`
+	Label         string    `json:"label,omitempty"`
+	Digest        string    `json:"digest"`
+	EncodedWith   string    `json:"encoded_with,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
 }
 
 type Package struct {
 	Meta  PackageMeta
 	Files map[string]*SnapshotFile // origin files
-	Dir   string
 }
 
 var secretNames = []string{
@@ -223,6 +224,9 @@ func (s *Snapshot) Digest(meta PackageMeta) string {
 func VersionFromDigest(d string) string { return d[:16] }
 
 func WritePackage(dest string, meta PackageMeta, snap *Snapshot) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
 	tmp, err := os.MkdirTemp(filepath.Dir(dest), ".also-pkg-*")
 	if err != nil {
 		return err
@@ -316,7 +320,6 @@ func LoadPackage(dir string) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Package{Meta: meta, Files: files, Dir: dir}
 	if modes := gitFileModes(dir); modes != nil {
 		// The worktree mode is meaningless on Windows (no exec bit), but the
 		// git index preserves it, so keep digests identical across platforms.
@@ -326,13 +329,33 @@ func LoadPackage(dir string) (*Package, error) {
 			}
 		}
 	}
-	if meta.Digest != "" {
-		snap := &Snapshot{Files: files}
-		if got := snap.Digest(meta); got != meta.Digest {
-			return nil, fmt.Errorf("package integrity check failed for %s: manifest digest %s, content %s", dir, ShortHash([]byte(meta.Digest), 12), ShortHash([]byte(got), 12))
-		}
+	return NewPackage(meta, files, dir)
+}
+
+// NewPackage validates package metadata and contents.
+func NewPackage(meta PackageMeta, files map[string]*SnapshotFile, source string) (*Package, error) {
+	if meta.Schema != SchemaPkg {
+		return nil, fmt.Errorf("unsupported package schema %q in %s", meta.Schema, source)
+	}
+	if !ValidName(meta.Name) {
+		return nil, fmt.Errorf("invalid package name %q in %s", meta.Name, source)
+	}
+	p := &Package{Meta: meta, Files: files}
+	if err := verifyPackageDigest(meta, files, source); err != nil {
+		return nil, err
 	}
 	return p, nil
+}
+
+func verifyPackageDigest(meta PackageMeta, files map[string]*SnapshotFile, source string) error {
+	if meta.Digest == "" {
+		return nil
+	}
+	snap := &Snapshot{Files: files}
+	if got := snap.Digest(meta); got != meta.Digest {
+		return fmt.Errorf("package integrity check failed for %s: manifest digest %s, content %s", source, ShortHash([]byte(meta.Digest), 12), ShortHash([]byte(got), 12))
+	}
+	return nil
 }
 
 // gitFileModes returns tracked modes relative to dir, or nil outside git.

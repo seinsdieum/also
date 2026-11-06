@@ -54,6 +54,11 @@ func preserveInLayer(rel string, h *Harness, in Install) bool {
 			return true
 		}
 	}
+	for _, c := range h.Components {
+		if rest == c.BundleDir || strings.HasPrefix(rest, c.BundleDir+"/") {
+			return true
+		}
+	}
 	return false
 }
 
@@ -310,16 +315,25 @@ func ExtractBundle(opts AdoptOptions) (*AdoptResult, error) {
 			return nil, err
 		}
 	}
+	for _, c := range h.Components {
+		src := target.ComponentDir(c.Kind)
+		if src == "" {
+			continue
+		}
+		if err := copyTree(src, c.BundleDir); err != nil {
+			return nil, err
+		}
+	}
 	for _, d := range h.ExtraDirs {
 		if err := copyTree(filepath.Join(project, h.ExtraBase, d), d); err != nil {
 			return nil, err
 		}
 	}
 
-	// Native config files are preserved so MCP/hooks can be translated later.
+	// Native config files are preserved under the adapter's bundle names.
 	configs := []struct{ src, rel string }{
-		{target.Settings, "settings.json"},
-		{target.HooksJSON, "hooks.json"},
+		{target.Settings, h.Bundle.Settings},
+		{target.HooksJSON, h.Bundle.HooksJSON},
 	}
 	copyConfig := func(src, rel string) error {
 		if src == "" || rel == "" {
@@ -339,19 +353,13 @@ func ExtractBundle(opts AdoptOptions) (*AdoptResult, error) {
 			return nil, err
 		}
 	}
-	switch h.MCP.Format {
-	case MCPNone:
-	case MCPCodexTOML:
-		if target.MCP != "" {
-			if err := copyConfig(target.MCP, "config.toml"); err != nil {
-				return nil, err
-			}
+	if target.MCP != "" && target.MCP != target.Settings {
+		rel := h.Bundle.MCP
+		if rel == "" {
+			rel = filepath.Base(target.MCP)
 		}
-	default:
-		if target.MCP != "" && target.MCP != target.Settings {
-			if err := copyConfig(target.MCP, filepath.Base(target.MCP)); err != nil {
-				return nil, err
-			}
+		if err := copyConfig(target.MCP, rel); err != nil {
+			return nil, err
 		}
 	}
 	if err := addPreservedLayers(tmp, project, h, write); err != nil {
