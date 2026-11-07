@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="also connects one versioned package to every supported harness" width="100%">
+  <img src="docs/assets/hero.svg" alt="also — version once, run anywhere. One portable package rendered for every harness." width="100%">
 </p>
 
 <p align="center">
-  <strong>One package. Every harness. One source of truth.</strong>
+  <strong>Version once. Run anywhere.</strong>
 </p>
 
-`also` is a command-line interface for versioning, translating and installing artificial intelligence infrastructure for every supported harness. It stores instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings once, then materializes them in the native layout of any harness through a built-in or declarative adapter.
+`also` is a command-line interface for versioning and sharing artificial intelligence infrastructure. Instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings live in one portable package, and an adapter renders that package into the native layout of every harness.
 
 ## 1. The Problem
 
@@ -20,7 +20,7 @@ The usual result is duplication. The same review skill is copied into four proje
 - adapters translate it into each harness layout;
 - every package version is content-addressed and stored in git;
 - installation is reversible, including instructions blocks and configuration edits;
-- the same package can live in several harnesses inside one project.
+- the same package can live in several harnesses inside one directory.
 
 ## 2. Quick Start
 
@@ -30,7 +30,7 @@ Run one command:
 curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
 ```
 
-The installer detects the operating system and architecture, downloads the latest release from GitHub, verifies its SHA-256 checksum, installs the binary into `~/.local/bin`, and immediately launches the interactive setup. Setup detects installed harness command-line interfaces, asks for a default harness and scope, connects one or more remote namespaces, and optionally installs a starter package.
+The installer detects the operating system and architecture, downloads the latest release from GitHub, verifies its SHA-256 checksum, installs the binary into `~/.local/bin`, and immediately launches the interactive setup. Setup detects installed harness command-line interfaces, asks for a default harness, connects one or more remote namespaces, and optionally installs a starter package.
 
 On Windows, use PowerShell:
 
@@ -54,66 +54,76 @@ go install github.com/seinsdieum/also@latest
 also setup
 ```
 
-A namespace is any existing git repository. It is only a name and a remote uniform resource locator; the local clone is an internal cache. Connect one manually if you skipped setup:
+Initialize the directory that holds your infrastructure:
 
 ```sh
-also connect personal git@github.com:you/ai-infrastructure.git
+cd my-infrastructure
+also init code-review for claude
+also push
 ```
 
-Then install and inspect a package:
+`also init` writes `also.json` with the package name and source harness. From then on `also push` publishes that directory and needs no path, no name and no harness. A directory without `also.json` is refused, so you cannot publish an unrelated working directory by accident.
+
+Install a package into the current directory:
 
 ```sh
 also install code-review for opencode
-also tree
+also install code-review for claude from personal
 ```
 
-Capture a live project back into a new package version:
+Capture infrastructure that already exists in a harness layout:
 
 ```sh
-also adopt . for claude --name code-review
+also adopt for claude
 ```
 
-Keep the tool current:
+Keep the package and the tool current:
 
 ```sh
+also upgrade
 also update
 ```
 
-`also update` checks the latest GitHub release, verifies the published checksum and replaces the current binary. If a newer release exists, ordinary commands occasionally print a single notice with the next step.
+`also upgrade` upgrades the packages installed in the current directory. `also update` checks the latest GitHub release, verifies the published checksum and replaces the current binary. If a newer release exists, ordinary commands occasionally print a single notice with the next step.
 
 ## 3. What also Does
 
-### Namespaces and packages
+### Initialization
 
-A namespace is a remote git repository that stores packages. A package is a directory tree inside that repository with one live version and immutable version tags. The version identifier is the first sixteen hexadecimal characters of a content digest, so identical content always produces the same version and different content can never reuse an old one.
-
-```text
-namespace repository
-├── packages/
-│   └── code-review/
-│       ├── also-pkg.json        package metadata and digest
-│       └── origin/              the portable bundle
-└── refs/tags/also/code-review/<version>
-```
-
-Older versions are read from git tags. The working tree never accumulates one directory per version.
-
-### Adapters
-
-An adapter describes where a harness keeps each component and how it encodes configuration. Adding a community harness does not require recompiling `also` when the harness reuses an existing encoding:
+`also init <name> [for <harness>]` writes `also.json` into the current directory. The file records the package name and the source harness, and it is never published inside the package. Every command that publishes or captures infrastructure uses that marker, so the working directory is the only argument you need:
 
 ```sh
-also add harness ./harness.json
-also add harness https://example.com/harness.json --sha256 <digest>
+also init code-review for claude
+also push
+also adopt for claude
+also upgrade
 ```
 
-Adapters are declarative. They cannot execute code, their global paths must stay below the home directory, and downloaded specifications can be pinned to an exact checksum.
+If the harness is omitted, `also init` uses the layout already present in the directory and then the configured default harness.
 
-### Cross-harness architecture
+### Namespaces
 
-The same package is rendered through whichever adapter matches the target harness. A built-in adapter is ready to install without compiling code. A community adapter is declarative JSON and reuses an existing encoding.
+A namespace is a remote git repository that stores packages. It is only a name and a remote uniform resource locator; the local clone is an internal cache. Connect one during setup or add it later:
 
-#### Built-in adapters
+```sh
+also connect personal git@github.com:you/ai-infrastructure.git
+also use personal
+```
+
+Choose a namespace per operation with `from <namespace>`:
+
+```sh
+also install code-review for opencode from personal
+also show code-review from personal
+```
+
+### Versions
+
+A package is a directory tree inside a namespace with one live version and immutable version tags. The version identifier is the first sixteen hexadecimal characters of a content digest, so identical content always produces the same version and different content can never reuse an old one. Pin a version with `package@version` when a moving latest version is not appropriate.
+
+### Adapters and cross-harness architecture
+
+An adapter describes where a harness keeps each component and how it encodes configuration. A built-in adapter is ready to install without compiling code. A community adapter is declarative JSON and reuses an existing encoding.
 
 | Adapter | Instructions | Skills | Commands and agents | Hooks and settings | Model Context Protocol |
 |---|---|---|---|---|---|
@@ -124,22 +134,23 @@ The same package is rendered through whichever adapter matches the target harnes
 
 Cross-harness translation is deliberately honest. A component that has no equivalent in the target harness is skipped with a warning instead of being written into a file the harness ignores. Native data that cannot be translated is preserved in `.also-layers/` so a later round trip can restore it.
 
-<p align="center">
-  <img src="docs/assets/architecture.svg" alt="A package is rendered into harness layouts and stored in a namespace repository" width="100%">
-</p>
+Add a community adapter without recompiling:
 
-### Installation is reversible
+```sh
+also add harness ./harness.json
+also add harness https://example.com/harness.json --sha256 <digest>
+```
+
+Adapters are declarative. They cannot execute code, user-wide paths must stay below the home directory, and downloaded specifications can be pinned to an exact checksum.
+
+### Installation and removal
 
 `also` remembers every created file, managed instructions block and configuration edit in `~/.also/state.json`. Uninstalling removes only what the package still owns. If you edited a file, `also` refuses to delete it unless you pass `--force`, and it keeps a backup before overwriting anything.
-
-Project scope is the default. Global scope writes to the user-wide configuration of the selected harness. The same package can be installed into several harnesses in one project because each installation slot includes the harness.
-
-### Partial installation
 
 Install only the parts you want:
 
 ```sh
-also install review skill from personal@code-review for opencode
+also install review skill from code-review for opencode
 also install mcp from code-review
 ```
 
@@ -149,15 +160,16 @@ Supported selectors include `instructions`, `skills`, `commands`, `agents`, `plu
 
 | Command | Purpose |
 |---|---|
-| `also setup` | Interactive first-run setup with harness, scope and namespace choices. |
+| `also setup` | Interactive first-run setup with harness and namespace choices. |
+| `also init <name> [for <harness>]` | Mark the current directory as portable infrastructure. |
 | `also connect <name> <git-url>` | Connect a remote namespace. |
 | `also use <namespace>` | Choose the active namespace. |
 | `also list` | List packages and versions in a namespace. |
-| `also show <package>[@version]` | Show a package manifest and its components. |
-| `also install <package> for <harness>` | Install a package into a harness. |
-| `also adopt <project> for <harness>` | Capture a live project and publish a new package version. |
-| `also push <bundle> for <harness>` | Encode a hand-written bundle and publish it. |
-| `also upgrade` | Upgrade installed packages to their newest versions. |
+| `also show <package>[@version] [from <namespace>]` | Show a package manifest and its components. |
+| `also install <package> [for <harness>] [from <namespace>]` | Install a package into the current directory. |
+| `also adopt [directory] [for <harness>]` | Capture the initialized infrastructure and publish a new version. |
+| `also push [directory]` | Publish the initialized directory; no path is needed. |
+| `also upgrade` | Upgrade the packages installed in the current directory. |
 | `also reshape <harness>` | Re-materialize installed packages for another harness. |
 | `also tree` | Show only the installed infrastructure. |
 | `also uninstall <package>` | Remove an installation and reverse its configuration edits. |
@@ -200,7 +212,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
 ## 5. Credits
 
-`also` is built with the Go programming language, the Cobra command-line framework, the BurntSushi TOML library and the `yaml.v3` library. It exists because Claude Code, Codex CLI, OpenCode and Qwen Code each publish a thoughtful but different configuration model. The illustrations in this repository were designed for the project in the same cobalt-blue visual language.
+`also` is built with the Go programming language, the Cobra command-line framework, the BurntSushi TOML library and the `yaml.v3` library. It exists because Claude Code, Codex CLI, OpenCode and Qwen Code each publish a thoughtful but different configuration model.
 
 Thank you to every contributor and to the maintainers of those projects and libraries.
 
@@ -208,6 +220,6 @@ Thank you to every contributor and to the maintainers of those projects and libr
 
 `also` is released under the [Apache License 2.0](LICENSE). You may use it in personal and commercial products.
 
-The license keeps authorship with the project and requires that redistributions preserve the copyright notice and the [NOTICE](NOTICE) file. If you embed `also` inside another product, credit the project in that product's credits or documentation. The NOTICE file records the exact attribution text.
+Copyright 2026 Aliaksandr Sialitski. The license keeps authorship with the project and requires that redistributions preserve the copyright notice and the [NOTICE](NOTICE) file. If you embed `also` inside another product, credit the project in that product's credits or documentation. The NOTICE file records the exact attribution text.
 
 Third-party dependencies remain under their own licenses.
