@@ -211,11 +211,10 @@ Acceptance criteria:
 
 Релиз `v2.0.0`: https://github.com/seinsdieum/also/releases/tag/v2.0.0
 
-Проверено после публикации: `install.sh` скачал релиз, checksum совпал,
-`gh attestation verify` прошёл, `also version` показывает `2.0.0`, а
-`also update --check` отвечает, что версия актуальна. Замена бинарника
-проверена отдельным локальным release-сервером: `1.0.2 → v1.0.3`, checksum
-совпал, файл заменился и запустился.
+Проверено после публикации: `install.sh` скачал `v2.0.0`, checksum совпал,
+`gh attestation verify` прошёл, `also version` показывает `2.0.0`. Замена
+бинарника ранее проверена отдельным локальным release-сервером:
+`1.0.2 → v1.0.3`, checksum совпал, файл заменился и запустился.
 
 ## После 1.0
 
