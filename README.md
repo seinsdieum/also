@@ -64,9 +64,10 @@ also push
 
 `also init` writes `also.json` with the package name and source harness. From then on `also push` publishes that directory and needs no path, no name and no harness. A directory without `also.json` is refused, so you cannot publish an unrelated working directory by accident.
 
-Install a package into the current directory:
+Install the package into another directory:
 
 ```sh
+cd ../my-project
 also install code-review for opencode
 also install code-review for claude from personal
 ```
@@ -74,12 +75,15 @@ also install code-review for claude from personal
 Capture infrastructure that already exists in a harness layout:
 
 ```sh
+cd ../existing-project
+also init existing-rules for claude
 also adopt for claude
 ```
 
-Keep the package and the tool current:
+Keep the package and the tool current from the directory where it is installed:
 
 ```sh
+cd ../my-project
 also upgrade
 also update
 ```
@@ -90,7 +94,7 @@ also update
 
 ### Initialization
 
-`also init <name> [for <harness>]` writes `also.json` into the current directory. The file records the package name and the source harness, and it is never published inside the package. Every command that publishes or captures infrastructure uses that marker, so the working directory is the only argument you need:
+`also init <name> [for <harness>]` writes `also.json` into the current directory. The file records the package name and the source harness, and it is never published inside the package. Every command that publishes, captures or upgrades infrastructure uses that marker, so the working directory is the only argument you need:
 
 ```sh
 also init code-review for claude
