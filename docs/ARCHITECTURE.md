@@ -75,4 +75,3 @@ below a `global_base` directory inside the home directory.
 - [ADAPTERS.md](ADAPTERS.md)
 - [CONTRACTS.md](CONTRACTS.md)
 - [PACKAGE_FORMAT.md](PACKAGE_FORMAT.md)
-- [ROADMAP.md](ROADMAP.md)
