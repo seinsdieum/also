@@ -17,35 +17,24 @@ func testConfig() *also.Config {
 	}
 }
 
-func TestParsePkgRefNamespaceAndVersion(t *testing.T) {
+func TestParsePkgRef(t *testing.T) {
 	cfg := testConfig()
-	ref, err := parsePkgRef("personal@infra", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Namespace != "personal" || ref.Package != "infra" || ref.Version != "" {
-		t.Fatalf("unexpected ref: %+v", ref)
-	}
-	ref, err = parsePkgRef("personal@infra@v1", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Namespace != "personal" || ref.Package != "infra" || ref.Version != "v1" {
-		t.Fatalf("unexpected ref: %+v", ref)
-	}
-	ref, err = parsePkgRef("infra@v1", cfg)
+	ref, err := parsePkgRef("infra@v1", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ref.Namespace != "" || ref.Package != "infra" || ref.Version != "v1" {
 		t.Fatalf("unexpected ref: %+v", ref)
 	}
-	ref, err = parsePkgRef("infra@main", cfg)
+	ref, err = parsePkgRef("infra", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ref.Namespace != "infra" || ref.Package != "main" || ref.Version != "" {
-		t.Fatalf("unexpected namespace ref: %+v", ref)
+	if ref.Package != "infra" || ref.Version != "" {
+		t.Fatalf("unexpected ref: %+v", ref)
+	}
+	if _, err := parsePkgRef("personal@infra@v1", cfg); err == nil {
+		t.Fatal("three-part package references must be rejected")
 	}
 }
 
@@ -59,11 +48,13 @@ func TestParseInstallNaturalForms(t *testing.T) {
 		parts   []string
 	}{
 		{[]string{"awesome-design", "for", "opencode"}, "awesome-design", "", "opencode", nil},
-		{[]string{"review", "skill", "from", "personal@infra", "for", "opencode"}, "infra", "personal", "opencode", []string{"skills:review"}},
+		{[]string{"review", "skill", "from", "code-review", "for", "opencode"}, "code-review", "", "opencode", []string{"skills:review"}},
 		{[]string{"code-review", "from", "personal"}, "code-review", "personal", "", nil},
+		{[]string{"code-review", "for", "opencode", "from", "personal"}, "code-review", "personal", "opencode", nil},
 		{[]string{"skill", "from", "infra"}, "infra", "", "", []string{"skills"}},
 		{[]string{"hook", "guard", "from", "infra"}, "infra", "", "", []string{"hooks:guard"}},
 		{[]string{"mcp", "github", "from", "infra"}, "infra", "", "", []string{"mcp:github"}},
+		{[]string{"review", "skill", "from", "code-review", "from", "personal"}, "code-review", "personal", "", []string{"skills:review"}},
 	}
 	for _, tc := range cases {
 		got, err := parseInstallArgs(tc.args, cfg)
@@ -76,6 +67,13 @@ func TestParseInstallNaturalForms(t *testing.T) {
 		if strings.Join(got.Parts, ",") != strings.Join(tc.parts, ",") {
 			t.Fatalf("%v: parts %v, want %v", tc.args, got.Parts, tc.parts)
 		}
+	}
+}
+
+func TestInstallRejectsNamespaceInsidePackageToken(t *testing.T) {
+	_, err := parseInstallArgs([]string{"code-review", "from", "personal@infra"}, testConfig())
+	if err == nil || !strings.Contains(err.Error(), "unknown namespace") {
+		t.Fatalf("expected the old namespace@package syntax to be rejected, got: %v", err)
 	}
 }
 

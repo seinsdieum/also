@@ -17,21 +17,19 @@ func newInstallCmd() *cobra.Command {
 		setFlag  string
 		from     string
 		harness  string
-		scope    string
 		project  string
 		force    bool
 		offline  bool
 		noConfig bool
 		jsonOut  bool
 	)
-	c := newCmd("install [part kind] from <package> [for <harness>]", "Materialize a package or one part for a harness")
+	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
 is "also install <package> for <harness>" or
-"also install <part> <kind> from [namespace@]<package> [for <harness>]".
-By default the scope comes from config (project); use --scope global for
-user-wide installs. Instructions are installed as a managed block; skills,
-commands and agents as files; MCP and hooks are merged into native config with
-reversible bookkeeping.`
+"also install <part> <kind> from <package> [for <harness>] [from <namespace>]".
+Installs always target the current directory. Instructions are installed as a
+managed block; skills, commands and agents as files; MCP and hooks are merged
+into native config with reversible bookkeeping.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -48,11 +46,14 @@ reversible bookkeeping.`
 			}
 			requestedHarness = spec.Harness
 		}
-		harnessID, err := resolveHarnessWord(cfg, requestedHarness, spec.HarnessRequested)
-		if err != nil {
-			return err
+		if requestedHarness == "" && !spec.HarnessRequested {
+			if cwd, err := os.Getwd(); err == nil {
+				if _, in, err := also.FindInfra(cwd); err == nil && in.Harness != "" {
+					requestedHarness = in.Harness
+				}
+			}
 		}
-		scopeID, err := cfg.Scope(scope)
+		harnessID, err := resolveHarnessWord(cfg, requestedHarness, spec.HarnessRequested)
 		if err != nil {
 			return err
 		}
@@ -67,15 +68,18 @@ reversible bookkeeping.`
 			installSet = spec.Ref.Namespace
 		}
 		proj := project
-		if scopeID == "project" && proj == "" {
+		if proj == "" {
 			proj, err = os.Getwd()
 			if err != nil {
 				return err
 			}
+			if root, _, ferr := also.FindInfra(proj); ferr == nil {
+				proj = root
+			}
 		}
 		return withLock(func() error {
 			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
-				Package: spec.Ref.spec(), Harness: harnessID, Scope: scopeID, Project: proj,
+				Package: spec.Ref.spec(), Harness: harnessID, Scope: "project", Project: proj,
 				Parts: spec.Parts, Force: force, WithConfig: !noConfig, Offline: offline,
 			}, installSet, from)
 			if err != nil {
@@ -91,8 +95,7 @@ reversible bookkeeping.`
 	addNamespaceFlag(c, &setFlag)
 	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().StringVarP(&harness, "harness", "h", "", "target harness (claude, opencode, codex, qwen, ...)")
-	c.Flags().StringVar(&scope, "scope", "", "global or project (default from config)")
-	c.Flags().StringVarP(&project, "project", "p", "", "project directory for --scope project (default: cwd)")
+	c.Flags().StringVarP(&project, "dir", "p", "", "directory to install into (default: current directory)")
 	c.Flags().BoolVar(&force, "force", false, "overwrite conflicting files and modified content (backups are kept)")
 	c.Flags().BoolVar(&offline, "offline", false, "use the local clone without fetching")
 	c.Flags().BoolVar(&noConfig, "no-config", false, "do not install MCP servers or hooks")
@@ -112,8 +115,7 @@ type installOutput struct {
 	Version       string         `json:"version"`
 	Label         string         `json:"label,omitempty"`
 	Harness       string         `json:"harness"`
-	Scope         string         `json:"scope"`
-	Project       string         `json:"project,omitempty"`
+	Project       string         `json:"dir,omitempty"`
 	Root          string         `json:"root"`
 	Namespace     string         `json:"namespace"`
 	Parts         []string       `json:"parts,omitempty"`
@@ -128,7 +130,7 @@ func planOutput(plan *also.Plan) installOutput {
 	in := plan.Install
 	out := installOutput{
 		Package: in.Package, Version: in.Version, Label: in.Label,
-		Harness: in.Harness, Scope: in.Scope, Project: in.Project, Root: in.Root,
+		Harness: in.Harness, Project: in.Project, Root: in.Root,
 		Namespace: in.Set, Parts: in.Parts, Files: len(plan.NewFiles),
 		Warnings: unique(plan.Warnings), Skipped: unique(plan.Skipped),
 	}
@@ -164,7 +166,7 @@ func printPlan(plan *also.Plan) {
 	if plan.Install.Label != "" {
 		fmt.Printf(" (%s)", plan.Install.Label)
 	}
-	fmt.Printf(" -> %s (%s)\n", plan.Install.Harness, plan.Install.Scope)
+	fmt.Printf(" -> %s\n", plan.Install.Harness)
 	fmt.Printf("root:  %s\n", plan.Install.Root)
 	if len(plan.Install.Parts) > 0 {
 		fmt.Printf("parts: %s\n", strings.Join(plan.Install.Parts, ", "))
@@ -196,9 +198,8 @@ func newUpgradeCmd() *cobra.Command {
 		force   bool
 		jsonOut bool
 	)
-	c := newCmd("upgrade [package...]", "Upgrade installed packages to their latest version")
-	c.Aliases = []string{"update"}
-	c.Long = "Upgrades packages for the harness each one was installed for. Content is\ncontent-addressed: 'up to date' means the installed digest is still the newest."
+	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
+	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -208,8 +209,21 @@ func newUpgradeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		var infra *also.Infra
+		if root, in, ferr := also.FindInfra(cwd); ferr == nil {
+			cwd = root
+			infra = in
+		}
+		pkgs := args
+		if len(pkgs) == 0 && infra != nil && infra.Name != "" {
+			pkgs = []string{infra.Name}
+		}
 		return withLock(func() error {
-			results, err := also.UpgradeInstalls(cfg, st, args, force, check)
+			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check)
 			if err != nil {
 				return err
 			}
@@ -219,7 +233,7 @@ func newUpgradeCmd() *cobra.Command {
 				for _, r := range results {
 					item := upgradeOutput{
 						Package: r.Install.Package, Harness: r.Install.Harness,
-						Scope: r.Install.Scope, Old: r.Old, New: r.New, Status: r.Status,
+						Old: r.Old, New: r.New, Status: r.Status,
 					}
 					if r.Err != nil {
 						item.Status = "error"
@@ -237,14 +251,14 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 			w := newTabWriter()
-			fmt.Fprintf(w, "PACKAGE\tHARNESS\tSCOPE\tOLD\tNEW\tSTATUS\n")
+			fmt.Fprintf(w, "PACKAGE\tHARNESS\tOLD\tNEW\tSTATUS\n")
 			for _, r := range results {
 				status := r.Status
 				if r.Err != nil {
 					status = "error: " + r.Err.Error()
 					failed++
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Install.Package, r.Install.Harness, r.Install.Scope, short(r.Old), short(r.New), status)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Install.Package, r.Install.Harness, short(r.Old), short(r.New), status)
 			}
 			if err := w.Flush(); err != nil {
 				return err
@@ -264,7 +278,6 @@ func newUpgradeCmd() *cobra.Command {
 type upgradeOutput struct {
 	Package string `json:"package"`
 	Harness string `json:"harness"`
-	Scope   string `json:"scope"`
 	Old     string `json:"old"`
 	New     string `json:"new"`
 	Status  string `json:"status"`
@@ -278,8 +291,8 @@ func newReshapeCmd() *cobra.Command {
 	)
 	c := newCmd("reshape <harness> [package...]", "Re-materialize installed packages for another harness")
 	c.Long = `Transforms installed packages into the layout of another harness, keeping the
-installed version and scope. Files are transactional: on failure the previous
-harness layout is restored.`
+installed version. Files are transactional: on failure the previous harness
+layout is restored.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: also reshape <harness> [package...]")
@@ -307,7 +320,7 @@ harness layout is restored.`
 				for _, r := range results {
 					item := reshapeOutput{
 						Package: r.Install.Package, From: r.Install.Harness,
-						To: r.To, Scope: r.Install.Scope, Status: r.Status,
+						To: r.To, Status: r.Status,
 					}
 					if r.Err != nil {
 						item.Status = "error"
@@ -325,14 +338,14 @@ harness layout is restored.`
 				return nil
 			}
 			w := newTabWriter()
-			fmt.Fprintf(w, "PACKAGE\tFROM\tTO\tSCOPE\tSTATUS\n")
+			fmt.Fprintf(w, "PACKAGE\tFROM\tTO\tSTATUS\n")
 			for _, r := range results {
 				status := r.Status
 				if r.Err != nil {
 					status = "error: " + r.Err.Error()
 					failed++
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Install.Package, r.Install.Harness, r.To, r.Install.Scope, status)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Install.Package, r.Install.Harness, r.To, status)
 			}
 			if err := w.Flush(); err != nil {
 				return err
@@ -352,7 +365,6 @@ type reshapeOutput struct {
 	Package string `json:"package"`
 	From    string `json:"from"`
 	To      string `json:"to"`
-	Scope   string `json:"scope"`
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
 }
@@ -360,7 +372,6 @@ type reshapeOutput struct {
 func newTreeCmd() *cobra.Command {
 	var (
 		jsonOut bool
-		scope   string
 		harness string
 	)
 	c := newCmd("tree", "Show only the installed AI infrastructure")
@@ -382,25 +393,17 @@ func newTreeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		report := also.BuildTree(st)
 		if harness != "" {
-			if _, ok := also.ResolveHarness(harness); !ok {
+			h, ok := also.ResolveHarness(harness)
+			if !ok {
 				return fmt.Errorf("unknown harness %q; available: %v", harness, also.HarnessIDs())
 			}
-		}
-		report := also.BuildTree(st)
-		if scope != "" || harness != "" {
 			var filtered []also.TreeInstall
 			for _, t := range report {
-				if scope != "" && t.Install.Scope != scope {
-					continue
+				if t.Install.Harness == h.ID {
+					filtered = append(filtered, t)
 				}
-				if harness != "" {
-					h, ok := also.ResolveHarness(harness)
-					if !ok || t.Install.Harness != h.ID {
-						continue
-					}
-				}
-				filtered = append(filtered, t)
 			}
 			report = filtered
 		}
@@ -413,9 +416,6 @@ func newTreeCmd() *cobra.Command {
 		}
 		sort.Slice(report, func(i, j int) bool {
 			a, b := report[i].Install, report[j].Install
-			if a.Scope != b.Scope {
-				return a.Scope < b.Scope
-			}
 			if a.Harness != b.Harness {
 				return a.Harness < b.Harness
 			}
@@ -427,9 +427,9 @@ func newTreeCmd() *cobra.Command {
 		lastGroup := ""
 		for _, t := range report {
 			in := t.Install
-			group := in.Scope + " " + in.Harness + " " + in.Root
+			group := in.Harness + " " + in.Root
 			if group != lastGroup {
-				fmt.Printf("\n%s  [%s, %s]\n", orDash(in.Root), in.Scope, in.Harness)
+				fmt.Printf("\n%s  [%s]\n", orDash(in.Root), in.Harness)
 				lastGroup = group
 			}
 			fmt.Printf("  %s/%s@%s", in.Set, in.Package, short(in.Version))
@@ -463,7 +463,6 @@ func newTreeCmd() *cobra.Command {
 		return nil
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
-	c.Flags().StringVar(&scope, "scope", "", "filter by scope")
 	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
 	return c
 }
@@ -472,7 +471,6 @@ func newUninstallCmd() *cobra.Command {
 	var (
 		force   bool
 		all     bool
-		scope   string
 		harness string
 		project string
 		jsonOut bool
@@ -496,9 +494,23 @@ func newUninstallCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		proj := project
+		if proj == "" {
+			proj, err = os.Getwd()
+			if err != nil {
+				return err
+			}
+			if root, _, ferr := also.FindInfra(proj); ferr == nil {
+				proj = root
+			}
+		}
+		absProj, err := also.AbsPath(proj)
+		if err != nil {
+			return err
+		}
 		var matches []*also.Install
 		for _, in := range st.InstallsOf(args[0]) {
-			if scope != "" && in.Scope != scope {
+			if in.Project != absProj {
 				continue
 			}
 			if harness != "" {
@@ -507,26 +519,17 @@ func newUninstallCmd() *cobra.Command {
 					continue
 				}
 			}
-			if project != "" {
-				p, err := also.AbsPath(project)
-				if err != nil {
-					return err
-				}
-				if in.Project != p {
-					continue
-				}
-			}
 			matches = append(matches, in)
 		}
 		if len(matches) == 0 {
-			return fmt.Errorf("package %q is not installed with those filters", args[0])
+			return fmt.Errorf("package %q is not installed in %s", args[0], absProj)
 		}
 		if len(matches) > 1 && !all {
 			var lines []string
 			for _, in := range matches {
-				lines = append(lines, fmt.Sprintf("  %s %s (%s)", in.Harness, in.Scope, in.Root))
+				lines = append(lines, fmt.Sprintf("  %s (%s)", in.Harness, in.Root))
 			}
-			return fmt.Errorf("package %q is installed %d times; add --all or filter with --scope/--harness:\n%s", args[0], len(matches), strings.Join(lines, "\n"))
+			return fmt.Errorf("package %q is installed %d times; add --all or filter with --harness:\n%s", args[0], len(matches), strings.Join(lines, "\n"))
 		}
 		ids := make([]string, 0, len(matches))
 		for _, in := range matches {
@@ -538,7 +541,6 @@ func newUninstallCmd() *cobra.Command {
 				Package   string   `json:"package"`
 				Version   string   `json:"version"`
 				Harness   string   `json:"harness"`
-				Scope     string   `json:"scope"`
 				Warnings  []string `json:"warnings,omitempty"`
 			}
 			var out []uninstallOutput
@@ -553,11 +555,11 @@ func newUninstallCmd() *cobra.Command {
 				}
 				item := uninstallOutput{
 					Namespace: in.Set, Package: in.Package, Version: in.Version,
-					Harness: in.Harness, Scope: in.Scope, Warnings: unique(warnings),
+					Harness: in.Harness, Warnings: unique(warnings),
 				}
 				out = append(out, item)
 				if !jsonOut {
-					fmt.Printf("uninstalled %s/%s@%s from %s (%s)\n", in.Set, in.Package, short(in.Version), in.Harness, in.Scope)
+					fmt.Printf("uninstalled %s/%s@%s from %s\n", in.Set, in.Package, short(in.Version), in.Harness)
 					printWarnings("warnings", warnings)
 				}
 			}
@@ -569,9 +571,8 @@ func newUninstallCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&force, "force", false, "remove locally modified files too")
 	c.Flags().BoolVar(&all, "all", false, "remove every matching installation")
-	c.Flags().StringVar(&scope, "scope", "", "filter by scope")
 	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
-	c.Flags().StringVarP(&project, "project", "p", "", "filter by project directory")
+	c.Flags().StringVarP(&project, "dir", "p", "", "directory to uninstall from (default: current directory)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
@@ -590,17 +591,18 @@ func newAdoptCmd() *cobra.Command {
 		allowLarge  bool
 		jsonOut     bool
 	)
-	c := newCmd("adopt <project-dir>", "Capture a live project's infrastructure into a bundle and push it")
-	c.Long = `Extracts project-scoped instructions, skills, commands, agents, plugins, hook
-scripts and native config for one harness and pushes a new package version to
-the remote namespace. The bundle is temporary unless --into is given.`
+	c := newCmd("adopt [directory] [for <harness>]", "Capture the initialized infrastructure into a package")
+	c.Long = `Extracts instructions, skills, commands, agents, plugins, hook scripts and native
+config for one harness and pushes a new package version to the remote namespace.
+The package name comes from also.json, so run "also init" first. The bundle is
+temporary unless --into is given.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		args, forHarness, err := parseTrailingFor(args)
 		if err != nil {
 			return err
 		}
-		if len(args) != 1 {
-			return fmt.Errorf("usage: also adopt <project-dir> [for <harness>]")
+		if len(args) > 1 {
+			return fmt.Errorf("usage: also adopt [directory] [for <harness>]")
 		}
 		if forHarness != "" {
 			if harness != "" && !strings.EqualFold(harness, forHarness) {
@@ -608,13 +610,23 @@ the remote namespace. The bundle is temporary unless --into is given.`
 			}
 			harness = forHarness
 		}
+		target := "."
+		if len(args) == 1 {
+			target = args[0]
+		}
+		proj, infra, err := also.FindInfra(target)
+		if err != nil {
+			return err
+		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
 		}
-		proj, err := also.AbsPath(args[0])
-		if err != nil {
-			return err
+		if name == "" {
+			name = infra.Name
+		}
+		if harness == "" {
+			harness = infra.Harness
 		}
 		harnessID := ""
 		if harness != "" {
@@ -647,9 +659,6 @@ the remote namespace. The bundle is temporary unless --into is given.`
 				return err
 			}
 			defer os.RemoveAll(dest)
-		}
-		if name == "" {
-			name = filepath.Base(proj)
 		}
 		if !also.ValidName(name) {
 			return fmt.Errorf("invalid package name %q; pass --name", name)
@@ -708,8 +717,8 @@ the remote namespace. The bundle is temporary unless --into is given.`
 			return nil
 		})
 	}
-	c.Flags().StringVar(&name, "name", "", "package name (default: project directory name)")
-	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness; auto-detected by default")
+	c.Flags().StringVar(&name, "name", "", "package name (default: from also.json)")
+	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness (default: from also.json)")
 	c.Flags().StringVar(&into, "into", "", "keep the extracted bundle in this directory (debugging)")
 	addNamespaceFlag(c, &setFlag)
 	c.Flags().BoolVar(&noPush, "no-push", false, "only write the local bundle")

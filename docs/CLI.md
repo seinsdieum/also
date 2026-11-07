@@ -51,33 +51,53 @@ A namespace is a name plus a git URL. There is no user-managed local set; the
 clone under `~/.also/cache/` is an implementation detail. `--namespace` is the
 documented flag; `--set` and `also set` stay as hidden aliases for older scripts.
 
+## Initialization
+
+```sh
+cd my-infrastructure
+also init <name> [for <harness>] [--json]
+```
+
+`also init` writes `also.json` into the current directory. The marker records
+the package name and source harness, and it is excluded from published
+packages. The harness comes from `for <harness>`, then from the layout present
+in the directory, then from the configured default.
+
+`also push` and `also adopt` require this marker. A directory without it is
+refused, so an unrelated working directory cannot be published by accident.
+
 ## Packages
 
 ```sh
 also list [--refresh] [--versions] [--json]
 also show <package>[@version] [from <namespace>] [--json]
-also push <bundle-dir> [for <harness>] [--name N] [--label v1] [--json]
-also adopt <project-dir> [for <harness>] [--name N] [--into <dir>] [--json]
+also push [directory] [--json]
+also adopt [directory] [for <harness>] [--name N] [--into <dir>] [--json]
 ```
 
-`adopt` publishes straight to the namespace. Without `--into` the extracted
-bundle is temporary. `--no-push` keeps the bundle and therefore requires
-`--into`.
+`also push` publishes the nearest initialized directory. With no argument it
+starts from the current directory, reads the name and harness from `also.json`,
+and needs no path. `adopt` extracts the initialized directory's harness-native
+files into a portable bundle and publishes it straight to the namespace.
+Without `--into` the extracted bundle is temporary. `--no-push` keeps the
+bundle and therefore requires `--into`.
 
 ## Installs
 
 ```sh
-also install <package> for <harness> [--json]
-also install <part> <kind> from [namespace@]<package> [for <harness>]
+also install <package> [for <harness>] [from <namespace>] [--json]
+also install <part> <kind> from <package> [for <harness>] [from <namespace>]
 also upgrade [package...] [--check] [--json]
 also reshape <harness> [package...] [--json]
 also tree [for <harness>] [--json]
 also uninstall <package> [for <harness>] [--all] [--json]
 ```
 
-Project scope is the default. `--scope global` writes to the harness's
-user-wide config. One package can be installed into several harnesses in the
-same project.
+Installs always target the current directory. One package can be installed
+into several harnesses in the same directory. `also upgrade` upgrades the
+packages installed in the current directory, not packages elsewhere.
+`also uninstall` defaults to the current directory; use `--dir <dir>` to
+choose another one.
 
 ## Safety and diagnosis
 
@@ -113,12 +133,13 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 
 | Command | Shape |
 |---|---|
-| `install` | package, version, harness, scope, root, namespace, files, config changes |
+| `init` | name, harness, file |
+| `install` | package, version, harness, root, namespace, files, config changes |
 | `push` / `adopt` | package, version, digest, harness, files, warnings, namespace |
-| `upgrade` | array of package, harness, scope, old, new, status, error |
-| `reshape` | array of package, from, to, scope, status, error |
-| `uninstall` | array of namespace, package, version, harness, scope, warnings |
-| `setup` | harness, scope, default_namespace, namespaces, installed |
+| `upgrade` | array of package, harness, old, new, status, error |
+| `reshape` | array of package, from, to, status, error |
+| `uninstall` | array of namespace, package, version, harness, warnings |
+| `setup` | harness, default_namespace, namespaces, installed |
 | `doctor` / `verify` | array of name, status (`ok`/`warn`/`fail`), detail |
 | `update` | current, latest, updated, manual_path, asset |
 | `version` | version, commit, built |
@@ -133,7 +154,6 @@ also config
 also config get default_namespace
 also config set default_namespace personal
 also config set default_harness opencode
-also config set default_scope project
 ```
 
 `ALSO_HOME` overrides `~/.also`. `ALSO_ADAPTERS` overrides the community

@@ -119,6 +119,29 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 	if len(installs) == 0 {
 		return nil, fmt.Errorf("no matching installs")
 	}
+	return upgradeInstalls(cfg, st, installs, force, check)
+}
+
+// UpgradeInstallsInProject upgrades only the packages installed in one
+// directory, which is what the "also upgrade" command targets.
+func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check bool) ([]UpgradeResult, error) {
+	abs, err := AbsPath(project)
+	if err != nil {
+		return nil, err
+	}
+	var installs []Install
+	for _, in := range filterInstalls(st.InstallsOf(""), pkgs) {
+		if filepath.Clean(in.Project) == filepath.Clean(abs) {
+			installs = append(installs, in)
+		}
+	}
+	if len(installs) == 0 {
+		return nil, fmt.Errorf("no packages installed in %s; run: also install <package> for <harness>", abs)
+	}
+	return upgradeInstalls(cfg, st, installs, force, check)
+}
+
+func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bool) ([]UpgradeResult, error) {
 	repos := map[string]*SetRepo{}
 	var out []UpgradeResult
 	for _, in := range installs {

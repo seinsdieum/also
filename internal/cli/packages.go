@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,7 +19,7 @@ func newListCmd() *cobra.Command {
 		versions bool
 		jsonOut  bool
 	)
-	c := newCmd("list [packages|harnesses]", "List packages in a set or installed harnesses")
+	c := newCmd("list [packages|harnesses]", "List packages in a namespace or installed harnesses")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 && (args[0] == "harnesses" || args[0] == "harness") {
 			return printHarnesses()
@@ -90,7 +89,7 @@ func newListCmd() *cobra.Command {
 					inst := ""
 					for _, in := range st.Installs {
 						if in.Set == name && in.Package == r.Name && in.Version == v.Version {
-							inst = in.Harness + " (" + in.Scope + ")"
+							inst = in.Harness
 							if in.Version == r.Latest.Version {
 								inst += " *"
 							}
@@ -111,7 +110,7 @@ func newListCmd() *cobra.Command {
 					if in.Version == r.Latest.Version {
 						mark = " *"
 					}
-					inst = in.Harness + " (" + in.Scope + ")" + mark
+					inst = in.Harness + mark
 					break
 				}
 			}
@@ -148,7 +147,15 @@ func newShowCmd() *cobra.Command {
 			return err
 		}
 		if len(args) == 3 && strings.EqualFold(args[1], "from") {
-			args = []string{args[2] + "@" + args[0]}
+			ns, err := namespaceName(args[2], cfg)
+			if err != nil {
+				return err
+			}
+			if setFlag != "" && setFlag != ns {
+				return fmt.Errorf("namespace %q conflicts with --namespace %q", ns, setFlag)
+			}
+			setFlag = ns
+			args = args[:1]
 		}
 		if len(args) != 1 {
 			return fmt.Errorf("usage: also show <package>[@version] [from <namespace>]")
@@ -156,12 +163,6 @@ func newShowCmd() *cobra.Command {
 		ref, err := parsePkgRef(args[0], cfg)
 		if err != nil {
 			return err
-		}
-		if ref.Namespace != "" {
-			if setFlag != "" && setFlag != ref.Namespace {
-				return fmt.Errorf("namespace %q conflicts with --namespace %q", ref.Namespace, setFlag)
-			}
-			setFlag = ref.Namespace
 		}
 		pkgName, spec := ref.Package, ref.Version
 		name, sc, err := requireSet(cmd, cfg, setFlag, from)
@@ -337,17 +338,18 @@ func newPushCmd() *cobra.Command {
 		allowLarge  bool
 		jsonOut     bool
 	)
-	c := newCmd("push <bundle-dir>", "Encode a bundle and push a new package version")
-	c.Long = `Encodes a hand-written harness bundle into the universal also package format,
-commits it to the configured namespace, and pushes it. Re-running push with
-unchanged content is a no-op.`
+	c := newCmd("push [directory]", "Publish the initialized infrastructure in this directory")
+	c.Long = `Publishes the directory marked by also.json: its name and source harness come
+from the marker, so no path or harness is needed. Run "also init" first.
+A directory argument is optional; the nearest initialized parent is used.
+Re-running push with unchanged content is a no-op.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		args, forHarness, err := parseTrailingFor(args)
 		if err != nil {
 			return err
 		}
-		if len(args) != 1 {
-			return fmt.Errorf("usage: also push <bundle-dir> [for <harness>]")
+		if len(args) > 1 {
+			return fmt.Errorf("usage: also push [directory]")
 		}
 		if forHarness != "" {
 			if harness != "" && !strings.EqualFold(harness, forHarness) {
@@ -355,12 +357,13 @@ unchanged content is a no-op.`
 			}
 			harness = forHarness
 		}
-		dir, err := also.AbsPath(args[0])
+		target := "."
+		if len(args) == 1 {
+			target = args[0]
+		}
+		dir, infra, err := also.FindInfra(target)
 		if err != nil {
 			return err
-		}
-		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-			return fmt.Errorf("bundle directory does not exist: %s", dir)
 		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -371,10 +374,13 @@ unchanged content is a no-op.`
 			return err
 		}
 		if name == "" {
-			name = filepath.Base(dir)
+			name = infra.Name
 		}
 		if !also.ValidName(name) {
 			return fmt.Errorf("invalid package name %q; pass --name with lowercase letters, digits, '.', '_' or '-'", name)
+		}
+		if harness == "" {
+			harness = infra.Harness
 		}
 		harnessID := ""
 		if harness != "" {
@@ -427,9 +433,9 @@ unchanged content is a no-op.`
 			return nil
 		})
 	}
-	c.Flags().StringVar(&name, "name", "", "package name (default: bundle directory name)")
+	c.Flags().StringVar(&name, "name", "", "package name (default: from also.json)")
 	c.Flags().StringVar(&desc, "description", "", "package description")
-	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness (claude, opencode, codex, qwen); auto-detected by default")
+	c.Flags().StringVarP(&harness, "harness", "h", "", "source harness (default: from also.json)")
 	c.Flags().StringVar(&label, "label", "", "human version label, e.g. v1.2")
 	c.Flags().StringVarP(&message, "message", "m", "", "git commit message")
 	addNamespaceFlag(c, &setFlag)

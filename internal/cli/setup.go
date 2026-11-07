@@ -61,7 +61,6 @@ func newSetupCmd() *cobra.Command {
 	var (
 		yes        bool
 		harness    string
-		scope      string
 		namespaces []string
 		defaultNS  string
 		starter    string
@@ -70,8 +69,8 @@ func newSetupCmd() *cobra.Command {
 	)
 	c := newCmd("setup", "Connect harnesses and namespaces for first use")
 	c.Long = `Interactive first-run setup: detect installed harness CLIs, choose a default
-harness and scope, connect one or more remote namespaces, and optionally install
-a starter package.
+harness, connect one or more remote namespaces, and optionally install a
+starter package.
 
 For CI or scripts use --yes plus flags:
   also setup --yes --harness opencode \
@@ -100,10 +99,6 @@ For CI or scripts use --yes plus flags:
 		}
 
 		harnessID, err := setupHarness(cfg, harness, p)
-		if err != nil {
-			return err
-		}
-		scopeID, err := setupScope(cfg, scope, p)
 		if err != nil {
 			return err
 		}
@@ -158,7 +153,6 @@ For CI or scripts use --yes plus flags:
 			}
 			cfg.DefaultNamespace = defaultNS
 			cfg.DefaultHarness = harnessID
-			cfg.DefaultScope = scopeID
 			return also.SaveConfig(cfg)
 		}); err != nil {
 			return err
@@ -166,19 +160,17 @@ For CI or scripts use --yes plus flags:
 
 		type setupOutput struct {
 			Harness          string            `json:"harness"`
-			Scope            string            `json:"scope"`
 			DefaultNamespace string            `json:"default_namespace"`
 			Namespaces       map[string]string `json:"namespaces"`
 			Installed        string            `json:"installed,omitempty"`
 		}
-		out := setupOutput{Harness: harnessID, Scope: scopeID, DefaultNamespace: defaultNS, Namespaces: map[string]string{}}
+		out := setupOutput{Harness: harnessID, DefaultNamespace: defaultNS, Namespaces: map[string]string{}}
 		for _, name := range cfg.NamespaceNames() {
 			out.Namespaces[name] = cfg.Namespaces[name].Remote
 		}
 		if !jsonOut {
 			rows := [][2]string{
 				{"Harness", harnessID},
-				{"Scope", scopeID},
 				{"Namespace", defaultNS},
 			}
 			for _, name := range cfg.NamespaceNames() {
@@ -190,14 +182,17 @@ For CI or scripts use --yes plus flags:
 		}
 		if starter != "" {
 			proj := project
-			if scopeID == "project" && proj == "" {
+			if proj == "" {
 				proj, err = os.Getwd()
 				if err != nil {
 					return err
 				}
+				if root, _, ferr := also.FindInfra(proj); ferr == nil {
+					proj = root
+				}
 			}
 			if _, _, err := also.InstallPackage(cfg, also.InstallRequest{
-				Package: starter, Harness: harnessID, Scope: scopeID, Project: proj, WithConfig: true,
+				Package: starter, Harness: harnessID, Scope: "project", Project: proj, WithConfig: true,
 			}, defaultNS, ""); err != nil {
 				return err
 			}
@@ -214,11 +209,10 @@ For CI or scripts use --yes plus flags:
 	}
 	c.Flags().BoolVar(&yes, "yes", false, "non-interactive; use flags for every choice")
 	c.Flags().StringVar(&harness, "harness", "", "default harness (claude, opencode, codex, qwen, ...)")
-	c.Flags().StringVar(&scope, "scope", "", "default scope: project or global")
 	c.Flags().StringArrayVar(&namespaces, "namespace", nil, "namespace to connect as <name>=<git-url> (repeatable)")
 	c.Flags().StringVar(&defaultNS, "default-namespace", "", "active namespace")
 	c.Flags().StringVar(&starter, "install", "", "package to install after setup")
-	c.Flags().StringVarP(&project, "project", "p", "", "project directory for a project-scope starter install")
+	c.Flags().StringVarP(&project, "dir", "p", "", "directory for the starter install (default: current directory)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
@@ -257,30 +251,6 @@ func setupHarness(cfg *also.Config, flag string, p *prompter) (string, error) {
 		return "", fmt.Errorf("unknown harness %q; available: %v", got, also.HarnessIDs())
 	}
 	return h.ID, nil
-}
-
-func setupScope(cfg *also.Config, flag string, p *prompter) (string, error) {
-	if flag != "" {
-		if flag != "project" && flag != "global" {
-			return "", fmt.Errorf("--scope must be project or global")
-		}
-		return flag, nil
-	}
-	def := cfg.DefaultScope
-	if def == "" {
-		def = "project"
-	}
-	if p == nil {
-		return def, nil
-	}
-	got, err := p.ask("Default scope (project, global)", def)
-	if err != nil {
-		return "", err
-	}
-	if got != "project" && got != "global" {
-		return "", fmt.Errorf("--scope must be project or global")
-	}
-	return got, nil
 }
 
 func setupNamespaces(cfg *also.Config, flags []string, p *prompter) ([]namespacePair, error) {

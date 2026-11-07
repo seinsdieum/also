@@ -63,6 +63,9 @@ func TestJSONCommands(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(bundle, "also.json"), []byte(`{"schema":"also.infra/v1","name":"demo","harness":"claude"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +150,9 @@ func TestUpgradeAndReshapeJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(bundle, "also.json"), []byte(`{"schema":"also.infra/v1","name":"demo","harness":"claude"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +198,57 @@ func TestUpgradeAndReshapeJSON(t *testing.T) {
 	rs := decodeJSON(t, out).([]any)
 	if len(rs) != 1 || rs[0].(map[string]any)["to"] != "opencode" {
 		t.Fatalf("unexpected reshape JSON: %s", out)
+	}
+}
+
+func TestUpgradeTargetsInitializedPackage(t *testing.T) {
+	tmp := setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one", "two"} {
+		bundle := filepath.Join(tmp, name)
+		if err := os.MkdirAll(bundle, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := `{"schema":"also.infra/v1","name":"` + name + `","harness":"claude"}`
+		if err := os.WriteFile(filepath.Join(bundle, "also.json"), []byte(marker), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := runCLI("push", bundle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	for _, name := range []string{"one", "two"} {
+		if err := runCLI("install", name, "for", "claude"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runCLI("init", "one", "for", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLICapture(t, "upgrade", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgrades := decodeJSON(t, out).([]any)
+	if len(upgrades) != 1 || upgrades[0].(map[string]any)["package"] != "one" {
+		t.Fatalf("upgrade did not target only the initialized package: %s", out)
 	}
 }

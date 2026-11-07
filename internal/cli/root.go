@@ -40,7 +40,7 @@ func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "also",
 		Short:         "Portable, versioned AI infrastructure bundles",
-		Long:          "also encodes harness-specific AI infrastructure (instructions, skills, commands, agents, hooks, MCP) into versioned packages in a git repository, and materializes them for any supported harness.",
+		Long:          "also encodes AI infrastructure (instructions, skills, commands, agents, hooks and Model Context Protocol servers) into versioned packages in a git repository, and materializes them for any supported harness.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -48,6 +48,7 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(
 		newVersionCmd(),
 		newSetupCmd(),
+		newInitCmd(),
 		newUpdateCmd(),
 		newUseCmd(),
 		newConnectCmd(),
@@ -345,8 +346,7 @@ func newConfigCmd() *cobra.Command {
 			fmt.Printf("config: %s\n", also.ConfigPath())
 			fmt.Printf("state:  %s\n", also.StatePath())
 			fmt.Printf("default_namespace: %s\n", orDash(cfg.DefaultNamespace))
-			fmt.Printf("default_harness: %s\n", orDash(cfg.DefaultHarness))
-			fmt.Printf("default_scope:   %s\n", cfg.DefaultScope)
+			fmt.Printf("default_harness:   %s\n", orDash(cfg.DefaultHarness))
 			return nil
 		}
 		switch args[0] {
@@ -359,8 +359,6 @@ func newConfigCmd() *cobra.Command {
 				fmt.Println(cfg.DefaultNamespace)
 			case "default_harness":
 				fmt.Println(cfg.DefaultHarness)
-			case "default_scope":
-				fmt.Println(cfg.DefaultScope)
 			default:
 				return fmt.Errorf("unknown key %q", args[1])
 			}
@@ -384,11 +382,6 @@ func newConfigCmd() *cobra.Command {
 					return fmt.Errorf("unknown harness %q; available: %v", val, also.HarnessIDs())
 				}
 				cfg.DefaultHarness = id.ID
-			case "default_scope":
-				if val != "global" && val != "project" {
-					return fmt.Errorf("default_scope must be global or project")
-				}
-				cfg.DefaultScope = val
 			default:
 				return fmt.Errorf("unknown key %q", key)
 			}

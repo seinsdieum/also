@@ -9,7 +9,7 @@ import (
 
 // This file holds the natural-language grammar used by the CLI. Flags remain
 // available for scripts, but every primary command accepts a short English
-// phrase: "install skill review from personal@infra for opencode".
+// phrase: "install review skill from code-review from personal for opencode".
 
 type pkgRef struct {
 	Namespace string
@@ -24,17 +24,10 @@ func (r pkgRef) spec() string {
 	return r.Package + "@" + r.Version
 }
 
-func (r pkgRef) String() string {
-	if r.Namespace == "" {
-		return r.spec()
-	}
-	return r.Namespace + "@" + r.spec()
-}
-
-// parsePkgRef accepts package, package@version, namespace@package and
-// namespace@package@version. A two-part token is a namespace only when the
-// left side names a configured namespace.
-func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
+// parsePkgRef accepts package and package@version. The namespace is chosen
+// separately with "from <namespace>", so a package reference never hides a
+// namespace inside an @ token.
+func parsePkgRef(tok string, _ *also.Config) (pkgRef, error) {
 	tok = strings.TrimSpace(tok)
 	if tok == "" {
 		return pkgRef{}, fmt.Errorf("package name is empty")
@@ -45,40 +38,14 @@ func parsePkgRef(tok string, cfg *also.Config) (pkgRef, error) {
 	case 1:
 		ref.Package = parts[0]
 	case 2:
-		if cfg != nil {
-			if _, ok := cfg.Namespaces[parts[0]]; ok && !looksLikeVersion(parts[1]) {
-				ref.Namespace, ref.Package = parts[0], parts[1]
-				break
-			}
-		}
 		ref.Package, ref.Version = parts[0], parts[1]
-	case 3:
-		ref.Namespace, ref.Package, ref.Version = parts[0], parts[1], parts[2]
 	default:
-		return pkgRef{}, fmt.Errorf("invalid package reference %q; use [namespace@]package[@version]", tok)
+		return pkgRef{}, fmt.Errorf("invalid package reference %q; use package[@version] and choose a namespace with \"from <namespace>\"", tok)
 	}
 	if _, _, err := also.ParsePkgSpec(ref.spec()); err != nil {
 		return pkgRef{}, err
 	}
-	if ref.Namespace != "" && !also.ValidName(ref.Namespace) {
-		return pkgRef{}, fmt.Errorf("invalid namespace %q", ref.Namespace)
-	}
 	return ref, nil
-}
-
-func looksLikeVersion(s string) bool {
-	if len(s) == 16 {
-		for _, r := range s {
-			if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
-				return false
-			}
-		}
-		return true
-	}
-	if len(s) > 1 && (s[0] == 'v' || s[0] == 'V') && s[1] >= '0' && s[1] <= '9' {
-		return true
-	}
-	return s != "" && s[0] >= '0' && s[0] <= '9'
 }
 
 type installSpec struct {
@@ -139,29 +106,70 @@ func parseInstallArgs(args []string, cfg *also.Config) (installSpec, error) {
 			return out, clarifyHarnessFor(cfg)
 		}
 		out.Harness = args[i+1]
-		if i+2 < len(args) {
-			return out, fmt.Errorf("unexpected %q after harness %q", args[i+2], out.Harness)
+		rest := append(append([]string{}, args[:i]...), args[i+2:]...)
+		if tokenIndex(rest, "for") >= 0 {
+			return out, fmt.Errorf("more than one 'for <harness>' clause")
 		}
-		args = args[:i]
+		args = rest
 	}
-	if i := tokenIndex(args, "from"); i >= 0 {
-		if i+1 != len(args)-1 {
-			return out, fmt.Errorf("expected one package after 'from': also install [part kind] from [namespace@]package [for harness]")
+
+	var from []int
+	for i, tok := range args {
+		if strings.EqualFold(tok, "from") {
+			from = append(from, i)
 		}
-		// "install code-review from personal" is the namespace form unless the
-		// left side is a component kind.
-		if i == 1 && cfg != nil {
-			if _, isSet := cfg.Namespaces[args[i+1]]; isSet {
-				if _, isKind := also.CanonicalComponentKind(args[0]); !isKind {
-					ref, err := parsePkgRef(args[0], cfg)
-					if err != nil {
-						return out, err
-					}
-					ref.Namespace = args[i+1]
-					out.Ref = ref
-					return out, nil
-				}
+	}
+
+	switch len(from) {
+	case 0:
+		if len(args) != 1 {
+			return out, fmt.Errorf("usage: also install <package>[@version] [for <harness>] [from <namespace>]")
+		}
+		ref, err := parsePkgRef(args[0], cfg)
+		if err != nil {
+			return out, err
+		}
+		out.Ref = ref
+		return out, nil
+	case 1:
+		i := from[0]
+		if i+1 >= len(args) {
+			return out, fmt.Errorf("what comes after 'from'? use a package or a namespace")
+		}
+		if i+2 < len(args) {
+			return out, fmt.Errorf("unexpected %q after %q", args[i+2], args[i+1])
+		}
+		left, right := args[:i], args[i+1]
+		if hasPartKind(left) {
+			ref, err := parsePkgRef(right, cfg)
+			if err != nil {
+				return out, err
 			}
+			parts, err := parsePartSelector(left)
+			if err != nil {
+				return out, err
+			}
+			out.Ref, out.Parts = ref, parts
+			return out, nil
+		}
+		if len(left) != 1 {
+			return out, fmt.Errorf("usage: also install <package>[@version] [for <harness>] [from <namespace>]")
+		}
+		ref, err := parsePkgRef(left[0], cfg)
+		if err != nil {
+			return out, err
+		}
+		ns, err := namespaceName(right, cfg)
+		if err != nil {
+			return out, err
+		}
+		ref.Namespace = ns
+		out.Ref = ref
+		return out, nil
+	case 2:
+		i, j := from[0], from[1]
+		if j != i+2 || j+2 != len(args) {
+			return out, fmt.Errorf("usage: also install [part kind] from <package> [for <harness>] [from <namespace>]")
 		}
 		ref, err := parsePkgRef(args[i+1], cfg)
 		if err != nil {
@@ -171,18 +179,35 @@ func parseInstallArgs(args []string, cfg *also.Config) (installSpec, error) {
 		if err != nil {
 			return out, err
 		}
+		ns, err := namespaceName(args[j+1], cfg)
+		if err != nil {
+			return out, err
+		}
+		ref.Namespace = ns
 		out.Ref, out.Parts = ref, parts
 		return out, nil
+	default:
+		return out, fmt.Errorf("too many 'from' clauses; use one package and one namespace")
 	}
-	if len(args) != 1 {
-		return out, fmt.Errorf("usage: also install [part kind] from [namespace@]package [for harness]")
+}
+
+func hasPartKind(tokens []string) bool {
+	for _, tok := range tokens {
+		if _, ok := also.CanonicalComponentKind(tok); ok {
+			return true
+		}
 	}
-	ref, err := parsePkgRef(args[0], cfg)
-	if err != nil {
-		return out, err
+	return false
+}
+
+func namespaceName(name string, cfg *also.Config) (string, error) {
+	if cfg == nil || len(cfg.Namespaces) == 0 {
+		return "", fmt.Errorf("no namespaces configured; run: also connect <name> <git-url>")
 	}
-	out.Ref = ref
-	return out, nil
+	if _, ok := cfg.Namespaces[name]; !ok {
+		return "", fmt.Errorf("unknown namespace %q; configured: %v", name, cfg.NamespaceNames())
+	}
+	return name, nil
 }
 
 func parsePartSelector(tokens []string) ([]string, error) {
@@ -204,7 +229,7 @@ func parsePartSelector(tokens []string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("unknown part kind %q; try: skill, command, agent, plugin, hook, mcp, settings", tokens[1])
 	default:
-		return nil, fmt.Errorf("a part is '<name> <kind>', for example: also install reviewer skill from personal@infra")
+		return nil, fmt.Errorf("a part is '<name> <kind>', for example: also install reviewer skill from code-review")
 	}
 }
 

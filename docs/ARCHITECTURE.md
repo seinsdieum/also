@@ -51,8 +51,8 @@ transactional: a failure restores the previous files and state.
 
 `~/.also/state.json` records every installation slot, created file, managed
 block and configuration edit. An installation slot includes the namespace,
-package, harness, scope and project path, so one package can be installed into
-several harnesses in one project.
+package, harness and directory, so one package can be installed into several
+harnesses in the same directory.
 
 Uninstalling consults that state. Files changed by the user are left in place
 unless `--force` is used. Configuration edits are removed only when the current

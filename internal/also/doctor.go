@@ -67,9 +67,6 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 			add("default harness", "fail", "unknown harness "+cfg.DefaultHarness)
 		}
 	}
-	if cfg.DefaultScope != "" && cfg.DefaultScope != "project" && cfg.DefaultScope != "global" {
-		add("default scope", "fail", "unknown scope "+cfg.DefaultScope)
-	}
 	if err := ValidateAdapters(Harnesses()); err != nil {
 		add("adapters", "fail", err.Error())
 	} else {
@@ -199,7 +196,7 @@ func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck 
 			if missing > 0 {
 				add(label, "warn", fmt.Sprintf("%d installed file(s) missing", missing))
 			} else {
-				add(label, "ok", in.Harness+" ("+in.Scope+")")
+				add(label, "ok", in.Harness)
 			}
 		}
 	}

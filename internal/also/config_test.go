@@ -36,7 +36,7 @@ func TestLoadConfigMigratesV1ToRemoteOnly(t *testing.T) {
 	if cfg.Schema != SchemaConfig {
 		t.Fatalf("schema = %q, want %q", cfg.Schema, SchemaConfig)
 	}
-	if cfg.DefaultNamespace != "personal" || cfg.DefaultHarness != "opencode" || cfg.DefaultScope != "global" {
+	if cfg.DefaultNamespace != "personal" || cfg.DefaultHarness != "opencode" {
 		t.Fatalf("defaults were not preserved: %+v", cfg)
 	}
 	ns, ok := cfg.Namespaces["personal"]

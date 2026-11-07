@@ -26,7 +26,7 @@ not need an `if harness == "..."` branch.
 | `Commands`, `Agents`, `Plugins` | Conversion dialect. Empty means unsupported. |
 | `ExtraDirs`, `ExtraBase` | Opaque same-harness directories (status lines, themes, ...). |
 | `Detect` | Weighted detection rules. |
-| `InstallHints` | Project-scope warnings (approval, trust, reload). |
+| `InstallHints` | Install warnings (approval, trust, reload). |
 
 Reusable native encodings live in `MCPFormat`: `claude-json`, `qwen-json`,
 `opencode-json`, `codex-toml`. Command dialects are `claude`/`qwen`; agent

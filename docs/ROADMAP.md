@@ -1,7 +1,7 @@
 # also roadmap
 
-Статус: 2026-11-06, версия `1.0.2` выпущена. Релиз:
-https://github.com/seinsdieum/also/releases/tag/v1.0.2
+Статус: 2026-11-07, версия `2.0.0` выпущена. Релиз:
+https://github.com/seinsdieum/also/releases/tag/v2.0.0
 
 ## Текущее состояние
 
@@ -14,8 +14,10 @@ https://github.com/seinsdieum/also/releases/tag/v1.0.2
 - install / upgrade / reshape / uninstall / adopt / push / tree / show / list;
 - managed instruction blocks и обратимые правки MCP, hooks, settings;
 - native layers для round-trip между harness;
-- partial install (`also install review skill from namespace@pkg`);
-- multi-harness install одного пакета в одном проекте;
+- partial install (`also install review skill from pkg from namespace`);
+- multi-harness install одного пакета в одном каталоге;
+- `also init <name> [for <harness>]`, `also push` без пути по `also.json`,
+  `also adopt for <harness>` и `also upgrade` для текущего каталога;
 - community-адаптеры через `also add harness <file|url>`;
 - естественный CLI-язык (`also install pkg for opencode`, `also use ns`);
 - 4×4 E2E: 16/16 round-trip, `compare8.out`; повторно 16/16 после
@@ -62,7 +64,8 @@ Acceptance criteria:
 
 - чистый `also setup` не создаёт `~/.also/sets`;
 - `also adopt` без локального source-каталога пушит пакет в remote namespace;
-- `also push <bundle-dir>` не требует локального set;
+- `also push` без пути работает в инициализированном каталоге и не требует
+  локального set;
 - старый config с `sets[].path/source` автоматически мигрирует;
 - `also list/show/tree/install/upgrade` не показывают пользователю пути клонов;
 - при недоступном remote ошибка говорит, какой namespace и URL недоступны.
@@ -94,11 +97,10 @@ also setup
 
 1. находит установленные harness CLI и их конфиги;
 2. предлагает выбрать harness по умолчанию или ввести вручную;
-3. спрашивает scope по умолчанию (`project`/`global`);
-4. подключает один или несколько remote namespace (URL проверяется `git ls-remote`);
-5. выбирает активный namespace;
-6. опционально ставит стартовый пакет;
-7. пишет config/state атомарно и печатает следующий шаг.
+3. подключает один или несколько remote namespace (URL проверяется `git ls-remote`);
+4. выбирает активный namespace;
+5. опционально ставит стартовый пакет;
+6. пишет config/state атомарно и печатает следующий шаг.
 
 Non-interactive режим:
 
@@ -207,10 +209,10 @@ Acceptance criteria:
 
 ## Выпущено
 
-Релиз `v1.0.2`: https://github.com/seinsdieum/also/releases/tag/v1.0.2
+Релиз `v2.0.0`: https://github.com/seinsdieum/also/releases/tag/v2.0.0
 
 Проверено после публикации: `install.sh` скачал релиз, checksum совпал,
-`gh attestation verify` прошёл, `also version` показывает `1.0.2`, а
+`gh attestation verify` прошёл, `also version` показывает `2.0.0`, а
 `also update --check` отвечает, что версия актуальна. Замена бинарника
 проверена отдельным локальным release-сервером: `1.0.2 → v1.0.3`, checksum
 совпал, файл заменился и запустился.
@@ -218,7 +220,6 @@ Acceptance criteria:
 ## После 1.0
 
 - `also diff <pkg>@v1 v2`;
-- global-scope `adopt`;
 - nested `AGENTS.md`, inline agents/commands;
 - больше адаптеров и codecs;
 - shell completions;

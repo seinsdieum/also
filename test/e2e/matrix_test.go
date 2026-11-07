@@ -27,7 +27,7 @@ func TestFourByFourMatrix(t *testing.T) {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	cfg := &also.Config{
-		Schema: also.SchemaConfig, DefaultScope: "project",
+		Schema:     also.SchemaConfig,
 		Namespaces: map[string]also.NamespaceConfig{"personal": {Remote: remote}},
 	}
 	repo, err := also.OpenSet("personal", cfg.Namespaces["personal"], false)

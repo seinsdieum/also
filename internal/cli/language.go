@@ -223,7 +223,7 @@ func harnessesForProject(dir string) ([]string, error) {
 	seen := map[string]bool{}
 	if st, err := also.LoadState(); err == nil {
 		for _, in := range st.Installs {
-			if in.Scope != "project" || in.Project == "" {
+			if in.Project == "" {
 				continue
 			}
 			p := filepath.Clean(in.Project)

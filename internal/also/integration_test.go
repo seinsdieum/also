@@ -23,7 +23,7 @@ func setup(t *testing.T) (tmp, remote, setDir string, cfg *Config) {
 	}
 	setDir = SetCachePath(remote)
 	cfg = &Config{
-		Schema: SchemaConfig, DefaultScope: "project",
+		Schema:     SchemaConfig,
 		Namespaces: map[string]NamespaceConfig{"personal": {Remote: remote}},
 	}
 	return tmp, remote, setDir, cfg

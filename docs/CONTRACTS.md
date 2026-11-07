@@ -1,6 +1,6 @@
 # Format contracts and compatibility
 
-`also` 1.0 freezes four on-disk contracts. A breaking change requires a new
+`also` freezes the on-disk contracts at 1.0. A breaking change requires a new
 schema string and an automatic migration; additive fields are allowed inside a
 schema because unknown JSON fields are ignored by older readers.
 
@@ -12,6 +12,7 @@ schema because unknown JSON fields are ignored by older readers.
 | User config | `also.config/v2` | stable |
 | Install state | `also.state/v1` | supported |
 | Namespace manifest | `also.set/v1` | stable |
+| Local infrastructure marker | `also.infra/v1` | stable |
 | Community adapter spec | `also.adapter/v1` | stable |
 
 ### Package (`also.pkg/v1`)
@@ -35,13 +36,21 @@ part of the model.
 
 ### State (`also.state/v1`)
 
-Install records are tracked by opaque IDs. The ID now includes the target
-harness so one package can be installed into several harnesses in one project;
-states written by older versions are accepted through a legacy-ID fallback and
+Install records are tracked by opaque IDs. The ID includes the target harness
+so one package can be installed into several harnesses in one directory; states
+written by older versions are accepted through a legacy-ID fallback and
 rewritten on the next install. Do not interpret IDs as a stable public API.
 
 If a future change needs to alter the meaning of a stored field, `also` must
 introduce `also.state/v2` plus a migration. Adding optional fields keeps v1.
+
+### Local marker (`also.infra/v1`)
+
+`also.json` records the package name and source harness of one initialized
+directory. It is read by `also push`, `also adopt`, `also install` and `also
+upgrade`. The marker is local metadata and is excluded from published
+packages. Unknown fields are ignored; removing `name` or changing its meaning
+needs `also.infra/v2`.
 
 ### Adapter (`also.adapter/v1`)
 
@@ -62,7 +71,7 @@ Schema migrations are always forward-only and automatic for one major step.
 The old form stays readable through the release that introduces its successor,
 and a migration test must prove that user data survives.
 
-## What 1.0 promises
+## What 2.0 promises
 
 - Existing `also.pkg/v1` packages stay installable.
 - Existing `also.config/v1`/`v2` configs keep working.

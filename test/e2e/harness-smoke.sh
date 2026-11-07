@@ -19,6 +19,7 @@ mkdir -p "$HOME"
 git init --bare -q "$WORK/remote.git"
 
 mkdir -p "$WORK/bundle/skills/smoke"
+printf '{"schema":"also.infra/v1","name":"smoke","harness":"claude"}\n' > "$WORK/bundle/also.json"
 printf 'smoke rules\n' > "$WORK/bundle/CLAUDE.md"
 printf -- '---\nname: smoke\ndescription: smoke test\n---\nbody\n' > "$WORK/bundle/skills/smoke/SKILL.md"
 cat > "$WORK/bundle/.mcp.json" <<EOF

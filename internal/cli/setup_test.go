@@ -123,7 +123,18 @@ func TestAdoptPushesToRemoteWithoutSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".claude", "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: d\n---\nbody\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runCLI("adopt", project, "for", "claude", "--name", "rules"); err != nil {
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := runCLI("init", "rules", "for", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("adopt", "for", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("git", "-C", remote, "tag", "--list", "also/rules/*").Output()
@@ -145,13 +156,16 @@ func TestDoctorAndVerifyAfterPush(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(bundle, "also.json"), []byte(`{"schema":"also.infra/v1","name":"demo","harness":"claude"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(bundle, "CLAUDE.md"), []byte("rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bundle, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: d\n---\nbody\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runCLI("push", bundle, "--name", "demo"); err != nil {
+	if err := runCLI("push", bundle); err != nil {
 		t.Fatal(err)
 	}
 	if err := runCLI("doctor"); err != nil {
@@ -212,5 +226,47 @@ func TestConnectAndUse(t *testing.T) {
 	}
 	if err := runCLI("connect", "personal", filepath.Join(t.TempDir(), "other.git"), "--yes"); err == nil {
 		t.Fatal("replacing a namespace without --force must fail")
+	}
+}
+
+func TestPushRequiresInit(t *testing.T) {
+	tmp := setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "infra")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := runCLI("push"); err == nil {
+		t.Fatal("push succeeded without also init")
+	}
+	if err := runCLI("init", "demo", "for", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, also.InfraFile)); err != nil {
+		t.Fatalf("init did not write the marker: %v", err)
+	}
+	if err := runCLI("push"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", remote, "tag", "--list", "also/demo/*").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		t.Fatal("push did not publish a version tag")
 	}
 }

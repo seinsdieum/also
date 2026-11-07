@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.0.0 (2026-11-07)
+
+This release makes the working directory the unit of work. It removes the
+project/global split and the old `namespace@package` spelling, so it is a
+major release under the policy in `docs/CONTRACTS.md`.
+
+### Added
+
+- `also init <name> [for <harness>]` writes `also.json` into the current
+  directory and records the package name and source harness.
+- `also push` publishes the nearest initialized directory with no path, name or
+  harness argument. A directory without `also.json` is refused.
+- `also adopt` captures the initialized directory, so `also adopt for claude`
+  replaces `also adopt . for claude`.
+- `also upgrade` upgrades the package installed in the current directory and
+  uses the initialized name when one exists.
+
+### Changed
+
+- Removed the project/global scope split. Installs always target the current
+  directory (or the initialized parent), and the `--scope` flag and
+  `default_scope` config key are gone.
+- Package references no longer use `namespace@package`. Choose a namespace with
+  `from <namespace>`, for example `also install code-review for opencode from
+  personal`.
+- `also upgrade` is no longer an alias of `also update`; `also update` only
+  updates the binary.
+- The README and the hero illustration now lead with the CLI: adaptive light
+  and dark themes, system fonts, no counters, and the harness-agnostic and
+  remote-namespace ideas in plain language.
+- Removed the second illustration.
+- The license and NOTICE name Aliaksandr Sialitski.
+
+### Fixed
+
+- `also upgrade`, `also install` and `also uninstall` resolve the initialized
+  project root when run from a subdirectory.
+
 ## 1.0.2 (2026-11-06)
 
 - Resolve the latest release through the GitHub redirect instead of the

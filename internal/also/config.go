@@ -26,7 +26,6 @@ type Config struct {
 	Schema           string                     `json:"schema"`
 	DefaultNamespace string                     `json:"default_namespace,omitempty"`
 	DefaultHarness   string                     `json:"default_harness,omitempty"`
-	DefaultScope     string                     `json:"default_scope,omitempty"`
 	Namespaces       map[string]NamespaceConfig `json:"namespaces"`
 }
 
@@ -37,13 +36,12 @@ type configFile struct {
 	DefaultSet       string                     `json:"default_set,omitempty"`
 	DefaultNamespace string                     `json:"default_namespace,omitempty"`
 	DefaultHarness   string                     `json:"default_harness,omitempty"`
-	DefaultScope     string                     `json:"default_scope,omitempty"`
 	Sets             map[string]NamespaceConfig `json:"sets"`
 	Namespaces       map[string]NamespaceConfig `json:"namespaces"`
 }
 
 func defaultConfig() *Config {
-	return &Config{Schema: SchemaConfig, DefaultScope: "project", Namespaces: map[string]NamespaceConfig{}}
+	return &Config{Schema: SchemaConfig, Namespaces: map[string]NamespaceConfig{}}
 }
 
 func LoadConfig() (*Config, error) {
@@ -67,7 +65,6 @@ func LoadConfig() (*Config, error) {
 		cfg.DefaultNamespace = raw.DefaultSet
 	}
 	cfg.DefaultHarness = raw.DefaultHarness
-	cfg.DefaultScope = raw.DefaultScope
 	if raw.Namespaces != nil {
 		cfg.Namespaces = raw.Namespaces
 	} else if raw.Sets != nil {
@@ -75,9 +72,6 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Namespaces == nil {
 		cfg.Namespaces = map[string]NamespaceConfig{}
-	}
-	if cfg.DefaultScope == "" {
-		cfg.DefaultScope = "project"
 	}
 	if raw.Schema == SchemaConfigV1 {
 		if err := SaveConfig(cfg); err != nil {
@@ -143,16 +137,12 @@ func (c *Config) Harness(requested string) (string, error) {
 	return hh.ID, nil
 }
 
+// Scope keeps the internal install model project-local. The user-facing
+// project/global split was removed, so a global request is rejected instead
+// of silently writing to the home directory.
 func (c *Config) Scope(requested string) (string, error) {
-	s := requested
-	if s == "" {
-		s = c.DefaultScope
+	if requested != "" && requested != "project" {
+		return "", fmt.Errorf("scope %q is no longer supported; also installs into the current project", requested)
 	}
-	if s == "" {
-		s = "project"
-	}
-	if s != "global" && s != "project" {
-		return "", fmt.Errorf("unknown scope %q; use global or project", s)
-	}
-	return s, nil
+	return "project", nil
 }
