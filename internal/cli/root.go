@@ -52,7 +52,6 @@ func NewRoot() *cobra.Command {
 		newUpdateCmd(),
 		newUseCmd(),
 		newConnectCmd(),
-		newSetCmd(),
 		newConfigCmd(),
 		newAddCmd(),
 		newRemoveCmd(),
@@ -162,12 +161,8 @@ func newTabWriter() *tabwriter.Writer {
 	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 }
 
-// addNamespaceFlag keeps --namespace as the documented spelling and --set as a
-// hidden alias for scripts written against older also versions.
 func addNamespaceFlag(c *cobra.Command, p *string) {
 	c.Flags().StringVarP(p, "namespace", "s", "", "namespace name")
-	c.Flags().StringVar(p, "set", "", "deprecated: use --namespace")
-	_ = c.Flags().MarkHidden("set")
 }
 
 func newConnectCmd() *cobra.Command {
@@ -209,58 +204,6 @@ Without arguments, list connected namespaces.`
 	c.Flags().BoolVar(&force, "force", false, "replace the remote URL of an existing namespace")
 	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
 	c.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation")
-	return c
-}
-
-// newSetCmd is the older spelling kept for scripts.
-func newSetCmd() *cobra.Command {
-	var (
-		remote  string
-		def     bool
-		force   bool
-		migrate bool
-	)
-	c := newCmd("set [name]", "Alias for connect (remote namespace)")
-	c.Hidden = true
-	c.Long = `Attach a git repository that stores also packages. The remote repository
-must already exist. Prefer: also connect <name> <git-url>.`
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		cfg, err := also.LoadConfig()
-		if err != nil {
-			return err
-		}
-		if len(args) == 0 {
-			return listNamespaces(cfg)
-		}
-		if len(args) != 1 {
-			return fmt.Errorf("expected one namespace name")
-		}
-		name := args[0]
-		if migrate {
-			existing, ok := cfg.Namespaces[name]
-			if !ok {
-				return fmt.Errorf("unknown namespace %q", name)
-			}
-			return withLock(func() error { return migrateNamespace(name, existing) })
-		}
-		if remote == "" {
-			existing, ok := cfg.Namespaces[name]
-			if !ok {
-				return fmt.Errorf("--remote <git-url> is required for a new namespace")
-			}
-			if def && cfg.DefaultNamespace != name {
-				cfg.DefaultNamespace = name
-				return withLock(func() error { return also.SaveConfig(cfg) })
-			}
-			fmt.Printf("%s  %s\n", name, existing.Remote)
-			return nil
-		}
-		return connectNamespace(cfg, name, remote, def, force, false)
-	}
-	c.Flags().StringVar(&remote, "remote", "", "git URL of the remote repository")
-	c.Flags().BoolVar(&def, "default", false, "make this the default namespace")
-	c.Flags().BoolVar(&force, "force", false, "replace the remote URL of an existing namespace")
-	c.Flags().BoolVar(&migrate, "migrate", false, "convert legacy per-version directories to one tree per package + version tags")
 	return c
 }
 
@@ -355,7 +298,7 @@ func newConfigCmd() *cobra.Command {
 				return fmt.Errorf("usage: also config get <key>")
 			}
 			switch args[1] {
-			case "default_namespace", "default_set":
+			case "default_namespace":
 				fmt.Println(cfg.DefaultNamespace)
 			case "default_harness":
 				fmt.Println(cfg.DefaultHarness)
@@ -369,7 +312,7 @@ func newConfigCmd() *cobra.Command {
 			}
 			key, val := args[1], args[2]
 			switch key {
-			case "default_namespace", "default_set":
+			case "default_namespace":
 				if val != "" {
 					if _, ok := cfg.Namespaces[val]; !ok {
 						return fmt.Errorf("unknown namespace %q", val)

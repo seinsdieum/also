@@ -48,8 +48,8 @@ also use personal
 ```
 
 A namespace is a name plus a git URL. There is no user-managed local set; the
-clone under `~/.also/cache/` is an implementation detail. `--namespace` is the
-documented flag; `--set` and `also set` stay as hidden aliases for older scripts.
+clone under `~/.also/cache/` is an implementation detail. `--namespace` selects
+a namespace for commands that take one.
 
 ## Initialization
 

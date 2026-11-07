@@ -1,7 +1,7 @@
 # also roadmap
 
-Статус: 2026-11-07, версия `2.0.0` выпущена. Релиз:
-https://github.com/seinsdieum/also/releases/tag/v2.0.0
+Статус: 2026-11-07, версия `1.0.0` выпущена. Релиз:
+https://github.com/seinsdieum/also/releases/tag/v1.0.0
 
 ## Текущее состояние
 
@@ -183,8 +183,8 @@ Acceptance criteria:
 
 - [x] JSON-вывод для install/push/adopt/upgrade/reshape/uninstall/setup;
 - [x] документированные exit codes;
-- [x] единая терминология `namespace` (убрать пользовательский `set`)
-      (`--namespace` основной, `--set` и `also set` скрытые алиасы);
+- [x] единая терминология `namespace` (пользовательский `set` и его алиасы
+      удалены);
 - [x] command reference: natural form, flags, examples, JSON schema;
 - [x] `also version --json`;
 - [x] решить судьбу флагов: оставить как scripting API, natural form — основной.
@@ -202,19 +202,17 @@ Acceptance criteria:
    migration-тесты и интерактивное подтверждение.
 5. **M4: diagnostics + CLI contract** — ядро сделано: doctor/verify, JSON,
    exit codes, command reference. Остались golden-тесты и recovery-команды.
-6. **M5: 1.0 RC** — сделано, кроме тега: CI matrix, E2E, smoke, CHANGELOG,
-   release workflow с checksums и provenance готовы.
-7. **M6: 1.0 release** — остались внешние шаги: пакетный менеджер, реальный
-   release (checksums/attestation) и tag `v1.0.0`.
+6. **M5: 1.0 RC** — сделано: CI matrix, E2E, smoke, CHANGELOG, release
+   workflow с checksums и provenance готовы.
+7. **M6: 1.0 release** — сделано: tag `v1.0.0` и опубликованный release.
+   Остались внешние шаги: пакетный менеджер.
 
 ## Выпущено
 
-Релиз `v2.0.0`: https://github.com/seinsdieum/also/releases/tag/v2.0.0
+Релиз `v1.0.0`: https://github.com/seinsdieum/also/releases/tag/v1.0.0
 
-Проверено после публикации: `install.sh` скачал `v2.0.0`, checksum совпал,
-`gh attestation verify` прошёл, `also version` показывает `2.0.0`. Замена
-бинарника ранее проверена отдельным локальным release-сервером:
-`1.0.2 → v1.0.3`, checksum совпал, файл заменился и запустился.
+Проверено после публикации: `install.sh` скачал `v1.0.0`, checksum совпал,
+`gh attestation verify` прошёл, `also version` показывает `1.0.0`.
 
 ## После 1.0
 

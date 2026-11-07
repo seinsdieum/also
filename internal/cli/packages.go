@@ -70,7 +70,7 @@ func newListCmd() *cobra.Command {
 			rows = append(rows, row{Name: p, Latest: vs[0], Versions: vs})
 		}
 		if jsonOut {
-			out := map[string]any{"set": name, "remote": sc.Remote, "packages": rows}
+			out := map[string]any{"namespace": name, "remote": sc.Remote, "packages": rows}
 			if len(readErrs) > 0 {
 				out["errors"] = readErrs
 			}
@@ -203,7 +203,7 @@ func newShowCmd() *cobra.Command {
 			fmt.Fprintln(os.Stderr, "warning: cannot read hooks config: "+hookErr.Error())
 		}
 		type showOut struct {
-			Set          string             `json:"set"`
+			Namespace    string             `json:"namespace"`
 			Version      also.VersionInfo   `json:"version"`
 			Meta         also.PackageMeta   `json:"meta"`
 			Versions     []also.VersionInfo `json:"versions"`
@@ -219,7 +219,7 @@ func newShowCmd() *cobra.Command {
 			Configs      []string           `json:"config_files"`
 			Other        []string           `json:"other_files"`
 		}
-		out := showOut{Set: name, Version: v, Meta: pkg.Meta, Versions: allVersions, Files: len(pkg.Files), Instructions: parts.Instr, Plugins: len(parts.Plugins), HookFiles: len(parts.Hooks), Configs: parts.Configs, Other: parts.Other}
+		out := showOut{Namespace: name, Version: v, Meta: pkg.Meta, Versions: allVersions, Files: len(pkg.Files), Instructions: parts.Instr, Plugins: len(parts.Plugins), HookFiles: len(parts.Hooks), Configs: parts.Configs, Other: parts.Other}
 		for _, s := range parts.Skills {
 			out.Skills = append(out.Skills, s.Name)
 		}

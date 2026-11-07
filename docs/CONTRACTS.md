@@ -71,7 +71,7 @@ Schema migrations are always forward-only and automatic for one major step.
 The old form stays readable through the release that introduces its successor,
 and a migration test must prove that user data survives.
 
-## What 2.0 promises
+## What 1.0 promises
 
 - Existing `also.pkg/v1` packages stay installable.
 - Existing `also.config/v1`/`v2` configs keep working.
