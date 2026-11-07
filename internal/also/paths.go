@@ -126,15 +126,20 @@ func (l *Lock) Release() {
 		return
 	}
 	fi, err := l.file.Stat()
+	remove := false
 	if err == nil {
 		if pi, statErr := os.Stat(l.path); statErr == nil && os.SameFile(fi, pi) {
 			if data, readErr := os.ReadFile(l.path); readErr == nil && strings.TrimSpace(string(data)) == l.token {
-				_ = os.Remove(l.path)
+				remove = true
 			}
 		}
 	}
+	// Windows cannot delete an open file: close before removing.
 	_ = l.file.Close()
 	l.file = nil
+	if remove {
+		_ = os.Remove(l.path)
+	}
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {

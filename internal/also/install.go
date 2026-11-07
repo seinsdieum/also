@@ -762,7 +762,12 @@ func (t *tx) backup(path string) error {
 		}
 		return fmt.Errorf("backup %s: %w", path, err)
 	}
-	dest := filepath.Join(t.backupDir, strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator)))
+	clean := filepath.Clean(path)
+	// A Windows absolute path carries a volume ("C:"), which cannot be a
+	// directory name inside the backup tree.
+	rel := strings.TrimPrefix(strings.TrimPrefix(clean, filepath.VolumeName(clean)), string(filepath.Separator))
+	rel = strings.ReplaceAll(rel, ":", "")
+	dest := filepath.Join(t.backupDir, rel)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("backup %s: %w", path, err)
 	}
