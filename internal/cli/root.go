@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/seinsdieum/also/internal/also"
@@ -120,16 +119,7 @@ func printWarnings(title string, items []string) {
 }
 
 func unique(in []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
+	out := also.UniqueStrings(in)
 	sort.Strings(out)
 	return out
 }
@@ -341,13 +331,4 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

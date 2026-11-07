@@ -316,13 +316,7 @@ func humanBytes(files map[string]*also.SnapshotFile) string {
 	for _, f := range files {
 		n += int64(len(f.Data))
 	}
-	if n < 1024 {
-		return fmt.Sprintf("%d B", n)
-	}
-	if n < 1024*1024 {
-		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
-	}
-	return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+	return also.FormatBytes(n)
 }
 
 func newPushCmd() *cobra.Command {
@@ -336,6 +330,7 @@ func newPushCmd() *cobra.Command {
 		dryRun      bool
 		allowSecret bool
 		allowLarge  bool
+		allFiles    bool
 		jsonOut     bool
 	)
 	c := newCmd("push [directory]", "Publish the initialized infrastructure in this directory")
@@ -397,7 +392,8 @@ Re-running push with unchanged content is a no-op.`
 			}
 			res, err := repo.Push(dir, also.PushOptions{
 				Name: name, Description: desc, Harness: harnessID, Label: label,
-				Message: message, AllowSecrets: allowSecret, AllowLarge: allowLarge, DryRun: dryRun,
+				Message: message, AllowSecrets: allowSecret, AllowLarge: allowLarge,
+				DryRun: dryRun, AllFiles: allFiles,
 			})
 			if err != nil {
 				return err
@@ -408,6 +404,9 @@ Re-running push with unchanged content is a no-op.`
 				}
 				fmt.Printf("would push %s@%s (%s) to %s\n", res.Package, short(res.Version), res.Harness, res.Remote)
 				fmt.Printf("files: %d (%s)\n", res.Files, also.FormatBytes(res.Bytes))
+				for _, p := range res.Paths {
+					fmt.Printf("  %s\n", p)
+				}
 				printWarnings("warnings", res.Warnings)
 				return nil
 			}
@@ -442,6 +441,7 @@ Re-running push with unchanged content is a no-op.`
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pushed")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
+	c.Flags().BoolVar(&allFiles, "all-files", false, "publish files outside the harness layout too")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

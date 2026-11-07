@@ -10,10 +10,6 @@ func qwenAdapter() *Harness {
 	return &Harness{
 		ID: "qwen", Display: "Qwen Code", Aliases: []string{"qwen-code", "qwen3"},
 		GlobalBase: "~/.qwen",
-		Global: Paths{
-			Instr: "QWEN.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: "settings.json",
-		},
 		Project: Paths{
 			Instr: "QWEN.md", Skills: ".qwen/skills", Commands: ".qwen/commands",
 			Agents: ".qwen/agents", Hooks: ".qwen/hooks", Settings: ".qwen/settings.json",

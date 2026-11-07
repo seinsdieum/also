@@ -593,15 +593,13 @@ func renderPackageMainSel(pkg *Package, source *Harness, target Target, sel *Sel
 		}
 		plan.MCP = map[string]MCPServer{}
 	}
-	if target.Scope == "project" {
-		for _, hint := range target.Harness.InstallHints {
-			triggered := true
-			if hint.WhenMCP || hint.WhenSettings {
-				triggered = (hint.WhenMCP && len(plan.MCP) > 0) || (hint.WhenSettings && len(plan.Settings) > 0)
-			}
-			if triggered {
-				plan.Warnings = append(plan.Warnings, hint.Text)
-			}
+	for _, hint := range target.Harness.InstallHints {
+		triggered := true
+		if hint.WhenMCP || hint.WhenSettings {
+			triggered = (hint.WhenMCP && len(plan.MCP) > 0) || (hint.WhenSettings && len(plan.Settings) > 0)
+		}
+		if triggered {
+			plan.Warnings = append(plan.Warnings, hint.Text)
 		}
 	}
 	return plan, nil

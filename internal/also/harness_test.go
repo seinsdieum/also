@@ -50,18 +50,18 @@ func TestDetectHarnessAmbiguous(t *testing.T) {
 
 func TestTargets(t *testing.T) {
 	project := t.TempDir()
-	oc := MustHarness("opencode").TargetPath("project", project)
+	oc := MustHarness("opencode").TargetPath(project)
 	if !strings.HasSuffix(oc.Skills, filepath.Join(".opencode", "skills")) {
 		t.Fatalf("opencode skills: %s", oc.Skills)
 	}
 	if filepath.Base(oc.Instr) != "AGENTS.md" {
 		t.Fatalf("opencode instructions: %s", oc.Instr)
 	}
-	cx := MustHarness("codex").TargetPath("project", project)
+	cx := MustHarness("codex").TargetPath(project)
 	if !strings.HasSuffix(cx.Skills, filepath.Join(".agents", "skills")) {
 		t.Fatalf("codex skills: %s", cx.Skills)
 	}
-	cl := MustHarness("claude").TargetPath("project", project)
+	cl := MustHarness("claude").TargetPath(project)
 	if filepath.Base(cl.Instr) != "CLAUDE.md" {
 		t.Fatalf("claude instructions: %s", cl.Instr)
 	}

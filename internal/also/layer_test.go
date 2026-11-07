@@ -28,7 +28,7 @@ func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
 		".also-layers/manifest.json":        {Data: mdata, Mode: 0o644},
 	}
 	pkg := &Package{Meta: PackageMeta{Schema: SchemaPkg, Name: "p", SourceHarness: "opencode"}, Files: files}
-	target := MustHarness("claude").TargetPath("project", t.TempDir())
+	target := MustHarness("claude").TargetPath(t.TempDir())
 	plan, err := RenderPackage(pkg, MustHarness("opencode"), target)
 	if err != nil {
 		t.Fatal(err)

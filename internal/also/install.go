@@ -101,7 +101,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 	} else {
 		project = ""
 	}
-	target := targetH.TargetPath(scope, project)
+	target := targetH.TargetPath(project)
 	render, err := RenderPackageSelection(pkg, source, target, opts.Parts)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		ID: id, Set: set.Name, SetRemote: set.Cfg.Remote, Package: pkg.Meta.Name,
 		Version: version.Version, Label: version.Label, SourceHarness: source.ID,
 		Harness: targetH.ID, Scope: scope, Project: project, Root: target.Root,
-		WithConfig: opts.WithConfig, Parts: uniqueStrings(opts.Parts), InstalledAt: time.Now().UTC(),
+		WithConfig: opts.WithConfig, Parts: UniqueStrings(opts.Parts), InstalledAt: time.Now().UTC(),
 	}
 
 	// ---- regular files ----
@@ -176,7 +176,12 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		if containsMarker(body) {
 			return nil, fmt.Errorf("instructions contain also markers; remove them from the package")
 		}
-		bid := set.Name + "/" + pkg.Meta.Name
+		bid := set.Name + "/" + pkg.Meta.Name + "/" + targetH.ID
+		if old != nil && old.Block != nil && old.Block.File == render.Instr.File {
+			// Keep the recorded id on upgrades so an existing managed block is
+			// replaced in place instead of leaving a second one behind.
+			bid = old.Block.ID
+		}
 		existing, err := os.ReadFile(render.Instr.File)
 		exists := err == nil
 		if err != nil && !os.IsNotExist(err) {
@@ -225,7 +230,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			rendered, warns := RenderMCP(targetH, mcpSource, render.MCP)
 			plan.Warnings = append(plan.Warnings, warns...)
 			if !configPathAllowed(render.MCPPath(), target) {
-				return nil, fmt.Errorf("adapter %s points MCP config outside the %s root: %s", targetH.ID, target.Scope, render.MCPPath())
+				return nil, fmt.Errorf("adapter %s points MCP config outside the project root: %s", targetH.ID, render.MCPPath())
 			}
 			codec, ok := mcpCodec(targetH.MCP.Format)
 			if !ok {
@@ -250,7 +255,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				plan.Warnings = append(plan.Warnings, "hooks cannot be installed for this harness; skipped")
 			} else {
 				if !configPathAllowed(file, target) {
-					return nil, fmt.Errorf("adapter %s points hooks config outside the %s root: %s", targetH.ID, target.Scope, file)
+					return nil, fmt.Errorf("adapter %s points hooks config outside the project root: %s", targetH.ID, file)
 				}
 				events := make([]string, 0, len(render.Hooks))
 				for ev := range render.Hooks {
@@ -277,7 +282,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				plan.Warnings = append(plan.Warnings, "settings keys were preserved in the package but this harness has no mergeable settings file")
 			} else {
 				if !configPathAllowed(file, target) {
-					return nil, fmt.Errorf("adapter %s points settings outside the %s root: %s", targetH.ID, target.Scope, file)
+					return nil, fmt.Errorf("adapter %s points settings outside the project root: %s", targetH.ID, file)
 				}
 				keys := make([]string, 0, len(render.Settings))
 				for k := range render.Settings {
@@ -295,8 +300,8 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			}
 		}
 	}
-	inst.Warnings = uniqueStrings(plan.Warnings)
-	inst.Skipped = uniqueStrings(plan.Skipped)
+	inst.Warnings = UniqueStrings(plan.Warnings)
+	inst.Skipped = UniqueStrings(plan.Skipped)
 	plan.Install = inst
 	return plan, nil
 }
@@ -308,11 +313,13 @@ func sourceHarnessForOld(opts InstallOptions, target string) string {
 	return target
 }
 
-func uniqueStrings(in []string) []string {
+// UniqueStrings drops blank and duplicate entries, preserving order.
+func UniqueStrings(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, s := range in {
-		if strings.TrimSpace(s) == "" || seen[s] {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
 			continue
 		}
 		seen[s] = true
@@ -330,7 +337,7 @@ func fileAllowedRoot(dest string, t Target) bool {
 		return false
 	}
 	roots := append([]string{t.Root, t.ExtraDir}, t.ComponentDirs()...)
-	if t.Scope == "project" && t.Project != "" {
+	if t.Project != "" {
 		roots = append(roots, t.Project)
 	}
 	for _, r := range roots {
@@ -342,16 +349,13 @@ func fileAllowedRoot(dest string, t Target) bool {
 }
 
 // configPathAllowed bounds adapter-chosen config destinations. A community
-// adapter must not be able to write outside the project (or the home dir for
-// global installs) through its MCP/hooks/settings hooks.
+// adapter must not be able to write outside the project through its
+// MCP/hooks/settings hooks.
 func configPathAllowed(dest string, t Target) bool {
 	if dest == "" {
 		return true
 	}
-	if t.Scope == "project" {
-		return t.Project != "" && isWithin(t.Project, dest)
-	}
-	return isWithin(ExpandHome("~"), dest)
+	return t.Project != "" && isWithin(t.Project, dest)
 }
 
 func checkFileConflict(st *State, dest, id string, force bool) error {
@@ -750,20 +754,22 @@ func (t *tx) remove(path string) error {
 	return nil
 }
 
-func (t *tx) backup(path string) {
-	if _, err := os.Stat(path); err != nil {
-		return
+func (t *tx) backup(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("backup %s: %w", path, err)
 	}
 	dest := filepath.Join(t.backupDir, strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator)))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return
+		return fmt.Errorf("backup %s: %w", path, err)
 	}
-	_ = os.WriteFile(dest, mustRead(path), 0o644)
-}
-
-func mustRead(path string) []byte {
-	b, _ := os.ReadFile(path)
-	return b
+	if err := os.WriteFile(dest, data, 0o644); err != nil {
+		return fmt.Errorf("backup %s: %w", path, err)
+	}
+	return nil
 }
 
 func (t *tx) rollback() {
@@ -807,7 +813,9 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	// 2. Remove files that disappeared from the package.
 	for _, of := range plan.RemoveFiles {
 		if opts.Force {
-			t.backup(of.Path)
+			if err := t.backup(of.Path); err != nil {
+				return err
+			}
 		}
 		if err := t.remove(of.Path); err != nil {
 			return err
@@ -823,7 +831,9 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	// 4. Write portable files.
 	for _, f := range plan.NewFiles {
 		if opts.Force {
-			t.backup(f.Dest)
+			if err := t.backup(f.Dest); err != nil {
+				return err
+			}
 		}
 		if err := t.write(f.Dest, f.Data, f.Mode); err != nil {
 			return err
@@ -838,7 +848,9 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	// 6. Config edits.
 	for _, e := range plan.Edits {
 		if opts.Force {
-			t.backup(e.File)
+			if err := t.backup(e.File); err != nil {
+				return err
+			}
 		}
 		if err := applyConfigEdit(t, e); err != nil {
 			return err
@@ -847,8 +859,8 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	inst := plan.Install
 	inst.Block = plan.Block
 	inst.Edits = plan.Edits
-	inst.Warnings = uniqueStrings(plan.Warnings)
-	inst.Skipped = uniqueStrings(plan.Skipped)
+	inst.Warnings = UniqueStrings(plan.Warnings)
+	inst.Skipped = UniqueStrings(plan.Skipped)
 	// 7. Save state last, atomically.
 	if err := t.snapshot(StatePath()); err != nil {
 		return err

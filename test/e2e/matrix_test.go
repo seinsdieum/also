@@ -80,7 +80,7 @@ func TestFourByFourMatrix(t *testing.T) {
 				if !ok {
 					t.Fatal("unknown harness " + source)
 				}
-				target := sourceH.TargetPath("project", back)
+				target := sourceH.TargetPath(back)
 				instr, err := os.ReadFile(target.Instr)
 				if err != nil {
 					t.Fatalf("read instructions: %v", err)

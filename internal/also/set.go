@@ -149,14 +149,43 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 		}
 		return nil, fmt.Errorf("package %q not found in namespace %q", pkg, s.Name)
 	}
-	info, legacyTimes, legacyOrder, err := s.versionData()
-	if err != nil {
-		return nil, err
+	metas, batchErr := readManifestBlobs(s.Dir, pkg, tags)
+	if batchErr != nil {
+		metas = map[string]PackageMeta{}
+		for version, commit := range tags {
+			if meta, ok := readManifestAtCommit(s.Dir, pkg, version, commit); ok {
+				metas[version] = meta
+			}
+		}
+	}
+	tagTimes := tagCreatedTimes(s.Dir, pkg)
+	var info map[string]commitInfo
+	var legacyTimes map[string]time.Time
+	var legacyOrder map[string]int
+	// Only manifests without a creation time need the full git history; legacy
+	// version directories always need it for their per-version timestamps.
+	needHistory := len(legacy) > 0
+	for version := range tags {
+		if needHistory {
+			break
+		}
+		meta, ok := metas[version]
+		if !ok || (meta.CreatedAt.IsZero() && tagTimes[version].IsZero()) {
+			needHistory = true
+			break
+		}
+	}
+	if needHistory {
+		var err error
+		info, legacyTimes, legacyOrder, err = s.versionData()
+		if err != nil {
+			return nil, err
+		}
 	}
 	var out []VersionInfo
 	seen := map[string]bool{}
 	for version, commit := range tags {
-		meta, ok := readManifestAtCommit(s.Dir, pkg, version, commit)
+		meta, ok := metas[version]
 		if !ok {
 			return nil, fmt.Errorf("version tag %s has no package manifest", versionTagName(pkg, version))
 		}
@@ -170,7 +199,7 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 		}
 		if !meta.CreatedAt.IsZero() {
 			vi.Time = meta.CreatedAt
-		} else if t := tagCreatedAt(s.Dir, "refs/tags/"+versionTagName(pkg, version)); !t.IsZero() {
+		} else if t := tagTimes[version]; !t.IsZero() {
 			vi.Time = t
 		} else if t := legacyTimes[pkg+"/"+version]; !t.IsZero() {
 			vi.Time = t
@@ -341,6 +370,8 @@ type PushOptions struct {
 	AllowSecrets bool
 	AllowLarge   bool
 	DryRun       bool
+	// AllFiles allows files outside the source harness layout into the package.
+	AllFiles bool
 }
 
 type PushResult struct {
@@ -350,6 +381,7 @@ type PushResult struct {
 	Label     string   `json:"label,omitempty"`
 	Harness   string   `json:"harness"`
 	Files     int      `json:"files"`
+	Paths     []string `json:"paths,omitempty"`
 	Bytes     int64    `json:"bytes"`
 	Existing  bool     `json:"existing"`
 	Warnings  []string `json:"warnings,omitempty"`
@@ -364,7 +396,9 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if opts.Label != "" && !ValidName(strings.ToLower(opts.Label)) {
 		return nil, fmt.Errorf("invalid label %q; use lowercase letters, digits, '.', '_' or '-'", opts.Label)
 	}
-	snap, warnings, err := ReadSnapshot(bundleDir, SnapshotOptions{AllowSecrets: opts.AllowSecrets, AllowLarge: opts.AllowLarge})
+	snap, warnings, err := ReadSnapshot(bundleDir, SnapshotOptions{
+		AllowSecrets: opts.AllowSecrets, AllowLarge: opts.AllowLarge, GitIgnore: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -382,6 +416,17 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		harness = h.ID
 	}
 	h, _ := ResolveHarness(harness)
+	classified, err := ClassifyPackage(&Package{
+		Meta:  PackageMeta{Schema: SchemaPkg, Name: opts.Name, SourceHarness: h.ID},
+		Files: snap.Files,
+	}, h)
+	if err != nil {
+		return nil, err
+	}
+	if len(classified.Other) > 0 && !opts.AllFiles {
+		return nil, fmt.Errorf("refusing to publish files outside the %s layout (use --all-files if this is intentional):\n  %s",
+			h.ID, strings.Join(classified.Other, "\n  "))
+	}
 	servers, mcpWarnings, err := ExtractBundleMCP(h, snap.Files, h.BundleRoots(bundleDir))
 	if err != nil {
 		return nil, fmt.Errorf("cannot encode MCP configuration: %w", err)
@@ -389,7 +434,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	warnings = append(warnings, mcpWarnings...)
 	secrets := append(MCPSuspiciousSecrets(servers), ScanConfigSecrets(snap.Files)...)
 	if len(secrets) > 0 && !opts.AllowSecrets {
-		return nil, fmt.Errorf("refusing to encode literal credentials (use --allow-secrets if intentional):\n  %s", strings.Join(uniqueStrings(secrets), "\n  "))
+		return nil, fmt.Errorf("refusing to encode literal credentials (use --allow-secrets if intentional):\n  %s", strings.Join(UniqueStrings(secrets), "\n  "))
 	}
 	meta := PackageMeta{
 		Schema: SchemaPkg, Name: opts.Name, Description: opts.Description,
@@ -401,7 +446,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	version := VersionFromDigest(digest)
 	res := &PushResult{
 		Package: opts.Name, Version: version, Digest: digest, Label: opts.Label,
-		Harness: harness, Files: len(snap.Files), Bytes: snap.TotalBytes(),
+		Harness: harness, Files: len(snap.Files), Paths: snap.Paths(), Bytes: snap.TotalBytes(),
 		Warnings: warnings, Remote: s.Cfg.Remote, Namespace: s.Name,
 	}
 	if opts.DryRun {

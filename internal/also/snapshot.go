@@ -36,6 +36,9 @@ type Snapshot struct {
 type SnapshotOptions struct {
 	AllowSecrets bool
 	AllowLarge   bool
+	// GitIgnore drops files that git would not track, so publishing a project
+	// directory never includes its ignored build output or local secrets.
+	GitIgnore bool
 }
 
 type PackageMeta struct {
@@ -172,6 +175,20 @@ func ReadSnapshot(root string, opts SnapshotOptions) (*Snapshot, []string, error
 	if err != nil {
 		return nil, nil, err
 	}
+	if opts.GitIgnore {
+		if allowed, ok := publishableFiles(root); ok {
+			dropped := 0
+			for rel := range snap.Files {
+				if !allowed[rel] {
+					delete(snap.Files, rel)
+					dropped++
+				}
+			}
+			if dropped > 0 {
+				warnings = append(warnings, fmt.Sprintf("%d file(s) excluded by .gitignore", dropped))
+			}
+		}
+	}
 	if len(secrets) > 0 {
 		return nil, warnings, fmt.Errorf("refusing to encode likely secrets (use --allow-secrets if this is intentional):\n  %s",
 			strings.Join(secrets, "\n  "))
@@ -300,6 +317,7 @@ func LoadPackage(dir string) (*Package, error) {
 	}
 	origin := filepath.Join(dir, OriginDir)
 	files := map[string]*SnapshotFile{}
+	var total int64
 	err = filepath.WalkDir(origin, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -327,6 +345,10 @@ func LoadPackage(dir string) (*Package, error) {
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("package contains a special file: %s", rel)
+		}
+		total += info.Size()
+		if info.Size() > maxFileSize || total > maxPackageBytes {
+			return fmt.Errorf("package exceeds the load limit (%s per file, %s total)", humanBytes(maxFileSize), humanBytes(maxPackageBytes))
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

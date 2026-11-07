@@ -194,9 +194,10 @@ func printPlan(plan *also.Plan) {
 
 func newUpgradeCmd() *cobra.Command {
 	var (
-		check   bool
-		force   bool
-		jsonOut bool
+		check        bool
+		force        bool
+		jsonOut      bool
+		legacyGlobal bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
 	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
@@ -223,7 +224,7 @@ func newUpgradeCmd() *cobra.Command {
 			pkgs = []string{infra.Name}
 		}
 		return withLock(func() error {
-			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check)
+			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal)
 			if err != nil {
 				return err
 			}
@@ -272,6 +273,8 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().BoolVar(&check, "check", false, "only report available updates")
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "report old global installs")
+	_ = c.Flags().MarkHidden("legacy-global")
 	return c
 }
 
@@ -469,11 +472,12 @@ func newTreeCmd() *cobra.Command {
 
 func newUninstallCmd() *cobra.Command {
 	var (
-		force   bool
-		all     bool
-		harness string
-		project string
-		jsonOut bool
+		force        bool
+		all          bool
+		harness      string
+		project      string
+		jsonOut      bool
+		legacyGlobal bool
 	)
 	c := newCmd("uninstall <package>", "Remove an installed package and its reversible config edits")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -510,8 +514,14 @@ func newUninstallCmd() *cobra.Command {
 		}
 		var matches []*also.Install
 		for _, in := range st.InstallsOf(args[0]) {
-			if in.Project != absProj {
-				continue
+			if legacyGlobal {
+				if in.Scope != "global" {
+					continue
+				}
+			} else {
+				if in.Scope == "global" || in.Project != absProj {
+					continue
+				}
 			}
 			if harness != "" {
 				h, ok := also.ResolveHarness(harness)
@@ -522,6 +532,9 @@ func newUninstallCmd() *cobra.Command {
 			matches = append(matches, in)
 		}
 		if len(matches) == 0 {
+			if legacyGlobal {
+				return fmt.Errorf("package %q has no legacy global install", args[0])
+			}
 			return fmt.Errorf("package %q is not installed in %s", args[0], absProj)
 		}
 		if len(matches) > 1 && !all {
@@ -574,6 +587,8 @@ func newUninstallCmd() *cobra.Command {
 	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
 	c.Flags().StringVarP(&project, "dir", "p", "", "directory to uninstall from (default: current directory)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "remove an old global install")
+	_ = c.Flags().MarkHidden("legacy-global")
 	return c
 }
 
@@ -696,7 +711,7 @@ temporary unless --into is given.`
 			}
 			pushRes, err := repo.Push(res.BundleDir, also.PushOptions{
 				Name: name, Description: desc, Harness: harnessID, Message: message,
-				AllowSecrets: allowSecret, AllowLarge: allowLarge,
+				AllowSecrets: allowSecret, AllowLarge: allowLarge, AllFiles: true,
 			})
 			if err != nil {
 				return err

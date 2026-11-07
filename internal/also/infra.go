@@ -23,12 +23,21 @@ type Infra struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
-// FindInfra walks from dir to the filesystem root and returns the first
-// directory that contains also.json.
+// FindInfra walks up from dir and returns the first directory that contains
+// also.json. It stops at the git root (or the home directory), so a marker in
+// $HOME cannot silently claim every subdirectory.
 func FindInfra(dir string) (string, *Infra, error) {
 	start, err := AbsPath(dir)
 	if err != nil {
 		return "", nil, err
+	}
+	stop := ""
+	if root, rootErr := GitProjectRoot(start); rootErr == nil {
+		stop = root
+	} else if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		if abs, absErr := filepath.Abs(home); absErr == nil {
+			stop = abs
+		}
 	}
 	for current := start; ; current = filepath.Dir(current) {
 		path := filepath.Join(current, InfraFile)
@@ -56,11 +65,15 @@ func FindInfra(dir string) (string, *Infra, error) {
 		if !os.IsNotExist(err) {
 			return "", nil, err
 		}
+		if stop != "" && current == stop {
+			break
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return "", nil, fmt.Errorf("this directory is not initialized; run: also init <name> [for <harness>]")
+			break
 		}
 	}
+	return "", nil, fmt.Errorf("this directory is not initialized; run: also init <name> [for <harness>]")
 }
 
 // SaveInfra writes the marker into dir.

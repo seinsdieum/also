@@ -71,6 +71,22 @@ if [ "$expected" != "$actual" ]; then
   exit 1
 fi
 
+# shortcut: SHA256SUMS comes from the same release as the binary, so a
+# compromised release can serve both. Verify the published build attestation
+# when the GitHub CLI is installed and authenticated; upgrade to a signed
+# SHA256SUMS kept outside the release when a signing key exists.
+if [ "$BASE" = "https://github.com/$REPO" ]; then
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    if ! gh attestation verify "$tmp/$asset" -R "$REPO" >/dev/null 2>&1; then
+      echo "also: build attestation verification failed; refusing to install" >&2
+      exit 1
+    fi
+    printf '  ✓ attestation verified\n'
+  else
+    echo "  also: gh not authenticated; only the release checksum was verified" >&2
+  fi
+fi
+
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp/$asset" "$INSTALL_DIR/also$ext"
 printf '  %s✓%s installed %s\n' "$BLUE" "$RESET" "$INSTALL_DIR/also$ext"

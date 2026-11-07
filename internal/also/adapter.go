@@ -55,12 +55,12 @@ type HookAdapter struct {
 }
 
 // MCPAdapter describes where a harness keeps MCP servers and how they are
-// encoded. Resolve optionally overrides the project/global MCP destination
-// when a harness searches several config filenames.
+// encoded. Resolve optionally overrides the project MCP destination when a
+// harness searches several config filenames.
 type MCPAdapter struct {
 	Format  MCPFormat
 	Configs []string // bundle-relative config files that may contain servers
-	Resolve func(scope, project string) string
+	Resolve func(project string) string
 }
 
 // SettingsAdapter describes the native config keys that can be merged safely
@@ -104,7 +104,6 @@ type Component struct {
 	Kind       string                                                                            `json:"kind"`
 	BundleDir  string                                                                            `json:"bundle_dir"`
 	ProjectDir string                                                                            `json:"project_dir,omitempty"`
-	GlobalDir  string                                                                            `json:"global_dir,omitempty"`
 	Extensions []string                                                                          `json:"extensions,omitempty"`
 	Opaque     bool                                                                              `json:"opaque,omitempty"` // only install into the same harness
 	Format     string                                                                            `json:"format,omitempty"` // optional: skip unless source and target agree
@@ -119,8 +118,7 @@ type Harness struct {
 	Display string
 	Aliases []string
 
-	GlobalBase string // relative to home
-	Global     Paths
+	GlobalBase string   // only used to detect an installed harness during setup
 	Project    Paths    // relative to the project root
 	Bundle     Paths    // relative to a bundle root
 	Roots      []string // bundle subdirectories to inspect for components
@@ -147,8 +145,7 @@ type Harness struct {
 	InstallHints []InstallHint
 }
 
-// Paths are relative to an adapter base (home config dir, project root, or bundle root).
-// Global paths may use a ~/ prefix; they may not be absolute.
+// Paths are relative to the project root or a bundle root.
 type Paths struct {
 	Instr     string `json:"instr,omitempty"`
 	Skills    string `json:"skills,omitempty"`
@@ -254,8 +251,12 @@ func validateAdapter(h *Harness) error {
 		if err := validateBasePath("global_base", h.GlobalBase); err != nil {
 			return err
 		}
+		base, home := ExpandHome(h.GlobalBase), ExpandHome("~")
+		if !isWithin(home, base) || filepath.Clean(base) == filepath.Clean(home) {
+			return fmt.Errorf("global_base must be a directory below the home directory")
+		}
 	}
-	for name, p := range map[string]Paths{"global": h.Global, "project": h.Project, "bundle": h.Bundle} {
+	for name, p := range map[string]Paths{"project": h.Project, "bundle": h.Bundle} {
 		for field, v := range pathFields(p) {
 			if v == "" {
 				continue
@@ -267,11 +268,8 @@ func validateAdapter(h *Harness) error {
 				}
 				continue
 			}
-			if name == "project" && (strings.HasPrefix(v, "~/") || filepath.IsAbs(v)) {
+			if strings.HasPrefix(v, "~/") || filepath.IsAbs(v) {
 				return fmt.Errorf("%s must be relative to the project", label)
-			}
-			if name == "global" && filepath.IsAbs(v) {
-				return fmt.Errorf("%s must be relative to the home directory", label)
 			}
 			if err := validateBasePath(label, v); err != nil {
 				return err
@@ -317,7 +315,7 @@ func validateAdapter(h *Harness) error {
 				return err
 			}
 		}
-		if h.Project.MCP == "" && h.Global.MCP == "" && h.MCP.Resolve == nil {
+		if h.Project.MCP == "" && h.MCP.Resolve == nil {
 			return fmt.Errorf("MCP format %q requires an MCP destination", h.MCP.Format)
 		}
 	}
@@ -361,13 +359,13 @@ func validateAdapter(h *Harness) error {
 	if h.Plugins.Format != "" && !pluginFormatKnown(h.Plugins.Format) {
 		return fmt.Errorf("unknown plugin format %q", h.Plugins.Format)
 	}
-	if h.Commands.Format != "" && h.Project.Commands == "" && h.Global.Commands == "" {
+	if h.Commands.Format != "" && h.Project.Commands == "" {
 		return fmt.Errorf("command format requires a commands directory")
 	}
-	if h.Agents.Format != "" && h.Project.Agents == "" && h.Global.Agents == "" {
+	if h.Agents.Format != "" && h.Project.Agents == "" {
 		return fmt.Errorf("agent format requires an agents directory")
 	}
-	if h.Plugins.Format != "" && h.Project.Plugins == "" && h.Global.Plugins == "" {
+	if h.Plugins.Format != "" && h.Project.Plugins == "" {
 		return fmt.Errorf("plugin format requires a plugins directory")
 	}
 	if h.MCP.Format == MCPCodexTOML {
@@ -393,24 +391,14 @@ func validateAdapter(h *Harness) error {
 		if err := validateRel("component "+c.Kind+" bundle", c.BundleDir); err != nil {
 			return err
 		}
-		if c.ProjectDir == "" && c.GlobalDir == "" {
-			return fmt.Errorf("component %q needs a project or global dir", c.Kind)
+		if c.ProjectDir == "" {
+			return fmt.Errorf("component %q needs a project dir", c.Kind)
 		}
-		if c.ProjectDir != "" {
-			if strings.HasPrefix(c.ProjectDir, "~/") || filepath.IsAbs(c.ProjectDir) {
-				return fmt.Errorf("component %q project dir must be relative to the project", c.Kind)
-			}
-			if err := validateRel("component "+c.Kind+" project", c.ProjectDir); err != nil {
-				return err
-			}
+		if strings.HasPrefix(c.ProjectDir, "~/") || filepath.IsAbs(c.ProjectDir) {
+			return fmt.Errorf("component %q project dir must be relative to the project", c.Kind)
 		}
-		if c.GlobalDir != "" {
-			if filepath.IsAbs(c.GlobalDir) {
-				return fmt.Errorf("component %q global dir must be relative to home", c.Kind)
-			}
-			if err := validateBasePath("component "+c.Kind+" global", c.GlobalDir); err != nil {
-				return err
-			}
+		if err := validateRel("component "+c.Kind+" project", c.ProjectDir); err != nil {
+			return err
 		}
 		for _, ext := range c.Extensions {
 			if !strings.HasPrefix(ext, ".") || strings.ContainsAny(ext, `/\`) {
@@ -520,9 +508,6 @@ func (h *Harness) ConfigNames() map[string]bool {
 			add(c)
 		}
 	}
-	add(h.Global.Settings)
-	add(h.Global.HooksJSON)
-	add(h.Global.MCP)
 	return m
 }
 

@@ -65,9 +65,18 @@ func EnsureHome() error {
 }
 
 // Lock serializes mutating also processes across terminals.
+//
+// shortcut: a stale lock is reclaimed with rename, so a process that held the
+// lock for over 30 minutes can race a fresh lock during Release; upgrade to
+// flock/LockFileEx if that window ever matters.
 type Lock struct {
-	path string
-	held bool
+	path  string
+	file  *os.File
+	token string
+}
+
+func lockToken() string {
+	return ShortHash([]byte(fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())), 16)
 }
 
 func AcquireLock() (*Lock, error) {
@@ -75,27 +84,57 @@ func AcquireLock() (*Lock, error) {
 		return nil, err
 	}
 	path := LockPath()
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+		if err == nil {
+			token := lockToken()
+			if _, err := f.WriteString(token + "\n"); err != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, fmt.Errorf("write lock: %w", err)
+			}
+			return &Lock{path: path, file: f, token: token}, nil
+		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("create lock: %w", err)
 		}
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > 30*time.Minute {
-			_ = os.Remove(path)
-			return AcquireLock()
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return nil, fmt.Errorf("stat lock: %w", statErr)
 		}
-		return nil, fmt.Errorf("another also process is running (lock: %s)", path)
+		if time.Since(info.ModTime()) <= 30*time.Minute {
+			return nil, fmt.Errorf("another also process is running (lock: %s)", path)
+		}
+		// Only the process that renames the stale lock away may delete it, so
+		// a second process can never delete a freshly created lock.
+		stale := path + ".stale." + lockToken()
+		if err := os.Rename(path, stale); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("reclaim stale lock: %w", err)
+		}
+		_ = os.Remove(stale)
 	}
-	_, _ = fmt.Fprintf(f, "%d\n%s\n", os.Getpid(), time.Now().Format(time.RFC3339))
-	_ = f.Close()
-	return &Lock{path: path, held: true}, nil
 }
 
 func (l *Lock) Release() {
-	if l != nil && l.held {
-		_ = os.Remove(l.path)
-		l.held = false
+	if l == nil || l.file == nil {
+		return
 	}
+	fi, err := l.file.Stat()
+	if err == nil {
+		if pi, statErr := os.Stat(l.path); statErr == nil && os.SameFile(fi, pi) {
+			if data, readErr := os.ReadFile(l.path); readErr == nil && strings.TrimSpace(string(data)) == l.token {
+				_ = os.Remove(l.path)
+			}
+		}
+	}
+	_ = l.file.Close()
+	l.file = nil
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {

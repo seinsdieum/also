@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 )
 
 // HealthCheck is one doctor/verify result.
@@ -79,6 +80,10 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 	add("state", "ok", fmt.Sprintf("%d install(s)", len(st.Installs)))
 	for _, in := range st.Installs {
 		label := fmt.Sprintf("%s/%s (%s)", in.Set, in.Package, in.Harness)
+		if in.Scope == "global" {
+			add("install "+label, "warn", "legacy global install; remove it with: also uninstall "+in.Package+" --legacy-global")
+			continue
+		}
 		if in.Scope == "project" && in.Project == "" {
 			add("install "+label, "fail", "project scope without a project path")
 			continue
@@ -145,6 +150,8 @@ func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck 
 		}
 		versions := map[string][]VersionInfo{}
 		broken := 0
+		type loadJob struct{ pkg, version string }
+		var jobs []loadJob
 		for _, pkg := range pkgs {
 			vs, err := repo.Versions(pkg)
 			if err != nil {
@@ -154,10 +161,29 @@ func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck 
 			}
 			versions[pkg] = vs
 			for _, v := range vs {
-				if _, err := repo.LoadPackage(pkg, v.Version); err != nil {
-					add(name+"/"+pkg+"@"+v.Version, "fail", err.Error())
-					broken++
-				}
+				jobs = append(jobs, loadJob{pkg, v.Version})
+			}
+		}
+		// Each version needs its own git archive; bound the parallelism so a
+		// namespace with many versions does not spawn hundreds of processes.
+		errs := make([]error, len(jobs))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 4)
+		for i, job := range jobs {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int, j loadJob) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				_, err := repo.LoadPackage(j.pkg, j.version)
+				errs[i] = err
+			}(i, job)
+		}
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				add(name+"/"+jobs[i].pkg+"@"+jobs[i].version, "fail", err.Error())
+				broken++
 			}
 		}
 		if broken == 0 {

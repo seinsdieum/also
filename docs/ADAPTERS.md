@@ -128,9 +128,9 @@ also remove harness acme
 
 The file is validated first, then saved under `~/.also/adapters/<id>.json`
 (or `ALSO_ADAPTERS=<dir>`). A community spec cannot shadow a built-in id or
-claim an alias that is already taken. External global paths must be relative to
-`global_base`, and `global_base` must be a directory below `$HOME`; a downloaded
-spec cannot point at unrelated files such as `~/.bashrc`.
+claim an alias that is already taken. `global_base` is only a detection hint
+and must be a directory below `$HOME`; all install paths are relative to the
+project root, so a downloaded spec cannot write to unrelated files.
 
 Downloaded specs can be pinned with `also add harness <url> --sha256 <hash>`.
 The hash covers the exact file bytes; an unpinned URL still works but prints a
@@ -146,7 +146,6 @@ The JSON shape is:
   "display": "Acme Agent",
   "aliases": ["ac"],
   "global_base": "~/.acme",
-  "global":  {"instr": "AGENTS.md", "skills": "skills", "commands": "commands", "agents": "agents", "settings": "settings.json", "mcp": "mcp.json"},
   "project": {"instr": "AGENTS.md", "skills": ".acme/skills", "commands": ".acme/commands", "agents": ".acme/agents", "settings": ".acme/settings.json", "mcp": ".acme/mcp.json"},
   "bundle":  {"instr": "AGENTS.md", "skills": "skills", "commands": "commands", "agents": "agents", "settings": "settings.json", "mcp": ".mcp.json"},
   "roots": ["", ".acme"],
@@ -180,7 +179,7 @@ Runtime safety is enforced independently of adapter declarations:
 
 - rendered files must stay under the target root (`fileAllowedRoot`);
 - adapter-chosen MCP/hooks/settings destinations must stay inside the project
-  (or under `$HOME` for global installs) (`configPathAllowed`);
+  (`configPathAllowed`);
 - cross-harness permissions are never translated automatically;
 - native layers preserve what the target cannot represent;
 - hook command bodies are copied verbatim with a warning.

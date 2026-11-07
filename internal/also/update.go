@@ -194,14 +194,16 @@ func CheckLatestVersion(current string, now time.Time, force bool) (string, bool
 	fresh := !c.CheckedAt.IsZero() && now.Sub(c.CheckedAt) < UpdateCheckInterval
 	latest := c.Latest
 	if force || !fresh {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		tag, err := LatestTag(ctx)
 		if err != nil {
-			if latest != "" {
-				return latest, false, nil
-			}
-			return "", false, err
+			// Cache the miss too, so an offline CLI does not retry on every
+			// command and a deleted release cannot linger in the cache.
+			c.CheckedAt = now
+			c.Latest = ""
+			writeUpdateCache(c)
+			return "", false, nil
 		}
 		latest = tag
 		c.CheckedAt = now
@@ -231,10 +233,19 @@ type UpdateResult struct {
 	Current    string `json:"current"`
 	Latest     string `json:"latest"`
 	Updated    bool   `json:"updated"`
+	Reinstall  bool   `json:"reinstall,omitempty"`
 	ManualPath string `json:"manual_path,omitempty"`
 	Asset      string `json:"asset,omitempty"`
 }
 
+// reinstallHint tells users on a build newer than the published release how
+// to get back onto the release line without an in-place update.
+const ReinstallHint = "curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh"
+
+// shortcut: SHA256SUMS is fetched from the same release as the binary, so a
+// compromised release can serve both; upgrade to attestation verification or
+// an out-of-band signed checksum when a signing key exists.
+//
 // ApplyUpdate downloads the latest release and replaces exe. On Windows the
 // running executable cannot be replaced, so the new binary is written next to
 // it and returned as ManualPath.
@@ -251,7 +262,10 @@ func applyUpdate(current, exe string, windows bool) (*UpdateResult, error) {
 		return res, err
 	}
 	res.Latest = tag
-	if CompareVersions(tag, current) <= 0 {
+	if cmp := CompareVersions(tag, current); cmp < 0 {
+		res.Reinstall = true
+		return res, nil
+	} else if cmp == 0 {
 		return res, nil
 	}
 	assetName := releaseAssetName(runtime.GOOS, runtime.GOARCH)

@@ -123,22 +123,37 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 }
 
 // UpgradeInstallsInProject upgrades only the packages installed in one
-// directory, which is what the "also upgrade" command targets.
-func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check bool) ([]UpgradeResult, error) {
+// directory, which is what the "also upgrade" command targets. Legacy global
+// installs are reported, not rewritten: their files live in the home dir.
+func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal bool) ([]UpgradeResult, error) {
 	abs, err := AbsPath(project)
 	if err != nil {
 		return nil, err
 	}
 	var installs []Install
+	var legacy []UpgradeResult
 	for _, in := range filterInstalls(st.InstallsOf(""), pkgs) {
+		if in.Scope == "global" {
+			if includeGlobal {
+				legacy = append(legacy, UpgradeResult{
+					Install: in, Old: in.Version, New: in.Version,
+					Status: "legacy global; remove it with: also uninstall " + in.Package + " --legacy-global",
+				})
+			}
+			continue
+		}
 		if filepath.Clean(in.Project) == filepath.Clean(abs) {
 			installs = append(installs, in)
 		}
 	}
-	if len(installs) == 0 {
+	if len(installs) == 0 && len(legacy) == 0 {
 		return nil, fmt.Errorf("no packages installed in %s; run: also install <package> for <harness>", abs)
 	}
-	return upgradeInstalls(cfg, st, installs, force, check)
+	results, err := upgradeInstalls(cfg, st, installs, force, check)
+	if err != nil {
+		return nil, err
+	}
+	return append(results, legacy...), nil
 }
 
 func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bool) ([]UpgradeResult, error) {
@@ -231,8 +246,22 @@ func filterInstalls(in []*Install, pkgs []string) []Install {
 }
 
 func Uninstall(st *State, in *Install, force bool) ([]string, error) {
+	// A resource still used by another install must survive this uninstall.
+	sharedFiles := map[string]bool{}
+	for _, f := range in.Files {
+		for _, owner := range st.ownersOf(f.Path) {
+			if owner.ID != in.ID {
+				sharedFiles[f.Path] = true
+				break
+			}
+		}
+	}
+	sharedBlock := st.sharedBlock(in.Block, in.ID)
 	// Preflight: refuse to silently discard user changes.
 	for _, f := range in.Files {
+		if sharedFiles[f.Path] {
+			continue
+		}
 		fi, err := os.Lstat(f.Path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -251,7 +280,7 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 			return nil, fmt.Errorf("%s was modified; use --force to remove it", f.Path)
 		}
 	}
-	if in.Block != nil && !force {
+	if in.Block != nil && !sharedBlock && !force {
 		if data, err := os.ReadFile(in.Block.File); err == nil {
 			if _, bs, be, _, found := findBlock(string(data), in.Block.ID); found {
 				if blockBodyHash([]byte(data[bs:be])) != in.Block.SHA {
@@ -267,6 +296,10 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 		return nil, err
 	}
 	for _, e := range in.Edits {
+		if st.sharedConfigEdit(e, in.ID) {
+			warnings = append(warnings, fmt.Sprintf("left shared config entry in %s (%s)", e.File, strings.Join(e.Path, ".")))
+			continue
+		}
 		ok, warn, err := removeConfigEdit(t, e)
 		if err != nil {
 			return rollback(err)
@@ -276,14 +309,22 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 		}
 		_ = warn
 	}
-	if in.Block != nil {
+	if in.Block != nil && !sharedBlock {
 		if err := removeBlockTx(t, in.Block, force); err != nil {
 			return rollback(err)
 		}
+	} else if sharedBlock {
+		warnings = append(warnings, "left shared instructions block in "+in.Block.File)
 	}
 	for _, f := range in.Files {
+		if sharedFiles[f.Path] {
+			warnings = append(warnings, "left shared file "+f.Path)
+			continue
+		}
 		if force {
-			t.backup(f.Path)
+			if err := t.backup(f.Path); err != nil {
+				return rollback(err)
+			}
 		}
 		if err := t.remove(f.Path); err != nil {
 			return rollback(err)

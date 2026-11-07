@@ -25,8 +25,8 @@ An adapter is declarative JSON. It cannot execute code and can only select
 formats and component kinds that are already registered in the binary.
 Additional limits:
 
-- `global_base` must be a directory below `$HOME`, and every global path must
-  be relative to it;
+- `global_base` is only a detection hint and must be a directory below `$HOME`;
+  all install paths are relative to the project root;
 - external adapters cannot overwrite built-in ids or aliases;
 - adapter specs are capped at 1 MiB;
 - `also add harness <url>` warns when the download is not pinned. Pass

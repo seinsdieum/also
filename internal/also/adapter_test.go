@@ -35,24 +35,18 @@ func TestAdaptersAreValid(t *testing.T) {
 
 func TestAdapterTargetsStayInsideRoot(t *testing.T) {
 	project := t.TempDir()
-	home := t.TempDir()
-	setTestHome(t, home)
+	setTestHome(t, t.TempDir())
 	for _, h := range Harnesses() {
-		for _, tc := range []struct {
-			scope string
-			root  string
-		}{{"project", project}, {"global", home}} {
-			target := h.TargetPath(tc.scope, project)
-			for _, p := range []string{
-				target.Instr, target.Skills, target.Commands, target.Agents,
-				target.Plugins, target.Hooks, target.Settings, target.HooksJSON, target.MCP,
-			} {
-				if p == "" {
-					continue
-				}
-				if !isWithin(tc.root, p) {
-					t.Fatalf("%s %s path escapes %s: %s", h.ID, tc.scope, tc.root, p)
-				}
+		target := h.TargetPath(project)
+		for _, p := range []string{
+			target.Instr, target.Skills, target.Commands, target.Agents,
+			target.Plugins, target.Hooks, target.Settings, target.HooksJSON, target.MCP,
+		} {
+			if p == "" {
+				continue
+			}
+			if !isWithin(project, p) {
+				t.Fatalf("%s path escapes the project: %s", h.ID, p)
 			}
 		}
 	}
@@ -65,10 +59,8 @@ func TestAdapterValidationRejectsUnsafeSpecs(t *testing.T) {
 		"absolute project path": func(h *Harness) {
 			h.Project.Commands = testAbsolutePath()
 		},
-		"absolute global path": func(h *Harness) { h.Global.MCP = testAbsolutePath() },
 		"config traversal":     func(h *Harness) { h.MCP.Configs = []string{"../settings.json"} },
 		"reserved project dir": func(h *Harness) { h.Project.Hooks = ".git/hooks" },
-		"reserved global dir":  func(h *Harness) { h.Global.Skills = "~/.ssh/keys" },
 		"unknown mcp format":   func(h *Harness) { h.MCP.Format = "made-up" },
 		"hooks without events": func(h *Harness) { h.Hooks.Events = nil },
 		"empty display":        func(h *Harness) { h.Display = " " },
@@ -107,10 +99,6 @@ func TestAdapterReusesExistingFormats(t *testing.T) {
 	// no changes to install/render/mcp/hooks.
 	acme := &Harness{
 		ID: "acme", Display: "Acme Agent", GlobalBase: "~/.acme",
-		Global: Paths{
-			Instr: "AGENTS.md", Skills: "skills", Commands: "commands",
-			Agents: "agents", Settings: "settings.json", MCP: "mcp.json",
-		},
 		Project: Paths{
 			Instr: "AGENTS.md", Skills: ".acme/skills", Commands: ".acme/commands",
 			Agents: ".acme/agents", Settings: ".acme/settings.json", MCP: ".acme/mcp.json",
@@ -134,7 +122,7 @@ func TestAdapterReusesExistingFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := t.TempDir()
-	target := acme.TargetPath("project", project)
+	target := acme.TargetPath(project)
 	if target.Instr != filepath.Join(project, "AGENTS.md") {
 		t.Fatalf("unexpected target: %s", target.Instr)
 	}
@@ -163,7 +151,7 @@ func TestCustomComponentRenders(t *testing.T) {
 		},
 	}
 	project := t.TempDir()
-	target := acme.TargetPath("project", project)
+	target := acme.TargetPath(project)
 	plan, err := RenderPackage(pkg, acme, target)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +179,6 @@ func TestAdapterSpecBuildsValidHarness(t *testing.T) {
 	spec := AdapterSpec{
 		ID: "acme", Display: "Acme", Aliases: []string{"ac"},
 		GlobalBase: "~/.acme",
-		Global:     Paths{Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents", MCP: "mcp.json"},
 		Project:    Paths{Instr: "AGENTS.md", Skills: ".acme/skills", Commands: ".acme/commands", Agents: ".acme/agents", MCP: ".acme/mcp.json"},
 		Bundle:     Paths{Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents", Settings: "settings.json", MCP: ".mcp.json"},
 		Roots:      []string{"", ".acme"},
@@ -212,7 +199,7 @@ func TestAdapterSpecBuildsValidHarness(t *testing.T) {
 	if err := ValidateAdapters([]*Harness{h}); err != nil {
 		t.Fatal(err)
 	}
-	target := h.TargetPath("project", t.TempDir())
+	target := h.TargetPath(t.TempDir())
 	if target.HooksJSON != "" {
 		t.Fatalf("unexpected hooks_json path: %s", target.HooksJSON)
 	}
@@ -225,7 +212,6 @@ func TestAdapterSpecBuildsValidHarness(t *testing.T) {
 func TestAdapterSpecRejectsUnsafeMCPCandidate(t *testing.T) {
 	spec := AdapterSpec{
 		ID: "acme", Display: "Acme",
-		Global:  Paths{Instr: "AGENTS.md", MCP: "mcp.json"},
 		Project: Paths{Instr: "AGENTS.md", MCP: ".acme/mcp.json"},
 		Bundle:  Paths{Instr: "AGENTS.md", MCP: ".mcp.json"},
 		MCP:     &MCPSpec{Format: MCPClaudeJSON, Configs: []string{".mcp.json"}, ProjectCandidates: []string{"../escape.json"}},
@@ -238,15 +224,11 @@ func TestAdapterSpecRejectsUnsafeMCPCandidate(t *testing.T) {
 func TestConfigPathIsBounded(t *testing.T) {
 	project := t.TempDir()
 	setTestHome(t, t.TempDir())
-	target := MustHarness("claude").TargetPath("project", project)
+	target := MustHarness("claude").TargetPath(project)
 	if !configPathAllowed(filepath.Join(project, ".mcp.json"), target) {
 		t.Fatal("in-project config must be allowed")
 	}
 	if configPathAllowed("/etc/passwd", target) {
 		t.Fatal("config outside the project must be rejected")
-	}
-	global := MustHarness("claude").TargetPath("global", "")
-	if configPathAllowed("/etc/passwd", global) {
-		t.Fatal("global config outside home must be rejected")
 	}
 }

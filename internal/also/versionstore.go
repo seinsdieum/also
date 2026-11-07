@@ -205,26 +205,70 @@ func (s *SetRepo) createTagAt(pkg, version, rev string, created time.Time) error
 	return err
 }
 
-func tagCreatedAt(dir, ref string) time.Time {
-	out, err := runGit(dir, "for-each-ref", "--format=%(objecttype) %(contents)", ref)
+// readManifestBlobs reads the live (or legacy) manifest of every version tag
+// in one git process instead of one git show per tag.
+func readManifestBlobs(dir, pkg string, tags map[string]string) (map[string]PackageMeta, error) {
+	specs := make([]string, 0, len(tags)*2)
+	spec := func(commit, version string) []string {
+		return []string{
+			commit + ":packages/" + pkg + "/" + PackageManifestFile,
+			commit + ":packages/" + pkg + "/" + version + "/" + PackageManifestFile,
+		}
+	}
+	for version, commit := range tags {
+		specs = append(specs, spec(commit, version)...)
+	}
+	blobs, err := gitBatchBlobs(dir, specs)
 	if err != nil {
-		return time.Time{}
+		return nil, err
 	}
-	objType, body, ok := strings.Cut(strings.TrimSpace(out), " ")
-	if !ok || objType != "tag" {
-		return time.Time{}
+	out := map[string]PackageMeta{}
+	for version, commit := range tags {
+		for _, s := range spec(commit, version) {
+			data, ok := blobs[s]
+			if !ok {
+				continue
+			}
+			var meta PackageMeta
+			if json.Unmarshal(data, &meta) == nil {
+				out[version] = meta
+				break
+			}
+		}
 	}
-	var meta struct {
-		CreatedAt time.Time `json:"created_at"`
+	return out, nil
+}
+
+// tagCreatedTimes reads every annotated tag's recorded creation time at once.
+func tagCreatedTimes(dir, pkg string) map[string]time.Time {
+	out := map[string]time.Time{}
+	prefix := "refs/tags/" + versionTagName(pkg, "")
+	lines, err := runGit(dir, "for-each-ref", "--format=%(refname) %(objecttype) %(contents)", prefix)
+	if err != nil {
+		return out
 	}
-	if json.Unmarshal([]byte(strings.TrimSpace(body)), &meta) != nil {
-		return time.Time{}
+	for _, line := range strings.Split(lines, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), " ", 3)
+		if len(fields) < 3 || fields[1] != "tag" {
+			continue
+		}
+		var meta struct {
+			CreatedAt time.Time `json:"created_at"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(fields[2])), &meta) != nil {
+			continue
+		}
+		version := strings.TrimPrefix(fields[0], prefix)
+		if validVersion(version) && !meta.CreatedAt.IsZero() {
+			out[version] = meta.CreatedAt
+		}
 	}
-	return meta.CreatedAt
+	return out
 }
 
 func (s *SetRepo) loadPackageFromCommit(pkg, version, commit string) (*Package, error) {
-	data, err := runGitBytes(s.Dir, "archive", "--format=tar", commit, "--", "packages/"+pkg)
+	// Tar headers add overhead; the exact limits are enforced while unpacking.
+	data, err := runGitBytesLimit(s.Dir, maxPackageBytes*2, "archive", "--format=tar", commit, "--", "packages/"+pkg)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +284,7 @@ type tarFile struct {
 func packageFromTar(data []byte, pkg, version, source string) (*Package, error) {
 	tr := tar.NewReader(bytes.NewReader(data))
 	var entries []tarFile
+	var total int64
 	prefix := "packages/" + pkg + "/"
 	for {
 		hdr, err := tr.Next()
@@ -262,9 +307,17 @@ func packageFromTar(data []byte, pkg, version, source string) (*Package, error) 
 		default:
 			return nil, fmt.Errorf("package %s contains a special file: %s", source, name)
 		}
-		body, err := io.ReadAll(tr)
+		total += hdr.Size
+		if hdr.Size > maxFileSize || total > maxPackageBytes {
+			return nil, fmt.Errorf("package %s exceeds the load limit (%s per file, %s total)", source,
+				humanBytes(maxFileSize), humanBytes(maxPackageBytes))
+		}
+		body, err := io.ReadAll(io.LimitReader(tr, maxFileSize+1))
 		if err != nil {
 			return nil, err
+		}
+		if int64(len(body)) > maxFileSize {
+			return nil, fmt.Errorf("package %s exceeds the load limit (%s per file)", source, humanBytes(maxFileSize))
 		}
 		mode := fs.FileMode(0o644)
 		if hdr.Mode&0o111 != 0 {

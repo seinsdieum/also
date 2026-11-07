@@ -66,8 +66,8 @@ value still matches what `also` wrote.
 - **Component kinds** add a new portable directory type.
 
 Adapters and external specifications cannot execute code. All paths are
-validated, symbolic links are rejected, and external global paths must stay
-below a `global_base` directory inside the home directory.
+validated, symbolic links are rejected, and install destinations stay inside
+the project root. `global_base` is only a detection hint for `also setup`.
 
 ## Related documents
 

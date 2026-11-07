@@ -24,7 +24,6 @@ type AdapterSpec struct {
 	Display      string          `json:"display"`
 	Aliases      []string        `json:"aliases,omitempty"`
 	GlobalBase   string          `json:"global_base,omitempty"`
-	Global       Paths           `json:"global"`
 	Project      Paths           `json:"project"`
 	Bundle       Paths           `json:"bundle"`
 	Roots        []string        `json:"roots,omitempty"`
@@ -52,7 +51,6 @@ type MCPSpec struct {
 	Format            MCPFormat `json:"format"`
 	Configs           []string  `json:"configs"`
 	ProjectCandidates []string  `json:"project_candidates,omitempty"`
-	GlobalCandidates  []string  `json:"global_candidates,omitempty"`
 }
 
 type SettingsSpec struct {
@@ -68,7 +66,7 @@ func (s AdapterSpec) Harness() (*Harness, error) {
 	settingsFile := targetFunc(s.SettingsTarget())
 	h := &Harness{
 		ID: s.ID, Display: s.Display, Aliases: s.Aliases,
-		GlobalBase: s.GlobalBase, Global: s.Global, Project: s.Project, Bundle: s.Bundle,
+		GlobalBase: s.GlobalBase, Project: s.Project, Bundle: s.Bundle,
 		Roots: s.Roots, ExtraDirs: s.ExtraDirs, ExtraBase: s.ExtraBase,
 		Detect: s.Detect, InstallHints: s.InstallHints, Components: s.Components,
 	}
@@ -93,13 +91,8 @@ func (s AdapterSpec) Harness() (*Harness, error) {
 				return nil, err
 			}
 		}
-		for _, c := range s.MCP.GlobalCandidates {
-			if err := validateBasePath("mcp global candidate", c); err != nil {
-				return nil, err
-			}
-		}
-		if len(s.MCP.ProjectCandidates) > 0 || len(s.MCP.GlobalCandidates) > 0 {
-			h.MCP.Resolve = mcpResolver(h, s.MCP.ProjectCandidates, s.MCP.GlobalCandidates)
+		if len(s.MCP.ProjectCandidates) > 0 {
+			h.MCP.Resolve = mcpResolver(h, s.MCP.ProjectCandidates)
 		}
 	}
 	if s.Settings != nil {
@@ -139,17 +132,11 @@ func targetFunc(name string) func(Target) string {
 	return nil
 }
 
-func mcpResolver(h *Harness, projectCandidates, globalCandidates []string) func(scope, project string) string {
-	return func(scope, project string) string {
+func mcpResolver(h *Harness, projectCandidates []string) func(project string) string {
+	return func(project string) string {
 		var candidates []string
-		if scope == "global" {
-			for _, c := range globalCandidates {
-				candidates = append(candidates, h.resolve(scope, project, c))
-			}
-		} else {
-			for _, c := range projectCandidates {
-				candidates = append(candidates, h.resolve(scope, project, c))
-			}
+		for _, c := range projectCandidates {
+			candidates = append(candidates, h.resolve(project, c))
 		}
 		for _, c := range candidates {
 			if st, err := os.Stat(c); err == nil && st.Mode().IsRegular() {
@@ -159,7 +146,7 @@ func mcpResolver(h *Harness, projectCandidates, globalCandidates []string) func(
 		if len(candidates) > 0 {
 			return candidates[0]
 		}
-		return h.resolve(scope, project, h.paths(scope).MCP)
+		return h.resolve(project, h.Project.MCP)
 	}
 }
 
@@ -171,38 +158,6 @@ func AdapterDir() string {
 		return ExpandHome(dir)
 	}
 	return filepath.Join(HomeDir(), "adapters")
-}
-
-// validateExternalAdapter keeps a community spec inside its own global base.
-// Built-in adapters may use absolute home paths for legacy locations; external
-// specs may not, because a URL-supplied spec must not be able to edit ~/.bashrc.
-func validateExternalAdapter(h *Harness) error {
-	hasGlobal := false
-	for _, v := range pathFields(h.Global) {
-		if v == "" {
-			continue
-		}
-		hasGlobal = true
-		if strings.HasPrefix(v, "~/") || filepath.IsAbs(v) {
-			return fmt.Errorf("external adapter global path %q must be relative to global_base", v)
-		}
-	}
-	if hasGlobal && h.GlobalBase == "" {
-		return fmt.Errorf("external adapter with global paths needs global_base")
-	}
-	if h.GlobalBase != "" {
-		base := ExpandHome(h.GlobalBase)
-		home := ExpandHome("~")
-		if !isWithin(home, base) || filepath.Clean(base) == filepath.Clean(home) {
-			return fmt.Errorf("external adapter global_base must be a directory below the home directory")
-		}
-	}
-	for _, c := range h.Components {
-		if c.GlobalDir != "" && (strings.HasPrefix(c.GlobalDir, "~/") || filepath.IsAbs(c.GlobalDir)) {
-			return fmt.Errorf("external adapter component %q global dir must be relative to home", c.Kind)
-		}
-	}
-	return nil
 }
 
 func ensureExternalAdapters() {
@@ -228,10 +183,6 @@ func ensureExternalAdapters() {
 			}
 			h, err := spec.Harness()
 			if err != nil {
-				warnAdapter(path, err)
-				continue
-			}
-			if err := validateExternalAdapter(h); err != nil {
 				warnAdapter(path, err)
 				continue
 			}
@@ -290,9 +241,6 @@ func AddAdapterFileSHA256(source, want string) (*Harness, string, error) {
 		if cur.ID != h.ID {
 			others = append(others, cur)
 		}
-	}
-	if err := validateExternalAdapter(h); err != nil {
-		return nil, "", err
 	}
 	if err := ValidateAdapters(append(others, h)); err != nil {
 		return nil, "", err

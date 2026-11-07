@@ -1,5 +1,8 @@
 # also — e2e stress report
 
+> Archived pre-1.0 verification log (Russian, kept for history). Current
+> behavior is documented in [CLI.md](../CLI.md) and [CONTRACTS.md](../CONTRACTS.md).
+
 Дата: 2026-11-06. Версия `also`: 0.1.0 + исправления из этого прогона.
 
 > Исторический отчёт. В `1.0.0` разделение project/global убрано: установка

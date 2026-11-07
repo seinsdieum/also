@@ -181,7 +181,7 @@ func findIgnoreBlock(content string, kind IgnoreKind) (start, end int, ok bool) 
 
 func setIgnoreBlock(content string, kind IgnoreKind, entries []string) (string, bool) {
 	var lines []string
-	for _, e := range uniqueStrings(entries) {
+	for _, e := range UniqueStrings(entries) {
 		if e != "" {
 			lines = append(lines, e)
 		}

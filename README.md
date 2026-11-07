@@ -62,7 +62,7 @@ also init code-review for claude
 also push
 ```
 
-`also init` writes `also.json` with the package name and source harness. From then on `also push` publishes that directory and needs no path, no name and no harness. A directory without `also.json` is refused, so you cannot publish an unrelated working directory by accident.
+`also init` writes `also.json` with the package name and source harness. From then on `also push` publishes that directory and needs no path, no name and no harness. A directory without `also.json` is refused, so you cannot publish an unrelated working directory by accident. Inside a git repository `push` honors `.gitignore`; `also push --dry-run` lists every file before anything is sent, and files outside the harness layout need `--all-files`.
 
 Install the package into another directory:
 

@@ -12,10 +12,6 @@ func claudeAdapter() *Harness {
 	return &Harness{
 		ID: "claude", Display: "Claude Code", Aliases: []string{"claude-code", "cc"},
 		GlobalBase: "~/.claude",
-		Global: Paths{
-			Instr: "CLAUDE.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Hooks: "hooks", Settings: "settings.json", MCP: "~/.claude.json",
-		},
 		Project: Paths{
 			Instr: "CLAUDE.md", Skills: ".claude/skills", Commands: ".claude/commands",
 			Agents: ".claude/agents", Hooks: ".claude/hooks", Settings: ".claude/settings.json",

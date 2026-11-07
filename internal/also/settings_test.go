@@ -40,10 +40,10 @@ func TestExtractSettingsAndTargets(t *testing.T) {
 	if got["permissions"] == nil || got["statusLine"] == nil {
 		t.Fatalf("missing settings: %+v", got)
 	}
-	if f := SettingsTargetFile(MustHarness("claude").TargetPath("project", "/tmp/p")); !strings.HasSuffix(f, filepath.Join(".claude", "settings.json")) {
+	if f := SettingsTargetFile(MustHarness("claude").TargetPath("/tmp/p")); !strings.HasSuffix(f, filepath.Join(".claude", "settings.json")) {
 		t.Fatalf("bad claude settings target: %s", f)
 	}
-	if f := SettingsTargetFile(MustHarness("opencode").TargetPath("project", "/tmp/p")); !strings.HasSuffix(f, "opencode.json") {
+	if f := SettingsTargetFile(MustHarness("opencode").TargetPath("/tmp/p")); !strings.HasSuffix(f, "opencode.json") {
 		t.Fatalf("bad opencode settings target: %s", f)
 	}
 }

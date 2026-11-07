@@ -29,3 +29,36 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -count=1 -race ./...
+
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build a local release fixture
+        shell: pwsh
+        run: |
+          $dir = "fixture/releases/download/v1.0.0"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          go build -o "$dir/also-windows-amd64.exe" .
+          $hash = (Get-FileHash "$dir/also-windows-amd64.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  also-windows-amd64.exe" | Out-File -Encoding ascii "$dir/SHA256SUMS"
+      - name: run install.ps1 against the fixture
+        shell: pwsh
+        env:
+          ALSO_NO_SETUP: "1"
+          ALSO_VERSION: "1.0.0"
+          ALSO_BASE_URL: "http://127.0.0.1:8765"
+          ALSO_INSTALL_DIR: "${{ runner.temp }}/also-bin"
+        run: |
+          $server = Start-Process python -ArgumentList '-m','http.server','8765','--directory','fixture' -PassThru
+          try {
+            Start-Sleep -Seconds 2
+            ./install.ps1
+            & "$env:ALSO_INSTALL_DIR/also.exe" version
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }

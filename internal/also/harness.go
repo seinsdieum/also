@@ -45,8 +45,7 @@ func MustHarness(id string) *Harness {
 // Target resolves absolute destinations for an install.
 type Target struct {
 	Harness   *Harness
-	Scope     string
-	Project   string // absolute, empty for global
+	Project   string // absolute project root
 	Instr     string
 	Skills    string
 	Commands  string
@@ -90,64 +89,42 @@ func (t Target) ComponentDir(kind string) string {
 	return t.CustomDirs[kind]
 }
 
-func (h *Harness) targetBase(scope, project string) string {
-	if scope == "global" {
-		return ExpandHome(h.GlobalBase)
-	}
-	return project
-}
-
-func (h *Harness) paths(scope string) Paths {
-	if scope == "global" {
-		return h.Global
-	}
-	return h.Project
-}
-
-func (h *Harness) resolve(scope, project, rel string) string {
+func (h *Harness) resolve(project, rel string) string {
 	if rel == "" {
 		return ""
 	}
 	if strings.HasPrefix(rel, "~/") || filepath.IsAbs(rel) {
 		return ExpandHome(rel)
 	}
-	return filepath.Join(h.targetBase(scope, project), rel)
+	return filepath.Join(project, rel)
 }
 
-// TargetPath returns the resolved absolute path for a scope.
-func (h *Harness) TargetPath(scope, project string) Target {
-	p := h.paths(scope)
+// TargetPath returns the resolved absolute paths for a project install.
+func (h *Harness) TargetPath(project string) Target {
+	p := h.Project
 	t := Target{
-		Harness: h, Scope: scope, Project: project,
-		Instr:     h.resolve(scope, project, p.Instr),
-		Skills:    h.resolve(scope, project, p.Skills),
-		Commands:  h.resolve(scope, project, p.Commands),
-		Agents:    h.resolve(scope, project, p.Agents),
-		Plugins:   h.resolve(scope, project, p.Plugins),
-		Hooks:     h.resolve(scope, project, p.Hooks),
-		Settings:  h.resolve(scope, project, p.Settings),
-		HooksJSON: h.resolve(scope, project, p.HooksJSON),
-		MCP:       h.resolve(scope, project, p.MCP),
-		Root:      h.targetBase(scope, project),
+		Harness: h, Project: project,
+		Instr:     h.resolve(project, p.Instr),
+		Skills:    h.resolve(project, p.Skills),
+		Commands:  h.resolve(project, p.Commands),
+		Agents:    h.resolve(project, p.Agents),
+		Plugins:   h.resolve(project, p.Plugins),
+		Hooks:     h.resolve(project, p.Hooks),
+		Settings:  h.resolve(project, p.Settings),
+		HooksJSON: h.resolve(project, p.HooksJSON),
+		MCP:       h.resolve(project, p.MCP),
+		Root:      project,
+		ExtraDir:  filepath.Join(project, h.ExtraBase),
 	}
 	if h.MCP.Resolve != nil {
-		t.MCP = h.MCP.Resolve(scope, project)
-	}
-	if scope == "global" {
-		t.ExtraDir = t.Root
-	} else {
-		t.ExtraDir = filepath.Join(project, h.ExtraBase)
+		t.MCP = h.MCP.Resolve(project)
 	}
 	t.CustomDirs = map[string]string{}
 	for _, c := range h.Components {
-		rel := c.ProjectDir
-		if scope == "global" {
-			rel = c.GlobalDir
-		}
-		if rel == "" {
+		if c.ProjectDir == "" {
 			continue
 		}
-		t.CustomDirs[c.Kind] = h.resolve(scope, project, rel)
+		t.CustomDirs[c.Kind] = h.resolve(project, c.ProjectDir)
 	}
 	return t
 }

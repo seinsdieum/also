@@ -11,10 +11,6 @@ func opencodeAdapter() *Harness {
 	return &Harness{
 		ID: "opencode", Display: "OpenCode", Aliases: []string{"oc", "open-code"},
 		GlobalBase: "~/.config/opencode",
-		Global: Paths{
-			Instr: "AGENTS.md", Skills: "skills", Commands: "commands", Agents: "agents",
-			Plugins: "plugins", Hooks: "hooks", MCP: "opencode.json",
-		},
 		Project: Paths{
 			Instr: "AGENTS.md", Skills: ".opencode/skills", Commands: ".opencode/commands",
 			Agents: ".opencode/agents", Plugins: ".opencode/plugins", Hooks: ".opencode/hooks",
@@ -53,29 +49,17 @@ func opencodeAdapter() *Harness {
 	}
 }
 
-func pickOpenCodeConfig(scope, project string) string {
-	var candidates []string
-	if scope == "global" {
-		base := ExpandHome("~/.config/opencode")
-		candidates = []string{
-			filepath.Join(base, "opencode.jsonc"),
-			filepath.Join(base, "opencode.json"),
-		}
-	} else {
-		candidates = []string{
-			filepath.Join(project, ".opencode", "opencode.jsonc"),
-			filepath.Join(project, ".opencode", "opencode.json"),
-			filepath.Join(project, "opencode.jsonc"),
-			filepath.Join(project, "opencode.json"),
-		}
+func pickOpenCodeConfig(project string) string {
+	candidates := []string{
+		filepath.Join(project, ".opencode", "opencode.jsonc"),
+		filepath.Join(project, ".opencode", "opencode.json"),
+		filepath.Join(project, "opencode.jsonc"),
+		filepath.Join(project, "opencode.json"),
 	}
 	for _, c := range candidates {
 		if st, err := os.Stat(c); err == nil && st.Mode().IsRegular() {
 			return c
 		}
-	}
-	if scope == "global" {
-		return filepath.Join(ExpandHome("~/.config/opencode"), "opencode.json")
 	}
 	return filepath.Join(project, "opencode.json")
 }

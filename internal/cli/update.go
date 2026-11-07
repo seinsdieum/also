@@ -32,11 +32,16 @@ the current one because a running executable cannot be replaced.`
 			if err != nil {
 				return err
 			}
-			available := also.CompareVersions(tag, current) > 0
+			cmp := also.CompareVersions(tag, current)
+			available := cmp > 0
 			if jsonOut {
 				return printJSON(map[string]any{
-					"current": current, "latest": tag, "available": available,
+					"current": current, "latest": tag, "available": available, "reinstall": cmp < 0,
 				})
+			}
+			if cmp < 0 {
+				fmt.Printf("  %s also %s is newer than published %s; reinstall with:\n    %s\n", yellow("!"), current, tag, also.ReinstallHint)
+				return nil
 			}
 			if available {
 				fmt.Printf("  %s update available: %s → %s\n", yellow("↑"), current, blue(tag))
@@ -57,9 +62,13 @@ the current one because a running executable cannot be replaced.`
 		if jsonOut {
 			return printJSON(map[string]any{
 				"current": res.Current, "latest": res.Latest,
-				"updated": res.Updated, "manual_path": res.ManualPath,
-				"asset": res.Asset,
+				"updated": res.Updated, "reinstall": res.Reinstall,
+				"manual_path": res.ManualPath, "asset": res.Asset,
 			})
+		}
+		if res.Reinstall {
+			fmt.Printf("  %s also %s is newer than published %s; reinstall with:\n    %s\n", yellow("!"), res.Current, res.Latest, also.ReinstallHint)
+			return nil
 		}
 		if res.Updated {
 			also.MarkUpdateSeen(res.Latest)
@@ -84,6 +93,10 @@ the current one because a running executable cannot be replaced.`
 // a successful command, on stderr, so JSON output stays clean.
 func maybeNotifyUpdate() {
 	if os.Getenv("ALSO_NO_UPDATE_CHECK") != "" || os.Getenv("CI") != "" {
+		return
+	}
+	// Notices are for humans at a terminal, not for scripts and pipes.
+	if fi, err := os.Stderr.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		return
 	}
 	for _, arg := range os.Args[1:] {

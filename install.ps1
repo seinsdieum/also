@@ -25,6 +25,29 @@ try {
   if (-not $expected) { throw "also: SHA256SUMS has no entry for $asset" }
   $actual = (Get-FileHash (Join-Path $tmp $asset) -Algorithm SHA256).Hash.ToLower()
   if ($expected.ToLower() -ne $actual) { throw "also: checksum mismatch for $asset" }
+  # shortcut: SHA256SUMS comes from the same release as the binary, so a
+  # compromised release can serve both. Verify the published build attestation
+  # when the GitHub CLI is installed and authenticated; upgrade to a signed
+  # SHA256SUMS kept outside the release when a signing key exists.
+  if ($Base -eq "https://github.com/$Repo") {
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    $authenticated = $false
+    if ($gh) {
+      try {
+        & gh auth status 2>&1 | Out-Null
+        $authenticated = ($LASTEXITCODE -eq 0)
+      } catch {
+        $authenticated = $false
+      }
+    }
+    if ($authenticated) {
+      & gh attestation verify (Join-Path $tmp $asset) -R $Repo 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "also: build attestation verification failed" }
+      Write-Host "also: attestation verified"
+    } else {
+      Write-Host "also: gh not authenticated; only the release checksum was verified"
+    }
+  }
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   Copy-Item (Join-Path $tmp $asset) (Join-Path $InstallDir "also.exe") -Force
 } finally {

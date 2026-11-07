@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,9 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ScanConfigSecrets walks JSON, YAML and TOML files in a bundle and reports
-// credential-looking keys with literal values. Values that reference the
-// environment are allowed, because the secret is not stored in the package.
+// ScanConfigSecrets walks every file in a bundle and reports credential-looking
+// keys with literal values. Structured files are parsed; plain text and files
+// with comments are scanned as text. Environment references are allowed.
 func ScanConfigSecrets(files map[string]*SnapshotFile) []string {
 	var out []string
 	for rel, f := range files {
@@ -21,28 +22,49 @@ func ScanConfigSecrets(files map[string]*SnapshotFile) []string {
 			continue
 		}
 		var root any
+		parsed := true
 		switch strings.ToLower(filepath.Ext(rel)) {
 		case ".json":
 			if err := json.Unmarshal(f.Data, &root); err != nil {
-				continue
+				parsed = false
 			}
 		case ".yaml", ".yml":
 			if err := yaml.Unmarshal(f.Data, &root); err != nil {
-				continue
+				parsed = false
 			}
 		case ".toml":
 			m := map[string]any{}
 			if err := toml.Unmarshal(f.Data, &m); err != nil {
-				continue
+				parsed = false
+			} else {
+				root = m
 			}
-			root = m
 		default:
-			continue
+			parsed = false
 		}
-		walkSecretKeys(root, nil, rel, &out)
+		if parsed {
+			walkSecretKeys(root, nil, rel, &out)
+		} else {
+			out = append(out, scanTextSecrets(rel, f.Data)...)
+		}
 	}
 	sort.Strings(out)
-	return uniqueStrings(out)
+	return UniqueStrings(out)
+}
+
+var textSecretRe = regexp.MustCompile(`(?i)(token|secret|passw|api[-_]?key|authorization|credential|private[-_]?key)["']?\s*[:=]\s*["']?([^\s"',;]+)`)
+var placeholderRe = regexp.MustCompile(`(?i)^(your|example|placeholder|changeme|xxx|<|\.\.\.)`)
+
+func scanTextSecrets(rel string, data []byte) []string {
+	var out []string
+	for _, m := range textSecretRe.FindAllSubmatch(data, -1) {
+		v := string(m[2])
+		if len(v) < 8 || isEnvRef(v) || placeholderRe.MatchString(v) {
+			continue
+		}
+		out = append(out, rel+":"+string(m[1]))
+	}
+	return out
 }
 
 func walkSecretKeys(v any, path []string, file string, out *[]string) {

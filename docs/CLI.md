@@ -71,16 +71,20 @@ refused, so an unrelated working directory cannot be published by accident.
 ```sh
 also list [--refresh] [--versions] [--json]
 also show <package>[@version] [from <namespace>] [--json]
-also push [directory] [--json]
+also push [directory] [--dry-run] [--all-files] [--json]
 also adopt [directory] [for <harness>] [--name N] [--into <dir>] [--json]
 ```
 
 `also push` publishes the nearest initialized directory. With no argument it
 starts from the current directory, reads the name and harness from `also.json`,
-and needs no path. `adopt` extracts the initialized directory's harness-native
-files into a portable bundle and publishes it straight to the namespace.
-Without `--into` the extracted bundle is temporary. `--no-push` keeps the
-bundle and therefore requires `--into`.
+and needs no path. The lookup stops at the git root (or the home directory), so
+a marker in `$HOME` cannot claim every subdirectory. Inside a git repository,
+files ignored by `.gitignore` are excluded. Before publishing, `--dry-run`
+lists every file that would be included; files outside the source harness
+layout are refused unless `--all-files` is passed. `adopt` extracts the
+initialized directory's harness-native files into a portable bundle and
+publishes it straight to the namespace. Without `--into` the extracted bundle
+is temporary. `--no-push` keeps the bundle and therefore requires `--into`.
 
 ## Installs
 

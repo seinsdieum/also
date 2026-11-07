@@ -3,6 +3,7 @@ package also
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,131 @@ func runGitBytes(dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
 	}
 	return out.Bytes(), nil
+}
+
+// gitBatchBlobs reads many <commit>:<path> objects in one git process. Missing
+// objects simply have no entry in the result.
+func gitBatchBlobs(dir string, specs []string) (map[string][]byte, error) {
+	if len(specs) == 0 {
+		return map[string][]byte{}, nil
+	}
+	cmd := exec.Command("git", "cat-file", "--batch")
+	cmd.Dir = dir
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	go func() {
+		for _, spec := range specs {
+			_, _ = io.WriteString(stdin, spec+"\n")
+		}
+		_ = stdin.Close()
+	}()
+	limit := int64(len(specs))*(1<<20) + 1<<20
+	data, readErr := io.ReadAll(io.LimitReader(stdout, limit))
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("git cat-file --batch: %s", strings.TrimSpace(errOut.String()))
+	}
+	if int64(len(data)) >= limit {
+		return nil, fmt.Errorf("git cat-file --batch: output exceeds %d bytes", limit)
+	}
+	out := map[string][]byte{}
+	for _, spec := range specs {
+		nl := bytes.IndexByte(data, '\n')
+		if nl < 0 {
+			break
+		}
+		fields := strings.Fields(string(data[:nl]))
+		data = data[nl+1:]
+		if len(fields) < 3 || fields[1] != "blob" {
+			continue
+		}
+		var size int64
+		if _, err := fmt.Sscanf(fields[2], "%d", &size); err != nil || size < 0 || int64(len(data)) < size+1 {
+			break
+		}
+		out[spec] = data[:size]
+		data = data[size+1:]
+	}
+	return out, nil
+}
+
+// publishableFiles returns the paths git would track under root, relative to
+// root. The bool is false when root is not inside a git work tree.
+func publishableFiles(root string) (map[string]bool, bool) {
+	top, err := runGit(root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, false
+	}
+	top = filepath.Clean(strings.TrimSpace(top))
+	// git resolves symlinks in --show-toplevel (e.g. /var -> /private/var on
+	// macOS); resolve root too so relative paths line up.
+	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		root = resolved
+	}
+	out, err := runGitBytes(top, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, false
+	}
+	allowed := map[string]bool{}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p == "" {
+			continue
+		}
+		full := filepath.Join(top, filepath.FromSlash(p))
+		rel, err := filepath.Rel(root, full)
+		if err != nil {
+			continue
+		}
+		allowed[filepath.ToSlash(rel)] = true
+	}
+	return allowed, true
+}
+
+// runGitBytesLimit streams raw stdout but refuses to buffer more than max bytes.
+func runGitBytesLimit(dir string, max int64, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(stdout, max+1))
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		msg := strings.TrimSpace(errOut.String())
+		if msg == "" {
+			msg = waitErr.Error()
+		}
+		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("git %s: output exceeds %d bytes", strings.Join(args, " "), max)
+	}
+	return data, nil
 }
 
 // gitCommitArgs adds a fallback identity when the machine has none configured.

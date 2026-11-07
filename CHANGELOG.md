@@ -45,6 +45,25 @@ The first stable release. The initialized directory is the unit of work:
 
 ### Fixed
 
+- Instruction blocks are keyed by harness, so one package can be installed for
+  OpenCode and Codex in the same directory without colliding.
+- `also push` respects `.gitignore`, lists its file manifest with `--dry-run`,
+  and requires `--all-files` for files outside the harness layout. Credential
+  scanning now covers plain text files too.
+- `also uninstall` leaves files, config entries and instruction blocks shared
+  with another install in place.
+- Backup failures now abort the transaction instead of being ignored; the
+  process lock cannot be stolen by a concurrent stale-lock reclaim.
+- Remote packages are read with the same size limits as pushed packages.
+- Legacy global installs can be listed and removed with `--legacy-global`.
+- `also update` tells users on a build newer than the published release to
+  reinstall with `install.sh`.
+- `also list`/`also verify` batch version reads and run integrity checks with
+  bounded parallelism; the update notice no longer blocks non-interactive runs.
+- The release workflow runs tests before publishing, and CI exercises
+  `install.ps1` on Windows.
+- Deleted the unused global install paths, duplicate helpers and the stale
+  roadmap; archived the pre-1.0 e2e report under `docs/history/`.
 - `also upgrade`, `also install` and `also uninstall` resolve the initialized
   project root when run from a subdirectory.
 - Empty upgrade/reshape plans keep the previous install.

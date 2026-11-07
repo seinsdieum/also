@@ -17,7 +17,6 @@ func adapterJSON(id string) string {
   "id": "` + id + `",
   "display": "Acme Unit",
   "global_base": "~/.` + id + `",
-  "global": {"instr": "AGENTS.md", "skills": "skills", "mcp": "mcp.json"},
   "project": {"instr": "AGENTS.md", "skills": ".` + id + `/skills", "mcp": ".` + id + `/mcp.json"},
   "bundle": {"instr": "AGENTS.md", "skills": "skills", "mcp": ".mcp.json"},
   "roots": ["", ".` + id + `"],
@@ -147,7 +146,6 @@ func TestExternalAdapterCannotEscapeGlobalBase(t *testing.T) {
   "id": "evil",
   "display": "Evil",
   "global_base": "~",
-  "global": {"instr": ".bashrc"},
   "project": {"instr": "AGENTS.md"},
   "bundle": {"instr": "AGENTS.md"},
   "detect": [{"paths": ["."], "weight": 1}]

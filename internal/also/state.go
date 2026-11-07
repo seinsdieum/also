@@ -128,6 +128,53 @@ func (s *State) ownerOf(path string) *Install {
 	return nil
 }
 
+// ownersOf returns every install that lists path as one of its files.
+func (s *State) ownersOf(path string) []*Install {
+	var out []*Install
+	for idx := range s.Installs {
+		for _, f := range s.Installs[idx].Files {
+			if f.Path == path {
+				out = append(out, &s.Installs[idx])
+				break
+			}
+		}
+	}
+	return out
+}
+
+// sharedConfigEdit reports whether another install owns the same config value.
+func (s *State) sharedConfigEdit(e ConfigEdit, selfID string) bool {
+	for idx := range s.Installs {
+		if s.Installs[idx].ID == selfID {
+			continue
+		}
+		for _, oe := range s.Installs[idx].Edits {
+			if oe.File == e.File && oe.Kind == e.Kind && oe.Marker == e.Marker &&
+				stringSliceEqual(oe.Path, e.Path) && jsonEqual(oe.Value, e.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sharedBlock reports whether another install owns the same managed block.
+func (s *State) sharedBlock(b *BlockEdit, selfID string) bool {
+	if b == nil {
+		return false
+	}
+	for idx := range s.Installs {
+		if s.Installs[idx].ID == selfID {
+			continue
+		}
+		other := s.Installs[idx].Block
+		if other != nil && other.File == b.File && other.ID == b.ID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *State) Remove(id string) {
 	out := s.Installs[:0]
 	for _, in := range s.Installs {
@@ -141,9 +188,6 @@ func (s *State) Remove(id string) {
 // InstallID is stable across upgrades of one package into one harness. The
 // harness is part of the slot so the same package can live in two harnesses.
 func InstallID(set, pkg, harness, scope, project string) string {
-	if scope == "global" {
-		project = ""
-	}
 	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + harness + "\x00" + scope + "\x00" + project))
 	return hex.EncodeToString(sum[:8])
 }
@@ -151,9 +195,6 @@ func InstallID(set, pkg, harness, scope, project string) string {
 // legacyInstallID is the pre-harness slot id, kept so upgrades can adopt state
 // written by older also versions.
 func legacyInstallID(set, pkg, scope, project string) string {
-	if scope == "global" {
-		project = ""
-	}
 	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + scope + "\x00" + project))
 	return hex.EncodeToString(sum[:8])
 }

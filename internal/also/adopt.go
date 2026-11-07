@@ -89,7 +89,7 @@ func addPreservedLayers(tmp, project string, targetH *Harness, write func(string
 	if err != nil {
 		return nil
 	}
-	target := targetH.TargetPath("project", project)
+	target := targetH.TargetPath(project)
 	layerMap := map[string]map[string]string{}
 	for _, in := range st.Installs {
 		if in.Scope != "project" || in.Project == "" {
@@ -241,7 +241,7 @@ func ExtractBundle(opts AdoptOptions) (*AdoptResult, error) {
 	}
 	defer os.RemoveAll(tmp)
 	res := &AdoptResult{BundleDir: dest}
-	target := h.TargetPath("project", project)
+	target := h.TargetPath(project)
 
 	write := func(rel string, data []byte, mode os.FileMode) error {
 		rel = filepath.FromSlash(rel)

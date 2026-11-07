@@ -12,10 +12,6 @@ func codexAdapter() *Harness {
 	return &Harness{
 		ID: "codex", Display: "Codex CLI", Aliases: []string{"codex-cli"},
 		GlobalBase: "~/.codex",
-		Global: Paths{
-			Instr: "AGENTS.md", Skills: "~/.agents/skills", Hooks: "hooks",
-			HooksJSON: "hooks.json", MCP: "config.toml",
-		},
 		Project: Paths{
 			Instr: "AGENTS.md", Skills: ".agents/skills", Hooks: ".codex/hooks",
 			HooksJSON: ".codex/hooks.json", MCP: ".codex/config.toml",
