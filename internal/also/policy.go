@@ -61,21 +61,35 @@ type PolicyLimits struct {
 
 // LoadPolicy reads project/also.policy.yml. A missing file is not an error.
 func LoadPolicy(project string) (*Policy, error) {
-	return LoadPolicyFile(PolicyPath(project))
+	files := PolicyFiles(project)
+	if len(files) == 0 {
+		return nil, nil
+	}
+	var merged *Policy
+	for _, file := range files {
+		p, err := LoadPolicyFile(file)
+		if err != nil {
+			return nil, err
+		}
+		merged = mergePolicy(merged, p)
+	}
+	return merged, nil
 }
 
-// PolicyPath returns the nearest also.policy.yml, from the project up to the
-// git root. A monorepo root policy therefore protects every nested project;
-// a nested project can still carry its own stricter policy.
-func PolicyPath(project string) string {
+// PolicyFiles returns every also.policy.yml from the project up to the git
+// root, nearest first. Every file is enforced: a nested policy can add
+// restrictions but cannot disable a root deny, executable gate or signature
+// requirement.
+func PolicyFiles(project string) []string {
 	abs, err := AbsPath(project)
 	if err != nil {
-		return filepath.Join(project, PolicyFile)
+		return nil
 	}
+	var out []string
 	for cur := abs; ; cur = filepath.Dir(cur) {
 		path := filepath.Join(cur, PolicyFile)
 		if _, statErr := os.Stat(path); statErr == nil {
-			return path
+			out = append(out, path)
 		}
 		if _, statErr := os.Stat(filepath.Join(cur, ".git")); statErr == nil {
 			break
@@ -85,7 +99,107 @@ func PolicyPath(project string) string {
 			break
 		}
 	}
+	return out
+}
+
+// PolicyPath is the nearest policy file, used for display and signing.
+func PolicyPath(project string) string {
+	if files := PolicyFiles(project); len(files) > 0 {
+		return files[0]
+	}
+	abs, err := AbsPath(project)
+	if err != nil {
+		return filepath.Join(project, PolicyFile)
+	}
 	return filepath.Join(abs, PolicyFile)
+}
+
+func mergePolicy(base, next *Policy) *Policy {
+	if base == nil {
+		return next
+	}
+	if next == nil {
+		return base
+	}
+	out := *base
+	out.Namespaces = PolicyNamespaces{
+		Allow: intersectStrings(base.Namespaces.Allow, next.Namespaces.Allow),
+		Deny:  UniqueStrings(append(append([]string{}, base.Namespaces.Deny...), next.Namespaces.Deny...)),
+	}
+	out.Packages = PolicyPackages{
+		Allow: intersectStrings(base.Packages.Allow, next.Packages.Allow),
+		Deny:  UniqueStrings(append(append([]string{}, base.Packages.Deny...), next.Packages.Deny...)),
+	}
+	out.Executables = PolicyExecutables{
+		AllowHooks:    andBoolPtr(base.Executables.AllowHooks, next.Executables.AllowHooks),
+		AllowMCP:      andBoolPtr(base.Executables.AllowMCP, next.Executables.AllowMCP),
+		AllowPlugins:  andBoolPtr(base.Executables.AllowPlugins, next.Executables.AllowPlugins),
+		AllowCommands: andBoolPtr(base.Executables.AllowCommands, next.Executables.AllowCommands),
+	}
+	out.Limits = PolicyLimits{
+		MaxPackageBytes:     minPositive(base.Limits.MaxPackageBytes, next.Limits.MaxPackageBytes),
+		AllowLiteralSecrets: base.Limits.AllowLiteralSecrets && next.Limits.AllowLiteralSecrets,
+	}
+	out.Governance = mergeGovernance(base.Governance, next.Governance)
+	return &out
+}
+
+func intersectStrings(a, b []string) []string {
+	if len(a) == 0 {
+		return append([]string{}, b...)
+	}
+	if len(b) == 0 {
+		return append([]string{}, a...)
+	}
+	set := map[string]bool{}
+	for _, v := range a {
+		set[v] = true
+	}
+	var out []string
+	for _, v := range b {
+		if set[v] {
+			out = append(out, v)
+		}
+	}
+	return UniqueStrings(out)
+}
+
+func andBoolPtr(a, b *bool) *bool {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	v := *a && *b
+	return &v
+}
+
+func minPositive(a, b int64) int64 {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 || a < b {
+		return a
+	}
+	return b
+}
+
+func mergeGovernance(a, b *PolicyGovernance) *PolicyGovernance {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := *a
+	out.RequireSignature = a.RequireSignature || b.RequireSignature
+	if b.RequiredApprovals > out.RequiredApprovals {
+		out.RequiredApprovals = b.RequiredApprovals
+	}
+	out.RequiredRoles = UniqueStrings(append(append([]string{}, a.RequiredRoles...), b.RequiredRoles...))
+	out.Approvers = append(append([]PolicyApprover{}, a.Approvers...), b.Approvers...)
+	return &out
 }
 
 // LoadPolicyFile parses a policy file. A missing file is not an error; any

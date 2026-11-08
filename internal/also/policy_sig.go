@@ -194,7 +194,39 @@ func (p *Policy) ApproverFor(publicKey string) *PolicyApprover {
 
 // VerifyPolicy verifies the project policy against the trusted key set.
 func VerifyPolicy(project string) (*PolicyVerification, error) {
-	return VerifyPolicyFile(PolicyPath(project))
+	files := PolicyFiles(project)
+	if len(files) == 0 {
+		return nil, nil
+	}
+	combined := &PolicyVerification{File: files[0], Valid: true}
+	for _, file := range files {
+		status, err := VerifyPolicyFile(file)
+		if err != nil {
+			return nil, err
+		}
+		if status == nil {
+			continue
+		}
+		policy, perr := LoadPolicyFile(file)
+		if perr != nil {
+			return nil, perr
+		}
+		requires := policy != nil && policy.Governance != nil && policy.Governance.RequireSignature
+		combined.Signed = combined.Signed || status.Signed
+		combined.Signatures += status.Signatures
+		if status.Required > combined.Required {
+			combined.Required = status.Required
+		}
+		combined.Roles = UniqueStrings(append(combined.Roles, status.Roles...))
+		combined.MissingRoles = UniqueStrings(append(combined.MissingRoles, status.MissingRoles...))
+		if (requires && !status.Valid) || (status.Signed && !status.Valid) {
+			combined.Valid = false
+			if combined.Error == "" {
+				combined.Error = filepath.Base(filepath.Dir(file)) + ": " + status.Error
+			}
+		}
+	}
+	return combined, nil
 }
 
 func VerifyPolicyFile(policyPath string) (*PolicyVerification, error) {

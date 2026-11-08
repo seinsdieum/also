@@ -150,3 +150,8 @@ renumbering.
 `audit --ci` fails when a policy is unsigned, when a signature, role or approval
 is missing, and when a package or executable violates the policy. The trust
 anchor lives outside the policy file.
+
+Every policy from the project directory up to the git root is enforced. Allow
+lists intersect, deny lists and required roles union, executable gates take the
+stricter value, and the smallest size limit wins. A nested policy can add
+restrictions but cannot loosen the root policy.

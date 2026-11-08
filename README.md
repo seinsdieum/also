@@ -245,7 +245,7 @@ governance:
       key: <base64 Ed25519 public key>
 ```
 
-`also audit --policy` shows the effective file. `also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`; they remain available as advanced commands. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
+`also audit --policy` shows the effective policy. Every `also.policy.yml` from the project up to the git root is enforced, so a nested policy can add restrictions but cannot disable a root deny or signature requirement. `also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`; they remain available as advanced commands. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
 
 `also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory and fails when a policy exists but is unsigned, when a signature is invalid or untrusted, when a required role or approval is missing, and when an installed package violates the rules. There is no bypass flag: changing the policy is a reviewed, signed file change.
 

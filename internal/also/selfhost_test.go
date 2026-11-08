@@ -306,7 +306,7 @@ func TestAuditDoesNotFlagUserOwnedConfig(t *testing.T) {
 	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project}, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(project, "opencode.json"), `{"mine":true}`)
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"mine":true,"mcp":{"servers":{}}}`)
 	if out, err := runGit(project, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
@@ -444,10 +444,15 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 	for _, name := range []string{".mcp.json", "opencode.jsonc"} {
 		writeFile(t, filepath.Join(project, name), `{"mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
 	}
+	nested := filepath.Join(project, "sub")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nested, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo"}}}`)
 	if out, err := runGit(project, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc"); err != nil {
+	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc", "sub/.mcp.json"); err != nil {
 		t.Fatalf("git add: %v %s", err, out)
 	}
 	st, _ := LoadState()
@@ -455,15 +460,22 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	codes := map[string]bool{}
+	paths := map[string]bool{}
 	for _, f := range report.Findings {
 		if f.Code == "stale-infra" {
-			codes[filepath.Base(f.Path)] = true
+			paths[filepath.ToSlash(f.Path)] = true
 		}
 	}
-	for _, name := range []string{".mcp.json", "opencode.jsonc"} {
-		if !codes[name] {
-			t.Fatalf("tracked executable config %s was not reported: %+v", name, report.Findings)
+	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/sub/.mcp.json"} {
+		found := false
+		for path := range paths {
+			if strings.HasSuffix(path, suffix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("tracked executable config %s was not reported: %+v", suffix, report.Findings)
 		}
 	}
 }
@@ -1289,6 +1301,8 @@ func TestRootPolicyProtectsNestedProject(t *testing.T) {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	writeFile(t, filepath.Join(root, "also.policy.yml"), "schema: also.policy/v1\npackages:\n  deny: [p]\n")
+	// A permissive nested policy must not disable the root deny.
+	writeFile(t, filepath.Join(project, "also.policy.yml"), "schema: also.policy/v1\n")
 	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "claude", Project: project}, "", ""); err == nil {
 		t.Fatal("nested project ignored the root policy")
 	}

@@ -59,5 +59,19 @@ Advanced or plumbing commands remain callable but are hidden from `--help`:
 - Shared identical config values and files are tracked as ownership, so the
   surviving package keeps its value and the last uninstall restores the user's
   base.
-- `audit` reports stale harness files and stale config for a harness that is no
-  longer installed.
+- `audit` reports stale harness files and stale executable config, including
+  `opencode.jsonc`, nested project configs and config for an installed harness
+  that no install owns. A user-owned config with only cosmetic settings is not
+  flagged.
+- Every `also.policy.yml` from the project to the git root is enforced. A
+  nested policy can add restrictions but cannot disable a root deny, executable
+  gate or signature requirement.
+- `reshape` enforces the policy before writing. `upgrade` preflights every
+  package before applying any, and a failed upgrade leaves the lock and
+  `.gitignore` unchanged.
+- `audit --verify` derives namespace remotes from the lock and state, so it
+  works on a lock-only CI checkout.
+- The process lock waits up to 30 seconds for another command and reclaims a
+  crashed lock after 10 minutes instead of blocking for 30.
+- `push --allow-empty` works on a truly empty source, and empty collections in
+  JSON output are `[]`, not `null`.

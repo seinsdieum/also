@@ -322,12 +322,21 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, m
 		}
 		todo = append(todo, pending{idx: i, in: in, repo: repo, latest: latest, constraint: out[i].Constraint})
 	}
+	failed := false
 	for i := range out {
 		if out[i].Err != nil {
-			// Nothing is applied when any package fails preflight: a corporate
-			// upgrade must not half-succeed because one package is denied.
-			return out, nil
+			failed = true
 		}
+	}
+	if failed {
+		// Nothing is applied when any package fails preflight: a corporate
+		// upgrade must not half-succeed because one package is denied.
+		for i := range out {
+			if out[i].Err == nil && out[i].Status == "" {
+				out[i].Status = "not applied"
+			}
+		}
+		return out, nil
 	}
 	for _, p := range todo {
 		if out[p.idx].Err != nil {

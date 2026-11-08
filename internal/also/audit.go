@@ -232,18 +232,23 @@ func configHasExecutable(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, path := range [][]string{
-		{"mcp", "servers"}, {"mcpServers"}, {"mcp_servers"}, {"mcp"},
-		{"hooks"}, {"plugins"}, {"commands"},
-	} {
-		raw, ok := doc.RawAt(path...)
-		if !ok {
-			continue
+	nonEmpty := func(raw []byte) bool {
+		return !jsonEqual(raw, []byte("{}")) && !jsonEqual(raw, []byte("[]")) && string(raw) != "null"
+	}
+	// Decide from the most specific MCP path only. A parent {"mcp":{"servers":{}}}
+	// must not look executable just because the parent object exists.
+	for _, path := range [][]string{{"mcp", "servers"}, {"mcpServers"}, {"mcp_servers"}} {
+		if raw, ok := doc.RawAt(path...); ok {
+			return nonEmpty(raw)
 		}
-		if jsonEqual(raw, []byte("{}")) || jsonEqual(raw, []byte("[]")) || string(raw) == "null" {
-			continue
+	}
+	if raw, ok := doc.RawAt("mcp"); ok {
+		return nonEmpty(raw)
+	}
+	for _, path := range [][]string{{"hooks"}, {"plugins"}, {"commands"}} {
+		if raw, ok := doc.RawAt(path...); ok && nonEmpty(raw) {
+			return true
 		}
-		return true
 	}
 	return false
 }
@@ -262,15 +267,10 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	}
 	roots := harnessRootNames()
 	instructions := instructionNames()
-	bases := []string{root}
-	for idx := range st.Installs {
-		in := &st.Installs[idx]
-		if in.Project == "" {
-			continue
-		}
-		rel, err := filepath.Rel(root, in.Project)
-		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
-			bases = append(bases, in.Project)
+	configNames := map[string]bool{}
+	for _, h := range Harnesses() {
+		for cfg := range harnessConfigPaths(h) {
+			configNames[filepath.Base(cfg)] = true
 		}
 	}
 	var out []AuditFinding
@@ -311,21 +311,8 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		for _, base := range bases {
-			baseRel, berr := filepath.Rel(base, path)
-			if berr != nil || baseRel == ".." || strings.HasPrefix(baseRel, ".."+string(filepath.Separator)) {
-				continue
-			}
-			relSlash := filepath.ToSlash(baseRel)
-			for _, h := range Harnesses() {
-				if !harnessConfigPaths(h)[relSlash] {
-					continue
-				}
-				if configHasExecutable(path) {
-					add("stale-infra", path, "tracked config for "+h.ID+" defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
-				}
-				break
-			}
+		if configNames[filepath.Base(path)] && configHasExecutable(path) {
+			add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
 		// Any tracked file below a known harness root (including a nested

@@ -610,7 +610,7 @@ func newUpgradeCmd() *cobra.Command {
 					return err
 				}
 				for _, r := range results {
-					if r.Err == nil && r.Install.Project != "" {
+					if r.Err == nil && r.Status == "upgraded" && r.Install.Project != "" {
 						if err := ensureManagedIgnores(r.Install.Project, r.Install.Harness); err != nil {
 							return err
 						}
@@ -680,7 +680,10 @@ func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error
 	}
 	changed := false
 	for _, r := range results {
-		if r.Err != nil {
+		// A preflight failure leaves every package unchanged, so the lock and
+		// ignore block must not record a version or constraint that never
+		// landed on disk.
+		if r.Err != nil || r.Status != "upgraded" {
 			continue
 		}
 		for i := range st.Installs {

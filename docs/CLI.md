@@ -218,6 +218,11 @@ for <harness>` removes only entries that no remaining installed harness needs.
 `include infra` without `for` removes the whole block. `install`, `upgrade` and
 `reshape` call the same logic automatically.
 
+Policy files are enforced from the project up to the git root. A nested
+`also.policy.yml` can add restrictions but cannot loosen a root deny, executable
+gate or signature requirement; `audit --policy` shows the merged effective
+policy and the nearest file.
+
 `reshape` re-materializes this project's packages for another harness, updates
 the lock and the managed ignore block, preflights every package before writing,
 and rolls earlier packages back if a later write fails. `--all` is the explicit
