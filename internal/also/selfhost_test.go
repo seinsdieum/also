@@ -406,6 +406,44 @@ func TestIdenticalFilesAreAdoptedAfterStateLoss(t *testing.T) {
 	}
 }
 
+func TestReshapeRemovesOldConfigEdits(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"dev","mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
+	writeFile(t, filepath.Join(bundle, ".opencode", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "opencode.json")); err != nil {
+		t.Fatalf("setup did not create opencode.json: %v", err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, []string{"p"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "opencode.json")); !os.IsNotExist(err) {
+		t.Fatalf("reshape left the old harness config behind: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".opencode")); !os.IsNotExist(err) {
+		t.Fatalf("reshape left the old harness files behind: %v", err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left the new instruction file behind: %v", err)
+	}
+}
+
 func TestUpgradeStaysInMajorUnlessAsked(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)

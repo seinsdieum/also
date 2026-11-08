@@ -17,7 +17,7 @@ import (
 const SchemaAudit = "also.audit/v1"
 
 type AuditFinding struct {
-	Severity string `json:"severity"` // fail | warn
+	Severity string `json:"severity"` // fail | warn | info
 	Code     string `json:"code"`
 	Package  string `json:"package,omitempty"`
 	Harness  string `json:"harness,omitempty"`
@@ -233,7 +233,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 		for _, f := range in.Files {
 			if len(st.ownersOf(f.Path)) > 1 {
 				ap.Shared++
-				add("warn", "shared-file", f.Path, "also owned by another install")
+				add("info", "shared-file", f.Path, "also owned by another install")
 			}
 			data, err := os.ReadFile(f.Path)
 			if err != nil {
@@ -260,7 +260,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 				add("warn", "block-modified", in.Block.File, detail)
 			}
 			if st.sharedBlock(in.Block, in.ID) {
-				add("warn", "shared-block", in.Block.File, "managed block is shared with another install")
+				add("info", "shared-block", in.Block.File, "managed block is shared with another install")
 			}
 		}
 		for _, e := range in.Edits {
@@ -275,7 +275,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 			}
 			add(severity, code, e.File, detail)
 			if st.sharedConfigEdit(e, in.ID) {
-				add("warn", "shared-config", e.File, "config entry is shared with another install")
+				add("info", "shared-config", e.File, "config entry is shared with another install")
 			}
 		}
 		if in.Project != "" {

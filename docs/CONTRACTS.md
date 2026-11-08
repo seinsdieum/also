@@ -103,8 +103,9 @@ without `governance` still installs locally but fails the CI gate.
 
 `also audit --json` prints an inventory with `packages`, `findings`, `summary`,
 `lock` (file, exists, tracked, entries, verified) and optional `policy_file`.
-Findings have a severity (`fail` or `warn`) and a
-stable code such as `file-missing`, `file-modified`, `block-missing`,
+Findings have a severity (`fail`, `warn` or `info`; `info` marks shared
+identical resources and does not fail `--strict`) and a stable code such as
+`file-missing`, `file-modified`, `block-missing`,
 `block-modified`, `config-missing`, `config-modified`, `shared-file`,
 `shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
 `policy-namespace`, `policy-package`, `policy-executable`, `policy-unsigned`,

@@ -940,7 +940,13 @@ func ApplyPlan(st *State, plan *Plan, opts InstallOptions) error {
 
 func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	id := plan.Install.ID
-	old := st.FindByID(id)
+	oldID := id
+	if plan.OldInstallID != "" {
+		// A reshape moves the same package to a new harness ID; the edits and
+		// files still belong to the old slot.
+		oldID = plan.OldInstallID
+	}
+	old := st.FindByID(oldID)
 
 	// 1. Remove previous config edits.
 	if old != nil {

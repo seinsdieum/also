@@ -69,8 +69,10 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 			if ci && report.Summary.Failures > 0 {
 				return fmt.Errorf("audit found %d failure(s)", report.Summary.Failures)
 			}
-			if strict && len(report.Findings) > 0 {
-				return fmt.Errorf("audit found %d finding(s)", len(report.Findings))
+			if strict {
+				if n := actionableFindings(report); n > 0 {
+					return fmt.Errorf("audit found %d finding(s)", n)
+				}
 			}
 			return nil
 		}
@@ -84,8 +86,10 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 		if ci && report.Summary.Failures > 0 {
 			return fmt.Errorf("audit found %d failure(s)", report.Summary.Failures)
 		}
-		if strict && len(report.Findings) > 0 {
-			return fmt.Errorf("audit found %d finding(s)", len(report.Findings))
+		if strict {
+			if n := actionableFindings(report); n > 0 {
+				return fmt.Errorf("audit found %d finding(s)", n)
+			}
 		}
 		return nil
 	}
@@ -157,6 +161,18 @@ func writeSBOM(path string, report *also.AuditReport) error {
 	}
 	defer f.Close()
 	return also.WriteCycloneDX(f, report.Components())
+}
+
+// actionableFindings counts warnings and failures; shared identical resources
+// are reported as info and do not fail --strict.
+func actionableFindings(report *also.AuditReport) int {
+	n := 0
+	for _, f := range report.Findings {
+		if f.Severity != "info" {
+			n++
+		}
+	}
+	return n
 }
 
 func printAudit(report *also.AuditReport) {

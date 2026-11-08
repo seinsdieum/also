@@ -53,13 +53,20 @@ ownership and harness migration.
 - `upgrade` and `reshape` on a fresh lock-only machine keep the recorded
   namespace instead of inventing `remote-<hash>`, so no stale managed block or
   duplicate install slot is left behind.
-- `reshape` updates the managed infra `.gitignore` block for the new harness.
+- `reshape` updates the managed infra `.gitignore` block at the git root for
+  the new harness, and removes the old harness's files and config edits before
+  writing the new layout.
+- `reshape` does not fail after mutation in a checkout without `.git`.
 - OpenCode wildcard/pattern deny rules remove the affected Claude tool instead
   of silently keeping full access.
 - The lock records the installed semantic alias; `audit` rejects a constraint
   that no longer matches the pinned version.
 - A config key created by a package keeps an absent base across upgrades, so
   uninstalling does not restore the previous package value.
+- Shared identical files/blocks/config entries are `info`, so `audit --strict`
+  does not fail legitimate duplicate namespace installs.
+- A plain `install` detects the project layout (OpenCode, Claude, ...) before
+  falling back to the machine default harness.
 
 ### Changed
 

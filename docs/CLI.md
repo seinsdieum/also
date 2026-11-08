@@ -125,7 +125,11 @@ parts, exclusions and whether configuration was installed. Commit it.
   with the same package name from different namespaces.
 
 The file is local desired state, not a replacement for `~/.also/state.json`,
-which records what was actually written on this machine.
+which records what was actually written on this machine. After a state loss,
+`install --frozen` can re-adopt byte-identical files and the current config
+values, but it cannot recover the user's pre-install config base: a later
+`uninstall` leaves the adopted value in place. Uninstall before deleting state
+if exact config reversal matters.
 
 ## Installs
 
@@ -142,8 +146,9 @@ also prune [--dry-run] [--json]
 
 Installs target the nearest project root: the closest `also.lock` or
 `also.json`, otherwise the git root. Running from `internal/...` therefore does
-not create a second project inside the first. Use `--dir` to choose another
-project explicitly. One package can be installed into several harnesses in the
+not create a second project inside the first. The harness comes from
+`for <harness>`, then from the layout present in the project, then from the
+configured default. Use `--dir` to choose another project explicitly. One package can be installed into several harnesses in the
 same directory. `also install --frozen` with no package argument installs every
 entry in `also.lock` for the recorded harness, parts and exclusions, which is
 the intended CI form.
@@ -209,7 +214,9 @@ or digest differs, when an install is missing from the lock, and when an
 installed file, managed instruction block or managed config file is tracked by
 git (`infra-tracked`, `block-tracked`, `config-tracked`). Those findings make
 the artifact-free rule a CI invariant instead of a `.gitignore` convention.
-`--strict` exits 1 on any finding. `drift` prints only the differences.
+`--strict` exits 1 on any warning or failure; shared identical files, blocks
+and config entries are informational and do not fail it. `drift` prints only
+the differences.
 
 `--sbom` writes a CycloneDX 1.5 JSON document for the inventory. It contains one
 application component per installed package with the full SHA-256 digest and

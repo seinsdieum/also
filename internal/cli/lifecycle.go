@@ -52,6 +52,10 @@ into native config with reversible bookkeeping.`
 		}
 		spec.Exclude = splitSelectors(except)
 		spec.OnlyParts = only
+		proj, err := installProject(project)
+		if err != nil {
+			return err
+		}
 		requestedHarness := harness
 		if spec.HarnessRequested {
 			if requestedHarness != "" && !strings.EqualFold(requestedHarness, spec.Harness) {
@@ -60,10 +64,11 @@ into native config with reversible bookkeeping.`
 			requestedHarness = spec.Harness
 		}
 		if requestedHarness == "" && !spec.HarnessRequested {
-			if cwd, err := os.Getwd(); err == nil {
-				if _, in, err := also.FindInfra(cwd); err == nil && in.Harness != "" {
-					requestedHarness = in.Harness
-				}
+			// The project layout is evidence; a machine-wide default is not.
+			if id, derr := also.DetectHarness(proj); derr == nil {
+				requestedHarness = id
+			} else if _, in, ferr := also.FindInfra(proj); ferr == nil && in.Harness != "" {
+				requestedHarness = in.Harness
 			}
 		}
 		harnessID, err := resolveHarnessWord(cfg, requestedHarness, spec.HarnessRequested)
@@ -79,10 +84,6 @@ into native config with reversible bookkeeping.`
 				return fmt.Errorf("namespace %q cannot be combined with --from <url>", spec.Ref.Namespace)
 			}
 			installSet = spec.Ref.Namespace
-		}
-		proj, err := installProject(project)
-		if err != nil {
-			return err
 		}
 		constraint := spec.Ref.Version
 		lock, err := also.LoadLock(proj)
@@ -621,7 +622,13 @@ func updateIgnoreAfterReshape(results []also.ReshapeResult) error {
 		projects[r.Install.Project][r.To] = true
 	}
 	for project, harnesses := range projects {
-		data, err := os.ReadFile(filepath.Join(project, ".gitignore"))
+		root, err := also.GitProjectRoot(project)
+		if err != nil {
+			// Archive/tarball checkouts have no git; there is no ignore file
+			// to update and reshape must still succeed.
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 		if err != nil || !strings.Contains(string(data), "# also:begin infra") {
 			continue
 		}

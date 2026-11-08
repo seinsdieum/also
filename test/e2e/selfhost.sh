@@ -43,7 +43,9 @@ grep -q '^\.opencode/$' "$P/.gitignore"
 ! grep -q '^\.claude/$' "$P/.gitignore"
 
 # Everything except the files a product may want to own.
-(cd "$P" && "$ALSO" install p for opencode --except instructions --except settings --except mcp >/dev/null)
+(cd "$P" && "$ALSO" install p --except instructions --except settings --except mcp >/dev/null)
+# The project layout must select OpenCode even if the machine default is Claude.
+test -e "$P/.opencode/skills/review/SKILL.md"
 test ! -e "$P/AGENTS.md"
 test -e "$P/.opencode/skills/review/SKILL.md"
 test -e "$P/.opencode/agents/dev.md"
@@ -68,6 +70,9 @@ if (cd "$P" && "$ALSO" audit --ci --strict >/dev/null 2>&1); then
 	exit 1
 fi
 (cd "$P" && git rm -r --cached -q .opencode AGENTS.md opencode.json && git add .gitignore also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm lock >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
+# Snapshot the pre-reshape, 1.0.0 checkout for the fresh-machine phase.
+mkdir -p "$WORK/ci-base"
+(cd "$P" && git archive HEAD | tar -x -C "$WORK/ci-base")
 
 # A command from a subdirectory targets the project root, not a nested project.
 mkdir -p "$P/cmd/app"
@@ -103,10 +108,31 @@ grep -q '^\.claude/$' "$P/.gitignore"
 (cd "$P" && git add -A && ! git diff --cached --name-only | grep -qE '^(\.claude/|CLAUDE\.md)' && git reset -q)
 (cd "$P" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm reshape >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 
+# A package-created harness config is removed on reshape, not left as a
+# tracked artifact.
+R="$WORK/product3"
+mkdir -p "$R"
+(cd "$R" && git init -q . && printf '# r\n' > README.md && git add . && git -c user.name=dev -c user.email=dev@example.invalid commit -qm init >/dev/null && "$ALSO" exclude infra for opencode >/dev/null && "$ALSO" install p for opencode >/dev/null && test -e opencode.json && git add .gitignore also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm lock >/dev/null)
+(cd "$R" && "$ALSO" reshape claude >/dev/null)
+test ! -e "$R/opencode.json"
+test ! -e "$R/.opencode"
+(cd "$R" && git add -A && ! git diff --cached --name-only | grep -qE '^(opencode\.json|\.opencode/|\.claude/|CLAUDE\.md)$' && git reset -q)
+(cd "$R" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm reshape >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
+
+# A nested project inside a monorepo updates the git-root .gitignore.
+M="$WORK/mono"
+P2="$M/product"
+mkdir -p "$P2"
+(cd "$M" && git init -q . && printf '# mono\n' > README.md && git add . && git -c user.name=dev -c user.email=dev@example.invalid commit -qm init >/dev/null)
+(cd "$P2" && "$ALSO" exclude infra for opencode >/dev/null && "$ALSO" install p for opencode >/dev/null)
+(cd "$P2" && "$ALSO" reshape claude >/dev/null)
+grep -q '^\.claude/$' "$M/.gitignore"
+(cd "$M" && git add -A && ! git diff --cached --name-only | grep -qE '^product/(\.claude/|CLAUDE\.md)$' && git reset -q)
+
 # The same package from two namespaces has two lock entries.
 (cd "$Q" && "$ALSO" install p for opencode from work >/dev/null)
 python3 -c 'import json;d=json.load(open("'"$Q"'/also.lock"));assert len(d["packages"])==2, d'
-(cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm work >/dev/null && "$ALSO" audit --ci >/dev/null)
+(cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm work >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 (cd "$Q" && "$ALSO" uninstall p for opencode --namespace work >/dev/null)
 python3 -c 'import json;d=json.load(open("'"$Q"'/also.lock"));assert len(d["packages"])==1, d'
 (cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm removed >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
@@ -115,7 +141,7 @@ python3 -c 'import json;d=json.load(open("'"$Q"'/also.lock"));assert len(d["pack
 # enough, and identical existing files are adopted if the tree was restored.
 C="$WORK/ci"
 mkdir -p "$C"
-(cd "$P" && git archive HEAD | tar -x -C "$C")
+cp -a "$WORK/ci-base/." "$C/"
 mkdir -p "$WORK/home-ci"
 (
 	export HOME="$WORK/home-ci" USERPROFILE="$WORK/home-ci" ALSO_HOME="$WORK/also-ci"
@@ -124,13 +150,19 @@ mkdir -p "$WORK/home-ci"
 	cd "$C"
 	"$ALSO" install --frozen >/dev/null
 	"$ALSO" audit --ci --strict >/dev/null
-	# Upgrade and reshape on a lock-only machine must not invent a
-	# remote-<hash> namespace or leave a stale managed block.
-	"$ALSO" upgrade >/dev/null
+	# A real major upgrade and harness transition on a lock-only machine.
+	V0=$(python3 -c 'import json;print(json.load(open("also.lock"))["packages"][0]["version"])')
+	"$ALSO" upgrade --major >/dev/null
+	V1=$(python3 -c 'import json;print(json.load(open("also.lock"))["packages"][0]["version"])')
+	test "$V0" != "$V1"
 	"$ALSO" reshape claude >/dev/null
 	"$ALSO" audit --ci --strict >/dev/null
-	test "$(grep -c 'also:begin' CLAUDE.md 2>/dev/null || true)" -eq 1
+	test -e .claude/agents/dev.md
+	test ! -e .opencode
 	test ! -e AGENTS.md || ! grep -q 'also:begin' AGENTS.md
+	test ! -e opencode.json || ! grep -q 'default_agent' opencode.json
+	python3 -c 'import json;d=json.load(open("also.lock"));assert d["packages"][0]["harness"]=="claude", d'
+	test "$(grep -c 'also:begin' CLAUDE.md 2>/dev/null || true)" -eq 1
 	# State loss with the same files present must adopt them, not fail.
 	rm -f "$ALSO_HOME/state.json"
 	"$ALSO" install --frozen >/dev/null
