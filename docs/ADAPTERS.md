@@ -139,7 +139,7 @@ A harness that reuses an existing format can be added without recompiling:
 ```sh
 also add harness ./acme.json
 also add harness https://example.com/pi-adapter.json
-also list harnesses
+also list --harnesses
 also remove harness acme
 ```
 

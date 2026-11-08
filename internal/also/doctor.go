@@ -117,6 +117,22 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 	return out
 }
 
+// NamespaceNeedsRepair reports whether the cached clone exists and is dirty or
+// no longer a git repository. A missing cache is not a repair: it is cloned on
+// first use.
+func NamespaceNeedsRepair(name string, ns NamespaceConfig) bool {
+	dir := SetCachePath(ns.Remote)
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	if !isGitRepo(dir) {
+		return true
+	}
+	dirty, _, err := gitDirty(dir)
+	return err != nil || dirty
+}
+
 // Verify checks namespace contents, version tags and state references.
 func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck {
 	var out []HealthCheck

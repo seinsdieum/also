@@ -13,16 +13,49 @@ func newDoctorCmd() *cobra.Command {
 	var (
 		refresh bool
 		jsonOut bool
+		fix     bool
 	)
-	c := newCmd("doctor", "Check git, config, adapters, caches and installs")
-	c.Long = `Runs local checks without changing anything. Use --refresh to also fetch
-namespaces. Exits non-zero when a check fails.`
+	c := newCmd("doctor", "Check and repair git, config, adapters, caches and installs")
+	c.Long = `Runs local checks. Stale install records whose project directory no longer
+exists are pruned automatically. Use --refresh to also fetch namespaces, and
+--fix to re-clone a dirty or broken namespace cache. Exits non-zero when a
+check fails.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
-			return fmt.Errorf("usage: also doctor [--refresh] [--json]")
+			return fmt.Errorf("usage: also doctor [--refresh] [--fix] [--json]")
 		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
+			return err
+		}
+		var pruned int
+		var repaired []string
+		if err := withLock(func() error {
+			st, err := also.LoadState()
+			if err != nil {
+				return err
+			}
+			pruned = len(st.PruneMissingProjects())
+			if pruned > 0 {
+				if err := also.SaveState(st); err != nil {
+					return err
+				}
+			}
+			if !fix {
+				return nil
+			}
+			for _, name := range cfg.NamespaceNames() {
+				ns := cfg.Namespaces[name]
+				if !also.NamespaceNeedsRepair(name, ns) {
+					continue
+				}
+				if _, err := also.RepairNamespace(name, ns); err != nil {
+					return err
+				}
+				repaired = append(repaired, name)
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 		st, err := also.LoadState()
@@ -30,6 +63,20 @@ namespaces. Exits non-zero when a check fails.`
 			return err
 		}
 		checks := also.Doctor(cfg, st, refresh)
+		var extra []also.HealthCheck
+		if pruned > 0 {
+			extra = append(extra, also.HealthCheck{
+				Name: "prune", Status: "ok",
+				Detail: fmt.Sprintf("removed %d stale install record(s)", pruned),
+			})
+		}
+		if len(repaired) > 0 {
+			extra = append(extra, also.HealthCheck{
+				Name: "repair", Status: "ok",
+				Detail: "re-cloned " + strings.Join(repaired, ", "),
+			})
+		}
+		checks = append(extra, checks...)
 		if err := printChecks(checks, jsonOut); err != nil {
 			return err
 		}
@@ -39,45 +86,7 @@ namespaces. Exits non-zero when a check fails.`
 		return nil
 	}
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch namespaces before checking")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
-	return c
-}
-
-func newVerifyCmd() *cobra.Command {
-	var (
-		refresh bool
-		jsonOut bool
-	)
-	c := newCmd("verify [namespace]", "Verify namespace contents, tags and install state")
-	c.Long = `Checks package manifests, digests and version tags in each namespace, then
-confirms that installed packages and versions still exist. Exits non-zero when
-a check fails.`
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) > 1 {
-			return fmt.Errorf("usage: also verify [namespace] [--refresh] [--json]")
-		}
-		setName := ""
-		if len(args) == 1 {
-			setName = args[0]
-		}
-		cfg, err := also.LoadConfig()
-		if err != nil {
-			return err
-		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
-		checks := also.Verify(cfg, st, setName, refresh)
-		if err := printChecks(checks, jsonOut); err != nil {
-			return err
-		}
-		if also.HasFailures(checks) {
-			return fmt.Errorf("verify found failures")
-		}
-		return nil
-	}
-	c.Flags().BoolVar(&refresh, "refresh", false, "fetch namespaces before verifying")
+	c.Flags().BoolVar(&fix, "fix", false, "re-clone dirty or broken namespace caches")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

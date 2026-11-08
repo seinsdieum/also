@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install also and start the interactive setup.
 #   curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
-# Optional: ALSO_VERSION=1.0.0 ALSO_INSTALL_DIR="$HOME/bin" sh install.sh
+# Optional: ALSO_VERSION=0.1.0 ALSO_INSTALL_DIR="$HOME/bin" sh install.sh
 # Set ALSO_NO_SETUP=1 for unattended installs.
 set -eu
 

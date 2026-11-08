@@ -146,7 +146,7 @@ func TestAdoptPushesToRemoteWithoutSource(t *testing.T) {
 	}
 }
 
-func TestDoctorAndVerifyAfterPush(t *testing.T) {
+func TestDoctorAndAuditVerifyAfterPush(t *testing.T) {
 	tmp := setupHome(t)
 	remote := setupRemote(t)
 	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
@@ -171,15 +171,15 @@ func TestDoctorAndVerifyAfterPush(t *testing.T) {
 	if err := runCLI("doctor"); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
-	if err := runCLI("verify"); err != nil {
-		t.Fatalf("verify: %v", err)
+	if err := runCLI("audit", "--verify"); err != nil {
+		t.Fatalf("audit --verify: %v", err)
 	}
-	if err := runCLI("verify", "personal", "--json"); err != nil {
-		t.Fatalf("verify --json: %v", err)
+	if err := runCLI("audit", "--verify", "--namespace", "personal", "--json"); err != nil {
+		t.Fatalf("audit --verify --json: %v", err)
 	}
 }
 
-func TestRepairReclonesDirtyCache(t *testing.T) {
+func TestDoctorFixReclonesDirtyCache(t *testing.T) {
 	setupHome(t)
 	remote := setupRemote(t)
 	if err := runCLI("setup", "--yes", "--harness", "claude", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
@@ -193,7 +193,7 @@ func TestRepairReclonesDirtyCache(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cache, "junk.txt"), []byte("dirty\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runCLI("repair", "personal", "--yes"); err != nil {
+	if err := runCLI("doctor", "--fix"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("git", "-C", cache, "status", "--porcelain").Output()
@@ -208,13 +208,13 @@ func TestRepairReclonesDirtyCache(t *testing.T) {
 	}
 }
 
-func TestConnectAndUse(t *testing.T) {
+func TestConnectAndDefault(t *testing.T) {
 	setupHome(t)
 	remote := setupRemote(t)
 	if err := runCLI("connect", "personal", remote, "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if err := runCLI("use", "personal"); err != nil {
+	if err := runCLI("connect", "personal"); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := also.LoadConfig()

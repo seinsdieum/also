@@ -14,23 +14,43 @@ import (
 
 func newListCmd() *cobra.Command {
 	var (
-		setFlag  string
-		from     string
-		refresh  bool
-		versions bool
-		installs bool
-		jsonOut  bool
+		setFlag   string
+		from      string
+		refresh   bool
+		versions  bool
+		installs  bool
+		tree      bool
+		harnesses bool
+		harness   string
+		jsonOut   bool
 	)
-	c := newCmd("list [packages|harnesses]", "List packages in a namespace or installed harnesses")
+	c := newCmd("list [query]", "List packages, installed infrastructure or search namespaces")
+	c.Long = `Without arguments, lists packages in the active namespace. A query searches
+package names, descriptions, labels and versions in every connected namespace.
+
+Modes:
+  --versions    every content version and semantic alias
+  --installs    every install on this machine with its project
+  --tree        the installed files, blocks and config entries
+  --harnesses   supported harness adapters`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) == 1 && (args[0] == "harnesses" || args[0] == "harness") {
+		if len(args) > 1 {
+			return fmt.Errorf("usage: also list [query] [--versions] [--installs] [--tree] [--harnesses]")
+		}
+		if harnesses {
+			if len(args) > 0 {
+				return fmt.Errorf("also list --harnesses takes no query")
+			}
 			return printHarnesses()
 		}
-		if len(args) == 1 && args[0] == "packages" {
-			args = nil
+		if tree {
+			if len(args) > 0 {
+				return fmt.Errorf("also list --tree takes no query; use --harness to filter")
+			}
+			return printTree(jsonOut, harness)
 		}
-		if len(args) > 0 {
-			return fmt.Errorf("usage: also list [packages|harnesses]")
+		if len(args) == 1 {
+			return searchPackages(setFlag, from, refresh, jsonOut, args[0])
 		}
 		if installs {
 			st, err := also.LoadState()
@@ -161,6 +181,9 @@ func newListCmd() *cobra.Command {
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before listing")
 	c.Flags().BoolVar(&versions, "versions", false, "show every version")
 	c.Flags().BoolVar(&installs, "installs", false, "list every install on this machine with its project")
+	c.Flags().BoolVar(&tree, "tree", false, "show the installed infrastructure tree")
+	c.Flags().BoolVar(&harnesses, "harnesses", false, "list supported harness adapters")
+	c.Flags().StringVar(&harness, "harness", "", "filter --tree by harness")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

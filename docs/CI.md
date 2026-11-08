@@ -22,7 +22,6 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      ALSO_NO_UPDATE_CHECK: "1"
       ALSO_NO_SETUP: "1"
       ALSO_TRUSTED_POLICY_KEYS: ${{ secrets.ALSO_POLICY_PUBLIC_KEYS }}
     steps:
@@ -36,10 +35,7 @@ jobs:
       - name: reproduce the lock
         run: also install --frozen
 
-      - name: verify policy signatures, roles and approvals
-        run: also policy verify --ci
-
-      - name: fail on drift or a policy violation
+      - name: fail on drift, tracked infrastructure or a policy violation
         run: also audit --ci
 
       - name: fail on any local edit

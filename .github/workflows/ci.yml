@@ -54,7 +54,7 @@ jobs:
       - name: build a local release fixture
         shell: pwsh
         run: |
-          $dir = "fixture/releases/download/v1.0.0"
+          $dir = "fixture/releases/download/v0.1.0"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           go build -o "$dir/also-windows-amd64.exe" .
           $hash = (Get-FileHash "$dir/also-windows-amd64.exe" -Algorithm SHA256).Hash.ToLower()
@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         env:
           ALSO_NO_SETUP: "1"
-          ALSO_VERSION: "1.0.0"
+          ALSO_VERSION: "0.1.0"
           ALSO_BASE_URL: "http://127.0.0.1:8765"
           ALSO_INSTALL_DIR: "${{ runner.temp }}/also-bin"
         run: |

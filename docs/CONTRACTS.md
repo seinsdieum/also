@@ -128,30 +128,25 @@ Schema migrations are always forward-only and automatic for one major step.
 The old form stays readable through the release that introduces its successor,
 and a migration test must prove that user data survives.
 
-## What 1.0 promises
+## Pre-1.0 contract
 
-- Existing `also.pkg/v1` packages stay installable.
-- Existing `also.config/v1`/`v2` configs keep working.
-- Existing `also.state/v1` installs stay upgradeable and uninstallable.
+The project is at `0.x`. Schema identifiers are versioned independently of the
+binary and stay readable:
+
+- `also.pkg/v1` packages stay installable.
+- `also.config/v1`/`v2` configs keep working.
+- `also.state/v1` installs stay upgradeable and uninstallable.
+- `also.lock/v1` and `also.policy/v1` keep their documented fields.
 - Community adapters using `also.adapter/v1` keep loading.
-- Documented commands and flags keep their meaning within a major version.
 
-## What 1.1 through 1.3 add
+The command surface itself may change in a minor release until `1.0.0`. Within
+one release, documented flags and JSON shapes keep their meaning. `0.1.0`
+deliberately folds the read path into `audit` and `list`, keeps four core
+commands, and hides advanced commands from `also --help`; there is no
+compatibility promise for the temporary `1.x` tags that preceded this
+renumbering.
 
-`also.lock`, `also.policy.yml`, `also audit`, `also drift`, `also search`,
-`also tag`, semantic-version aliases and SBOM output are additive. Existing
-state and packages are unchanged. `Install` gained optional `digest` and
-`executables` fields inside `also.state/v1`; readers that do not know them
-ignore them. `also.lock` is optional for ordinary installs: projects without it
-keep resolving the newest version, and `--frozen` is the explicit
-reproducibility mode.
-
-`also audit --ci` is stricter: it requires a git-tracked `also.lock` and treats
-a lock/state mismatch as a failure. This is a deliberate behavior change for
-the CI gate, not a schema change. The `--no-policy` flag was removed in 1.2.0
-because a policy bypass defeats the trust model, and `--no-lock` was removed in
-1.3.0 because the lockfile is the committed source of truth.
-
-1.3.0 adds `also.policy.sig/v1`, Ed25519 signatures, roles and approvals.
-`audit --ci` fails when a policy is unsigned or a signature, role or approval is
-missing. The policy's trust anchor lives outside the file.
+`also.policy.sig` is a detached Ed25519 signature over the exact policy bytes.
+`audit --ci` fails when a policy is unsigned, when a signature, role or approval
+is missing, and when a package or executable violates the policy. The trust
+anchor lives outside the policy file.

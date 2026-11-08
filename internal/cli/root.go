@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/seinsdieum/also/internal/also"
@@ -24,7 +25,6 @@ func Execute() int {
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		return 1
 	}
-	maybeNotifyUpdate()
 	return 0
 }
 
@@ -37,44 +37,67 @@ func newCmd(use, short string) *cobra.Command {
 
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "also",
-		Short:         "Portable, versioned AI infrastructure bundles",
-		Long:          "also encodes AI infrastructure (instructions, skills, commands, agents, hooks and Model Context Protocol servers) into versioned packages in a git repository, and materializes them for any supported harness.",
+		Use:   "also",
+		Short: "Versioned, reversible AI infrastructure for any harness",
+		Long: `also keeps the AI infrastructure your team uses in one versioned package,
+installs it into any supported harness, and removes it again without residue.
+
+The core workflow is four commands:
+  install    materialize a package for a harness
+  push       publish the infrastructure in this directory
+  audit      show what is installed, where it came from and what changed
+  uninstall  remove a package and reverse its edits`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Version:       also.Version,
 	}
+	root.SetVersionTemplate("also {{.Version}}\n")
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(
+	cobra.EnableCommandSorting = false
+	root.AddGroup(
+		&cobra.Group{ID: "core", Title: "Core workflow:"},
+		&cobra.Group{ID: "setup", Title: "Setup:"},
+		&cobra.Group{ID: "inspect", Title: "Inspect:"},
+		&cobra.Group{ID: "maintain", Title: "Maintenance:"},
+	)
+
+	core := []*cobra.Command{newInstallCmd(), newPushCmd(), newAuditCmd(), newUninstallCmd()}
+	setup := []*cobra.Command{newSetupCmd(), newInitCmd(), newConnectCmd(), newAdoptCmd(), newUpgradeCmd(), newTagCmd()}
+	inspect := []*cobra.Command{newListCmd(), newShowCmd()}
+	maintain := []*cobra.Command{newDoctorCmd()}
+	for _, c := range core {
+		c.GroupID = "core"
+	}
+	for _, c := range setup {
+		c.GroupID = "setup"
+	}
+	for _, c := range inspect {
+		c.GroupID = "inspect"
+	}
+	for _, c := range maintain {
+		c.GroupID = "maintain"
+	}
+	// Advanced or plumbing commands stay callable but do not compete for
+	// attention in --help.
+	advanced := []*cobra.Command{
 		newVersionCmd(),
-		newSetupCmd(),
-		newInitCmd(),
-		newUpdateCmd(),
-		newUseCmd(),
-		newConnectCmd(),
 		newConfigCmd(),
 		newAddCmd(),
 		newRemoveCmd(),
 		newExcludeCmd(),
 		newIncludeCmd(),
-		newListCmd(),
-		newSearchCmd(),
-		newDoctorCmd(),
-		newVerifyCmd(),
-		newRepairCmd(),
-		newAuditCmd(),
-		newDriftCmd(),
 		newPolicyCmd(),
-		newShowCmd(),
-		newTagCmd(),
-		newPushCmd(),
-		newAdoptCmd(),
-		newInstallCmd(),
-		newUpgradeCmd(),
 		newReshapeCmd(),
-		newTreeCmd(),
-		newUninstallCmd(),
-		newPruneCmd(),
-	)
+	}
+	for _, c := range advanced {
+		c.Hidden = true
+	}
+
+	root.AddCommand(core...)
+	root.AddCommand(setup...)
+	root.AddCommand(inspect...)
+	root.AddCommand(maintain...)
+	root.AddCommand(advanced...)
 	return root
 }
 
@@ -168,11 +191,12 @@ func newConnectCmd() *cobra.Command {
 		migrate bool
 		yes     bool
 	)
-	c := newCmd("connect <name> <git-url>", "Connect a remote namespace")
+	c := newCmd("connect <name> [<git-url>]", "Connect a remote namespace or choose the default")
 	c.Long = `Connect a git repository that stores also packages. The namespace is just a
 name plus a remote URL; the local clone is an internal cache. The repository
 must already exist and be reachable.
 
+With one argument, choose an already-connected namespace as the default.
 Without arguments, list connected namespaces.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
@@ -182,8 +206,20 @@ Without arguments, list connected namespaces.`
 		if len(args) == 0 {
 			return listNamespaces(cfg)
 		}
+		if len(args) == 1 {
+			sc, ok := cfg.Namespaces[args[0]]
+			if !ok {
+				return fmt.Errorf("I don't know namespace %q. You've got: %s", args[0], strings.Join(cfg.NamespaceNames(), ", "))
+			}
+			cfg.DefaultNamespace = args[0]
+			if err := withLock(func() error { return also.SaveConfig(cfg) }); err != nil {
+				return err
+			}
+			fmt.Printf("using namespace %s (%s)\n", args[0], sc.Remote)
+			return nil
+		}
 		if len(args) != 2 {
-			return fmt.Errorf("usage: also connect <name> <git-url>")
+			return fmt.Errorf("usage: also connect <name> [<git-url>]")
 		}
 		if !yes && promptAvailable() {
 			ok, err := confirm("Connect "+args[0]+" to "+args[1]+"?", true)

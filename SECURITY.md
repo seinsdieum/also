@@ -46,7 +46,7 @@ agent or hook does when the harness later runs it. Review a package before
 installing it, especially `hooks/` and executable scripts.
 
 `also audit` records and reports the executable surface: Model Context Protocol
-servers, hooks, plugins and commands. `also drift` shows files, managed blocks
+servers, hooks, plugins and commands. `also audit --drift` shows files, managed blocks
 and configuration entries that no longer match the recorded state. Neither
 command executes package content.
 
@@ -103,7 +103,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 `install.sh` and `install.ps1` verify the SHA-256 checksum and, when the GitHub
 CLI is installed and authenticated, run `gh attestation verify` before the
-binary is installed. `also update` does the same for its download. The
+binary is installed. The installer does the same for its download. The
 attestation binds that binary to the release workflow and commit; it does not
 audit the source for you.
 

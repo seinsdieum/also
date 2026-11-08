@@ -74,7 +74,7 @@ git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 "$WORK/bin/also" audit --ci >/dev/null
 "$WORK/bin/also" audit --sbom "$WORK/sbom.json" >/dev/null
 grep -q 'CycloneDX' "$WORK/sbom.json"
-"$WORK/bin/also" policy >/dev/null
+"$WORK/bin/also" audit --policy >/dev/null
 
 # Two packages in one project: uninstall must remove the right state record and
 # the matching lock entry, not the neighbor after the slice shifts.

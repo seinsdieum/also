@@ -25,37 +25,91 @@ func auditProject(dir string) (string, error) {
 
 func newAuditCmd() *cobra.Command {
 	var (
-		all     bool
-		jsonOut bool
-		ci      bool
-		strict  bool
-		sbom    string
-		dir     string
+		all        bool
+		jsonOut    bool
+		ci         bool
+		strict     bool
+		sbom       string
+		dir        string
+		namespace  string
+		drift      bool
+		verify     bool
+		showPolicy bool
+		refresh    bool
 	)
-	c := newCmd("audit", "Inventory installed packages, drift and executable surface")
+	c := newCmd("audit", "Show what is installed, where it came from and what changed")
 	c.Long = `Reports what is installed in this directory (or everywhere with --all):
 the namespace and content version it came from, every recorded file, managed
 instruction block and config edit, and every component that can execute code:
 MCP servers, hooks, plugins and commands.
+
+Three focused modes use the same command:
+  --drift    only the files, blocks and config entries that differ
+  --verify   namespace contents, version tags and install references
+  --policy   the effective also.policy.yml and its signature status
 
 Exit code is 0 unless --ci is set and the report contains a failure. A
 modified user file is a warning; a missing file, block or config entry is a
 failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
-			return fmt.Errorf("usage: also audit [--all] [--json] [--ci] [--sbom <path>]")
+			return fmt.Errorf("usage: also audit [--all] [--json] [--ci] [--strict] [--drift|--verify|--policy] [--sbom <path>]")
+		}
+		modes := 0
+		for _, on := range []bool{drift, verify, showPolicy} {
+			if on {
+				modes++
+			}
+		}
+		if modes > 1 {
+			return fmt.Errorf("choose one of --drift, --verify or --policy")
 		}
 		project, err := auditProject(dir)
 		if err != nil {
 			return err
 		}
+		if showPolicy {
+			if err := printPolicy(project, jsonOut); err != nil {
+				return err
+			}
+			if ci {
+				status, err := also.VerifyPolicy(project)
+				if err != nil {
+					return err
+				}
+				if status == nil {
+					return fmt.Errorf("no policy at %s", filepath.Join(project, also.PolicyFile))
+				}
+				if !status.Valid {
+					return fmt.Errorf("policy verification failed")
+				}
+			}
+			return nil
+		}
 		st, err := also.LoadState()
 		if err != nil {
 			return err
 		}
+		if verify {
+			cfg, err := also.LoadConfig()
+			if err != nil {
+				return err
+			}
+			checks := also.Verify(cfg, st, namespace, refresh)
+			if err := printChecks(checks, jsonOut); err != nil {
+				return err
+			}
+			if also.HasFailures(checks) {
+				return fmt.Errorf("verify found failures")
+			}
+			return nil
+		}
 		report, err := also.Audit(st, project, all, ci)
 		if err != nil {
 			return err
+		}
+		if drift {
+			return printDrift(report, jsonOut)
 		}
 		if sbom != "" {
 			if sbom == "-" && jsonOut {
@@ -94,61 +148,37 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 		return nil
 	}
 	c.Flags().BoolVar(&all, "all", false, "include installs from every directory and legacy global installs")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print the full report as JSON")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&ci, "ci", false, "exit 1 when the report contains a failure")
 	c.Flags().BoolVar(&strict, "strict", false, "exit 1 on any finding, including user edits")
+	c.Flags().BoolVar(&drift, "drift", false, "show only files, blocks and config entries that differ")
+	c.Flags().BoolVar(&verify, "verify", false, "verify namespace contents, tags and install references")
+	c.Flags().BoolVar(&showPolicy, "policy", false, "show the effective also.policy.yml")
+	c.Flags().StringVar(&namespace, "namespace", "", "namespace to verify (with --verify)")
+	c.Flags().BoolVar(&refresh, "refresh", false, "fetch namespaces before verifying")
 	c.Flags().StringVar(&sbom, "sbom", "", "write a CycloneDX SBOM to this path (- for stdout)")
 	c.Flags().StringVarP(&dir, "dir", "p", "", "directory to audit (default: current directory)")
 	return c
 }
 
-func newDriftCmd() *cobra.Command {
-	var (
-		all     bool
-		jsonOut bool
-		dir     string
-	)
-	c := newCmd("drift", "Show installed files and config entries that changed")
-	c.Long = `Compares the recorded install state with the files on disk. Modified files
-are warnings; missing files, blocks and config entries are failures.`
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			return fmt.Errorf("usage: also drift [--all] [--json]")
-		}
-		project, err := auditProject(dir)
-		if err != nil {
+func printDrift(report *also.AuditReport, jsonOut bool) error {
+	if jsonOut {
+		if err := printJSON(map[string]any{
+			"schema": report.Schema, "project": report.Project,
+			"generated_at": report.GeneratedAt, "findings": report.Findings,
+			"summary": report.Summary,
+		}); err != nil {
 			return err
 		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
-		report, err := also.Audit(st, project, all, false)
-		if err != nil {
-			return err
-		}
-		if jsonOut {
-			if err := printJSON(map[string]any{
-				"schema": report.Schema, "project": report.Project,
-				"generated_at": report.GeneratedAt, "findings": report.Findings,
-				"summary": report.Summary,
-			}); err != nil {
-				return err
-			}
-		} else if len(report.Findings) == 0 {
-			fmt.Printf("no drift: %d package(s) match the recorded state\n", report.Summary.Packages)
-		} else {
-			printFindings(report.Findings)
-		}
-		if report.Summary.Failures > 0 {
-			return fmt.Errorf("drift: %d failure(s)", report.Summary.Failures)
-		}
-		return nil
+	} else if len(report.Findings) == 0 {
+		fmt.Printf("no drift: %d package(s) match the recorded state\n", report.Summary.Packages)
+	} else {
+		printFindings(report.Findings)
 	}
-	c.Flags().BoolVar(&all, "all", false, "include installs from every directory and legacy global installs")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print findings as JSON")
-	c.Flags().StringVarP(&dir, "dir", "p", "", "directory to inspect (default: current directory)")
-	return c
+	if report.Summary.Failures > 0 {
+		return fmt.Errorf("drift: %d failure(s)", report.Summary.Failures)
+	}
+	return nil
 }
 
 func writeSBOM(path string, report *also.AuditReport) error {
@@ -241,56 +271,49 @@ func printFindings(findings []also.AuditFinding) {
 	}
 }
 
-func newPolicyCmd() *cobra.Command {
-	var (
-		dir     string
-		jsonOut bool
-	)
-	c := newCmd("policy", "Show the project policy that install and audit enforce")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			return fmt.Errorf("usage: also policy [--json]")
-		}
-		project, err := auditProject(dir)
-		if err != nil {
-			return err
-		}
-		p, err := also.LoadPolicy(project)
-		if err != nil {
-			return err
-		}
-		path := filepath.Join(project, also.PolicyFile)
-		if p == nil {
-			if jsonOut {
-				return printJSON(map[string]any{"file": path, "exists": false})
-			}
-			fmt.Printf("no policy at %s\n", path)
-			return nil
-		}
-		status, err := also.VerifyPolicy(project)
-		if err != nil {
-			return err
-		}
+func printPolicy(project string, jsonOut bool) error {
+	p, err := also.LoadPolicy(project)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(project, also.PolicyFile)
+	if p == nil {
 		if jsonOut {
-			return printJSON(map[string]any{
-				"file": path, "exists": true, "namespaces": p.Namespaces,
-				"packages": p.Packages, "executables": p.Executables, "limits": p.Limits,
-				"governance": p.Governance, "signature": status,
-			})
+			return printJSON(map[string]any{"file": path, "exists": false})
 		}
-		fmt.Printf("policy: %s\n", path)
-		fmt.Printf("namespaces: allow=%v deny=%v\n", p.Namespaces.Allow, p.Namespaces.Deny)
-		fmt.Printf("packages:   allow=%v deny=%v\n", p.Packages.Allow, p.Packages.Deny)
-		fmt.Printf("executables: hooks=%s mcp=%s plugins=%s commands=%s\n",
-			policyBool(p.Executables.AllowHooks), policyBool(p.Executables.AllowMCP),
-			policyBool(p.Executables.AllowPlugins), policyBool(p.Executables.AllowCommands))
-		fmt.Printf("limits:     max_package_bytes=%d allow_literal_secrets=%t\n",
-			p.Limits.MaxPackageBytes, p.Limits.AllowLiteralSecrets)
-		printPolicySignature(p, status)
+		fmt.Printf("no policy at %s\n", path)
 		return nil
 	}
-	c.Flags().StringVarP(&dir, "dir", "p", "", "directory whose policy to read (default: current directory)")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	status, err := also.VerifyPolicy(project)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(map[string]any{
+			"file": path, "exists": true, "namespaces": p.Namespaces,
+			"packages": p.Packages, "executables": p.Executables, "limits": p.Limits,
+			"governance": p.Governance, "signature": status,
+		})
+	}
+	fmt.Printf("policy: %s\n", path)
+	fmt.Printf("namespaces: allow=%v deny=%v\n", p.Namespaces.Allow, p.Namespaces.Deny)
+	fmt.Printf("packages:   allow=%v deny=%v\n", p.Packages.Allow, p.Packages.Deny)
+	fmt.Printf("executables: hooks=%s mcp=%s plugins=%s commands=%s\n",
+		policyBool(p.Executables.AllowHooks), policyBool(p.Executables.AllowMCP),
+		policyBool(p.Executables.AllowPlugins), policyBool(p.Executables.AllowCommands))
+	fmt.Printf("limits:     max_package_bytes=%d allow_literal_secrets=%t\n",
+		p.Limits.MaxPackageBytes, p.Limits.AllowLiteralSecrets)
+	printPolicySignature(p, status)
+	return nil
+}
+
+// newPolicyCmd is the advanced governance group. The read-only view is
+// "also audit --policy"; this group only signs and manages trust anchors.
+func newPolicyCmd() *cobra.Command {
+	c := newCmd("policy <keygen|trust|sign|verify>", "Manage signed policy governance")
+	c.Long = `Signs also.policy.yml and manages the trust anchor outside it. The effective
+policy is shown by "also audit --policy".`
+	c.Hidden = true
 	c.AddCommand(newPolicyKeygenCmd(), newPolicyTrustCmd(), newPolicySignCmd(), newPolicyVerifyCmd())
 	return c
 }
@@ -326,124 +349,105 @@ func policyBool(v *bool) string {
 	return "denied"
 }
 
-func newSearchCmd() *cobra.Command {
-	var (
-		setFlag string
-		from    string
-		refresh bool
-		jsonOut bool
-	)
-	c := newCmd("search [query]", "Search packages in connected namespaces")
-	c.Long = `Searches package names and descriptions in every connected namespace. This is a
-registry for the namespaces you already trust, not a public catalog.`
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) > 1 {
-			return fmt.Errorf("usage: also search [query]")
-		}
-		query := ""
-		if len(args) == 1 {
-			query = strings.ToLower(strings.TrimSpace(args[0]))
-		}
-		cfg, err := also.LoadConfig()
+type searchHit struct {
+	Namespace   string           `json:"namespace"`
+	Package     string           `json:"package"`
+	Version     also.VersionInfo `json:"version"`
+	Description string           `json:"description,omitempty"`
+	Remote      string           `json:"remote"`
+	Error       string           `json:"error,omitempty"`
+}
+
+// searchPackages is the "list <query>" mode. It searches every connected
+// namespace unless a namespace or remote is given.
+func searchPackages(setFlag, from string, refresh, jsonOut bool, query string) error {
+	cfg, err := also.LoadConfig()
+	if err != nil {
+		return err
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	var names []string
+	if setFlag != "" || from != "" {
+		name, sc, err := requireSet(nil, cfg, setFlag, from)
 		if err != nil {
 			return err
 		}
-		type hit struct {
-			Namespace   string           `json:"namespace"`
-			Package     string           `json:"package"`
-			Version     also.VersionInfo `json:"version"`
-			Description string           `json:"description,omitempty"`
-			Remote      string           `json:"remote"`
-			Error       string           `json:"error,omitempty"`
-		}
-		var names []string
-		if setFlag != "" || from != "" {
-			name, sc, err := requireSet(cmd, cfg, setFlag, from)
-			if err != nil {
-				return err
-			}
-			cfg.Namespaces[name] = sc
-			names = []string{name}
-		} else {
-			names = cfg.NamespaceNames()
-		}
-		if len(names) == 0 {
-			return fmt.Errorf("no namespace configured; add one with: also connect <name> <git-url>")
-		}
-		var hits []hit
-		for _, name := range names {
-			sc := cfg.Namespaces[name]
-			repo, err := also.OpenSet(name, sc, refresh)
-			if err != nil {
-				hits = append(hits, hit{Namespace: name, Remote: sc.Remote, Error: err.Error()})
-				continue
-			}
-			pkgs, err := repo.Packages()
-			if err != nil {
-				hits = append(hits, hit{Namespace: name, Remote: sc.Remote, Error: err.Error()})
-				continue
-			}
-			for _, pkg := range pkgs {
-				vs, err := repo.Versions(pkg)
-				if err != nil || len(vs) == 0 {
-					continue
-				}
-				meta, _ := repo.PackageMeta(pkg)
-				latest := vs[0]
-				haystack := strings.ToLower(strings.Join([]string{
-					pkg, meta.Description, latest.Label, latest.Harness, strings.Join(latest.Semver, " "),
-				}, "\n"))
-				if query != "" && !strings.Contains(haystack, query) {
-					continue
-				}
-				hits = append(hits, hit{
-					Namespace: name, Package: pkg, Version: latest,
-					Description: meta.Description, Remote: sc.Remote,
-				})
-			}
-		}
-		sort.Slice(hits, func(i, j int) bool {
-			if hits[i].Namespace != hits[j].Namespace {
-				return hits[i].Namespace < hits[j].Namespace
-			}
-			return hits[i].Package < hits[j].Package
-		})
-		if jsonOut {
-			return printJSON(map[string]any{"query": query, "results": hits})
-		}
-		var failed []string
-		for _, h := range hits {
-			if h.Error != "" {
-				failed = append(failed, h.Namespace+": "+h.Error)
-			}
-		}
-		printWarnings("unreadable namespaces", failed)
-		if len(hits) == len(failed) && len(failed) > 0 {
-			return fmt.Errorf("no namespace could be searched")
-		}
-		var found []hit
-		for _, h := range hits {
-			if h.Error == "" {
-				found = append(found, h)
-			}
-		}
-		if len(found) == 0 {
-			fmt.Println("no matching packages")
-			return nil
-		}
-		w := newTabWriter()
-		fmt.Fprintf(w, "NAMESPACE\tPACKAGE\tVERSION\tSEMVER\tDESCRIPTION\n")
-		for _, h := range found {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", h.Namespace, h.Package, short(h.Version.Version),
-				orDash(strings.Join(h.Version.Semver, ", ")), orDash(h.Description))
-		}
-		return w.Flush()
+		cfg.Namespaces[name] = sc
+		names = []string{name}
+	} else {
+		names = cfg.NamespaceNames()
 	}
-	addNamespaceFlag(c, &setFlag)
-	c.Flags().StringVar(&from, "from", "", "search a remote git URL without configuring a namespace")
-	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remotes before searching")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
-	return c
+	if len(names) == 0 {
+		return fmt.Errorf("no namespace configured; add one with: also connect <name> <git-url>")
+	}
+	var hits []searchHit
+	for _, name := range names {
+		sc := cfg.Namespaces[name]
+		repo, err := also.OpenSet(name, sc, refresh)
+		if err != nil {
+			hits = append(hits, searchHit{Namespace: name, Remote: sc.Remote, Error: err.Error()})
+			continue
+		}
+		pkgs, err := repo.Packages()
+		if err != nil {
+			hits = append(hits, searchHit{Namespace: name, Remote: sc.Remote, Error: err.Error()})
+			continue
+		}
+		for _, pkg := range pkgs {
+			vs, err := repo.Versions(pkg)
+			if err != nil || len(vs) == 0 {
+				continue
+			}
+			meta, _ := repo.PackageMeta(pkg)
+			latest := vs[0]
+			haystack := strings.ToLower(strings.Join([]string{
+				pkg, meta.Description, latest.Label, latest.Harness, strings.Join(latest.Semver, " "),
+			}, "\n"))
+			if query != "" && !strings.Contains(haystack, query) {
+				continue
+			}
+			hits = append(hits, searchHit{
+				Namespace: name, Package: pkg, Version: latest,
+				Description: meta.Description, Remote: sc.Remote,
+			})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Namespace != hits[j].Namespace {
+			return hits[i].Namespace < hits[j].Namespace
+		}
+		return hits[i].Package < hits[j].Package
+	})
+	if jsonOut {
+		return printJSON(map[string]any{"query": query, "results": hits})
+	}
+	var failed []string
+	for _, h := range hits {
+		if h.Error != "" {
+			failed = append(failed, h.Namespace+": "+h.Error)
+		}
+	}
+	printWarnings("unreadable namespaces", failed)
+	if len(hits) == len(failed) && len(failed) > 0 {
+		return fmt.Errorf("no namespace could be searched")
+	}
+	var found []searchHit
+	for _, h := range hits {
+		if h.Error == "" {
+			found = append(found, h)
+		}
+	}
+	if len(found) == 0 {
+		fmt.Println("no matching packages")
+		return nil
+	}
+	w := newTabWriter()
+	fmt.Fprintf(w, "NAMESPACE\tPACKAGE\tVERSION\tSEMVER\tDESCRIPTION\n")
+	for _, h := range found {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", h.Namespace, h.Package, short(h.Version.Version),
+			orDash(strings.Join(h.Version.Semver, ", ")), orDash(h.Description))
+	}
+	return w.Flush()
 }
 
 func newTagCmd() *cobra.Command {

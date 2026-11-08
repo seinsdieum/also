@@ -109,12 +109,12 @@ func TestJSONCommands(t *testing.T) {
 	if checks, ok := decodeJSON(t, out).([]any); !ok || len(checks) == 0 {
 		t.Fatalf("unexpected doctor JSON: %s", out)
 	}
-	out, err = runCLICapture(t, "verify", "--json")
+	out, err = runCLICapture(t, "audit", "--verify", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if checks, ok := decodeJSON(t, out).([]any); !ok || len(checks) == 0 {
-		t.Fatalf("unexpected verify JSON: %s", out)
+		t.Fatalf("unexpected audit --verify JSON: %s", out)
 	}
 
 	out, err = runCLICapture(t, "uninstall", "demo", "--all", "--json")
@@ -131,8 +131,8 @@ func TestUsageErrorsExitNonZero(t *testing.T) {
 	for _, args := range [][]string{
 		{"install"},
 		{"connect", "a", "b", "c"},
-		{"verify", "a", "b"},
-		{"repair", "--all", "extra"},
+		{"audit", "--drift", "--verify"},
+		{"doctor", "extra"},
 	} {
 		if err := runCLI(args...); err == nil {
 			t.Fatalf("%v should fail", args)

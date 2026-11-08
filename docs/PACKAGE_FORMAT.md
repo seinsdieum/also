@@ -111,7 +111,7 @@ This state is what makes `upgrade`, `reshape`, `tree`, and `uninstall` safe and 
 - `@latest` or no suffix — version whose directory was last touched by the newest commit.
 - `@<4+ hex prefix>` — unique version prefix.
 - `@<label>` — newest version carrying that label.
-- `@^1.4`, `@~1.4.2`, `@1.x`, `@>=1.2 <2.0`, `@1.4.0` — the highest semantic
+- `@^0.1`, `@~0.1.2`, `@0.x`, `@>=0.1 <0.2`, `@0.1.0` — the highest semantic
   alias that satisfies the range.
 
 A semantic version is a tag under `refs/tags/also/<package>/semver/<version>`

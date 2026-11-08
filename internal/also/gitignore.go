@@ -169,7 +169,13 @@ func IgnoreBlockEntries(project string, kind IgnoreKind) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	return IgnoreBlockEntriesAt(filepath.Join(root, ".gitignore"), kind)
+}
+
+// IgnoreBlockEntriesAt reads a managed block from a specific .gitignore. It
+// works for archive checkouts that have no .git yet.
+func IgnoreBlockEntriesAt(path string, kind IgnoreKind) ([]string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

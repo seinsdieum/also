@@ -14,27 +14,30 @@ import (
 
 func newInstallCmd() *cobra.Command {
 	var (
-		setFlag  string
-		from     string
-		harness  string
-		project  string
-		force    bool
-		offline  bool
-		noConfig bool
-		jsonOut  bool
-		frozen   bool
-		update   bool
-		except   []string
-		only     bool
-		latest   bool
+		setFlag     string
+		from        string
+		harness     string
+		project     string
+		force       bool
+		offline     bool
+		noConfig    bool
+		jsonOut     bool
+		frozen      bool
+		update      bool
+		except      []string
+		only        bool
+		latest      bool
+		noGitignore bool
 	)
 	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
 is "also install <package> for <harness>" or
 "also install <part> <kind> from <package> [for <harness>] [from <namespace>]".
-Installs always target the current directory. Instructions are installed as a
+Installs target the nearest project root. Instructions are installed as a
 managed block; skills, commands and agents as files; MCP and hooks are merged
-into native config with reversible bookkeeping.`
+into native config with reversible bookkeeping. By default the managed harness
+paths are added to the project .gitignore, so generated files do not enter the
+product history.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -44,7 +47,7 @@ into native config with reversible bookkeeping.`
 			if !frozen {
 				return fmt.Errorf("usage: also install <package> [for <harness>] [from <namespace>], or also install --frozen with no package to replay also.lock")
 			}
-			return installFromLock(cfg, project, force, offline, jsonOut)
+			return installFromLock(cfg, project, force, offline, jsonOut, noGitignore)
 		}
 		spec, err := parseInstallArgs(args, cfg)
 		if err != nil {
@@ -180,6 +183,11 @@ into native config with reversible bookkeeping.`
 					return err
 				}
 			}
+			if !noGitignore {
+				if err := ensureManagedIgnores(proj, harnessID); err != nil {
+					return err
+				}
+			}
 			if jsonOut {
 				return printJSON(planOutput(plan))
 			}
@@ -200,6 +208,7 @@ into native config with reversible bookkeeping.`
 	c.Flags().StringArrayVar(&except, "except", nil, "exclude a kind or name, e.g. --except instructions (repeatable)")
 	c.Flags().BoolVar(&only, "only", false, "replace the existing part selection instead of adding to it")
 	c.Flags().BoolVar(&latest, "latest", false, "do not pin the resolved semantic version to ^major.minor.patch")
+	c.Flags().BoolVar(&noGitignore, "no-gitignore", false, "do not add the managed harness block to .gitignore")
 	return c
 }
 
@@ -305,7 +314,7 @@ func checkLockConflicts(plans []*also.Plan, force bool) error {
 	return nil
 }
 
-func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool) error {
+func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGitignore bool) error {
 	project, err := installProject(dir)
 	if err != nil {
 		return err
@@ -465,6 +474,11 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		if jsonOut {
 			return printJSON(out)
 		}
+		if !noGitignore {
+			if err := ensureManagedIgnores(project, ""); err != nil {
+				return err
+			}
+		}
 		fmt.Printf("installed %d package(s) from also.lock\n", len(out))
 		for _, item := range out {
 			fmt.Printf("  %s/%s@%s -> %s\n", item.Namespace, item.Package, short(item.Version), item.Harness)
@@ -572,6 +586,13 @@ func newUpgradeCmd() *cobra.Command {
 			if !check {
 				if err := refreshLockAfterUpgrade(cwd, results); err != nil {
 					return err
+				}
+				for _, r := range results {
+					if r.Err == nil && r.Install.Project != "" {
+						if err := ensureManagedIgnores(r.Install.Project, r.Install.Harness); err != nil {
+							return err
+						}
+					}
 				}
 			}
 			failed := 0
@@ -734,95 +755,12 @@ func preflightIgnoreUpdate(project string) error {
 // harness. Without this, an agent's "git add -A" stages .claude/CLAUDE.md and
 // the next audit fails on tracked infrastructure.
 func updateIgnoreAfterReshape(results []also.ReshapeResult) error {
-	st, err := also.LoadState()
-	if err != nil {
-		return err
-	}
-	// The managed block belongs to the git root and is shared by every project
-	// under it. A reshape of one project must union the harnesses, never
-	// replace the block with only the new harness.
-	harnesses := map[string]map[string]bool{}
-	pathByKey := map[string]string{}
-	gitByKey := map[string]bool{}
-	add := func(project, harness string) {
-		if project == "" || harness == "" {
-			return
-		}
-		root, err := also.GitProjectRoot(project)
-		key, path, git := project, project, false
-		if err == nil {
-			key, path, git = root, root, true
-		}
-		if harnesses[key] == nil {
-			harnesses[key] = map[string]bool{}
-			pathByKey[key] = path
-			gitByKey[key] = git
-		}
-		harnesses[key][harness] = true
-	}
 	for _, r := range results {
 		if r.Err != nil || r.Status != "reshaped" || r.Install.Project == "" {
 			continue
 		}
-		add(r.Install.Project, r.Install.Harness)
-		add(r.Install.Project, r.To)
-	}
-	for key, path := range pathByKey {
-		for _, in := range st.Installs {
-			if in.Harness == "" || in.Project == "" {
-				continue
-			}
-			if gitByKey[key] {
-				rel, rerr := filepath.Rel(path, in.Project)
-				if rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-					harnesses[key][in.Harness] = true
-				}
-			} else if also.PathKey(in.Project) == also.PathKey(path) {
-				harnesses[key][in.Harness] = true
-			}
-		}
-	}
-	for key, list := range harnesses {
-		path := pathByKey[key]
-		gitignore := filepath.Join(path, ".gitignore")
-		data, err := os.ReadFile(gitignore)
-		if err != nil || !strings.Contains(string(data), "# also:begin infra") {
-			continue
-		}
-		var names []string
-		for h := range list {
-			names = append(names, h)
-		}
-		sort.Strings(names)
-		entries := also.InfraIgnoreEntries(names)
-		if gitByKey[key] {
-			if _, err := also.UpdateGitIgnore(path, also.IgnoreInfra, true, entries); err != nil {
-				return err
-			}
-		} else if _, err := also.UpdateGitIgnoreAt(gitignore, also.IgnoreInfra, true, entries); err != nil {
+		if err := ensureManagedIgnores(r.Install.Project, r.To); err != nil {
 			return err
-		}
-		for _, in := range st.Installs {
-			match := false
-			if gitByKey[key] {
-				rel, rerr := filepath.Rel(path, in.Project)
-				match = rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-			} else {
-				match = also.PathKey(in.Project) == also.PathKey(path)
-			}
-			if !match {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(in.Project, ".also-layers")); err == nil {
-				if gitByKey[key] {
-					if _, err := also.UpdateGitIgnore(path, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
-						return err
-					}
-				} else if _, err := also.UpdateGitIgnoreAt(gitignore, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
-					return err
-				}
-				break
-			}
 		}
 	}
 	return nil
@@ -971,102 +909,79 @@ type reshapeOutput struct {
 	Error    string   `json:"error,omitempty"`
 }
 
-func newTreeCmd() *cobra.Command {
-	var (
-		jsonOut bool
-		harness string
-	)
-	c := newCmd("tree", "Show only the installed AI infrastructure")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		args, forHarness, err := parseTrailingFor(args)
-		if err != nil {
-			return err
+func printTree(jsonOut bool, harness string) error {
+	st, err := also.LoadState()
+	if err != nil {
+		return err
+	}
+	report := also.BuildTree(st)
+	if harness != "" {
+		h, ok := also.ResolveHarness(harness)
+		if !ok {
+			return fmt.Errorf("unknown harness %q; available: %v", harness, also.HarnessIDs())
 		}
-		if len(args) > 0 {
-			return fmt.Errorf("usage: also tree [for <harness>]")
-		}
-		if forHarness != "" {
-			if harness != "" && !strings.EqualFold(harness, forHarness) {
-				return fmt.Errorf("two different harnesses: %q and %q", harness, forHarness)
-			}
-			harness = forHarness
-		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
-		report := also.BuildTree(st)
-		if harness != "" {
-			h, ok := also.ResolveHarness(harness)
-			if !ok {
-				return fmt.Errorf("unknown harness %q; available: %v", harness, also.HarnessIDs())
-			}
-			var filtered []also.TreeInstall
-			for _, t := range report {
-				if t.Install.Harness == h.ID {
-					filtered = append(filtered, t)
-				}
-			}
-			report = filtered
-		}
-		if jsonOut {
-			return printJSON(report)
-		}
-		if len(report) == 0 {
-			fmt.Println("no installed infrastructure")
-			return nil
-		}
-		sort.Slice(report, func(i, j int) bool {
-			a, b := report[i].Install, report[j].Install
-			if a.Harness != b.Harness {
-				return a.Harness < b.Harness
-			}
-			if a.Root != b.Root {
-				return a.Root < b.Root
-			}
-			return a.Package < b.Package
-		})
-		lastGroup := ""
+		var filtered []also.TreeInstall
 		for _, t := range report {
-			in := t.Install
-			group := in.Harness + " " + in.Root
-			if group != lastGroup {
-				fmt.Printf("\n%s  [%s]\n", orDash(in.Root), in.Harness)
-				lastGroup = group
-			}
-			fmt.Printf("  %s/%s@%s", in.Set, in.Package, short(in.Version))
-			if in.Label != "" {
-				fmt.Printf("  (%s)", in.Label)
-			}
-			fmt.Printf("  %s  installed %s\n", in.Harness, also.InstalledAt(in))
-			for _, f := range t.Files {
-				mark := ""
-				if !f.Exists {
-					mark = "  [missing]"
-				} else if f.Modified {
-					mark = "  [modified]"
-				}
-				rel := f.Path
-				if r, err := filepath.Rel(in.Root, f.Path); err == nil && !strings.HasPrefix(r, "..") {
-					rel = r
-				}
-				fmt.Printf("    %s%s\n", rel, mark)
-			}
-			if in.Block != nil {
-				fmt.Printf("    (instructions block: %s)\n", in.Block.File)
-			}
-			if len(in.Edits) > 0 {
-				fmt.Printf("    (config entries: %d)\n", len(in.Edits))
-			}
-			if len(in.Skipped) > 0 {
-				fmt.Printf("    (skipped: %s)\n", strings.Join(in.Skipped, ", "))
+			if t.Install.Harness == h.ID {
+				filtered = append(filtered, t)
 			}
 		}
+		report = filtered
+	}
+	if jsonOut {
+		return printJSON(report)
+	}
+	if len(report) == 0 {
+		fmt.Println("no installed infrastructure")
 		return nil
 	}
-	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
-	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
-	return c
+	sort.Slice(report, func(i, j int) bool {
+		a, b := report[i].Install, report[j].Install
+		if a.Harness != b.Harness {
+			return a.Harness < b.Harness
+		}
+		if a.Root != b.Root {
+			return a.Root < b.Root
+		}
+		return a.Package < b.Package
+	})
+	lastGroup := ""
+	for _, t := range report {
+		in := t.Install
+		group := in.Harness + " " + in.Root
+		if group != lastGroup {
+			fmt.Printf("\n%s  [%s]\n", orDash(in.Root), in.Harness)
+			lastGroup = group
+		}
+		fmt.Printf("  %s/%s@%s", in.Set, in.Package, short(in.Version))
+		if in.Label != "" {
+			fmt.Printf("  (%s)", in.Label)
+		}
+		fmt.Printf("  %s  installed %s\n", in.Harness, also.InstalledAt(in))
+		for _, f := range t.Files {
+			mark := ""
+			if !f.Exists {
+				mark = "  [missing]"
+			} else if f.Modified {
+				mark = "  [modified]"
+			}
+			rel := f.Path
+			if r, err := filepath.Rel(in.Root, f.Path); err == nil && !strings.HasPrefix(r, "..") {
+				rel = r
+			}
+			fmt.Printf("    %s%s\n", rel, mark)
+		}
+		if in.Block != nil {
+			fmt.Printf("    (instructions block: %s)\n", in.Block.File)
+		}
+		if len(in.Edits) > 0 {
+			fmt.Printf("    (config entries: %d)\n", len(in.Edits))
+		}
+		if len(in.Skipped) > 0 {
+			fmt.Printf("    (skipped: %s)\n", strings.Join(in.Skipped, ", "))
+		}
+	}
+	return nil
 }
 
 func newUninstallCmd() *cobra.Command {
@@ -1207,65 +1122,6 @@ func newUninstallCmd() *cobra.Command {
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "remove an old global install")
 	_ = c.Flags().MarkHidden("legacy-global")
-	return c
-}
-
-func newPruneCmd() *cobra.Command {
-	var (
-		dryRun  bool
-		jsonOut bool
-	)
-	c := newCmd("prune", "Drop install records whose project directory no longer exists")
-	c.Long = `Removes stale state entries after a project directory was deleted manually.
-Only records whose project path is gone are removed; existing projects with
-missing or modified files are left for audit and drift to report.`
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			return fmt.Errorf("usage: also prune [--dry-run] [--json]")
-		}
-		return withLock(func() error {
-			st, err := also.LoadState()
-			if err != nil {
-				return err
-			}
-			type pruneOutput struct {
-				Namespace string `json:"namespace"`
-				Package   string `json:"package"`
-				Version   string `json:"version"`
-				Harness   string `json:"harness"`
-				Project   string `json:"project"`
-			}
-			var out []pruneOutput
-			for _, in := range st.PruneMissingProjects() {
-				out = append(out, pruneOutput{
-					Namespace: in.Set, Package: in.Package, Version: in.Version,
-					Harness: in.Harness, Project: in.Project,
-				})
-			}
-			if !dryRun && len(out) > 0 {
-				if err := also.SaveState(st); err != nil {
-					return err
-				}
-			}
-			if jsonOut {
-				return printJSON(map[string]any{"dry_run": dryRun, "removed": out})
-			}
-			if len(out) == 0 {
-				fmt.Println("nothing to prune")
-				return nil
-			}
-			for _, item := range out {
-				verb := "pruned"
-				if dryRun {
-					verb = "would prune"
-				}
-				fmt.Printf("%s %s/%s@%s from %s (%s)\n", verb, item.Namespace, item.Package, short(item.Version), item.Harness, item.Project)
-			}
-			return nil
-		})
-	}
-	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be removed")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
 

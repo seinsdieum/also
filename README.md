@@ -6,7 +6,7 @@
   <strong>Version once. Run anywhere.</strong>
 </p>
 
-`also` is the control plane for AI agent configuration. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
+`also` is the control plane for AI agent configuration. The project is at `0.1.0`: the command surface is deliberately small and still pre-1.0, while package, state and lock schemas are versioned independently. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
 
 ## 1. The Problem
 
@@ -62,7 +62,7 @@ Initialize the directory that holds your infrastructure:
 ```sh
 cd my-infrastructure
 also init code-review for claude
-also push --semver 1.0.0
+also push --semver 0.1.0
 ```
 
 `also init` writes `also.json` with the package name and source harness. From then on `also push` publishes that directory and needs no path, no name and no harness. A directory without `also.json` is refused, so you cannot publish an unrelated working directory by accident. Inside a git repository `push` honors `.gitignore`; `also push --dry-run` lists every file before anything is sent, and files outside the harness layout need `--all-files`.
@@ -86,7 +86,7 @@ Capture infrastructure that already exists in a harness layout:
 ```sh
 cd ../existing-project
 also init existing-rules for claude
-also adopt for claude --semver 1.0.0
+also adopt for claude --semver 0.1.0
 ```
 
 `adopt` already publishes a version, so the semantic tag belongs on the same
@@ -98,10 +98,9 @@ Keep the package and the tool current from the directory where it is installed:
 ```sh
 cd ../my-project
 also upgrade
-also update
 ```
 
-`also upgrade` upgrades the packages installed in the current directory, respecting constraints recorded in `also.lock`. `also update` checks the latest GitHub release, verifies the checksum and build attestation, and replaces the current binary. If a newer release exists, ordinary commands occasionally print a single notice with the next step.
+`also upgrade` upgrades the packages installed in the current project, respecting constraints recorded in `also.lock`. A major move needs `--major`. There is no self-update command: re-run the installer, or use the package manager or `go install` path that installed the binary.
 
 ## 3. What also Does
 
@@ -124,7 +123,7 @@ A namespace is a remote git repository that stores packages. It is only a name a
 
 ```sh
 also connect personal git@github.com:you/ai-infrastructure.git
-also use personal
+also connect personal          # choose the default namespace
 ```
 
 Choose a namespace per operation with `from <namespace>`:
@@ -132,10 +131,10 @@ Choose a namespace per operation with `from <namespace>`:
 ```sh
 also install code-review for opencode from personal
 also show code-review from personal
-also search review
+also list review
 ```
 
-`also search` reads every connected namespace. It is a registry for namespaces you already trust, not a public catalog; there is no service to run and no telemetry.
+`also list <query>` searches every connected namespace. It is a registry for namespaces you already trust, not a public catalog; there is no service to run and no telemetry.
 
 ### Versions, semantic aliases and the lockfile
 
@@ -144,11 +143,11 @@ A package is a directory tree inside a namespace with one live version and immut
 Content hashes are good for integrity and awkward for humans. `also` adds semantic-version aliases on top without weakening the content address:
 
 ```sh
-also push --semver 1.4.0          # tag this exact content as 1.4.0
+also push --semver 0.1.0          # tag this exact content as 0.1.0
 also push --bump patch            # derive the next alias from the highest one
-also tag code-review 1.4.1        # create an alias on an existing version
-also tag code-review 1.4.1 --move # explicitly move an existing alias
-also install 'code-review@^1.4'   # resolve the highest matching alias
+also tag code-review 0.1.1        # create an alias on an existing version
+also tag code-review 0.1.1 --move # explicitly move an existing alias
+also install 'code-review@^0.1'   # resolve the highest matching alias
 ```
 
 The installed version remains the digest. The alias only answers "give me the latest 1.x". Aliases are immutable by default; moving one requires `--move`, and the move refuses to overwrite a remote change this clone has not seen.
@@ -199,7 +198,9 @@ also audit --json
 also audit --ci                  # exit 1 on a missing file, block or config entry
 also audit --strict              # exit 1 on any finding, including user edits
 also audit --sbom also.cdx.json  # CycloneDX 1.5 inventory
-also drift                       # only the differences
+also audit --drift               # only the differences
+also audit --verify              # namespace digests, tags and install references
+also audit --policy              # the effective also.policy.yml
 ```
 
 `also audit` never downloads a package; the recorded digest is the evidence. A modified file is a warning because you may have edited it on purpose. A missing file, managed block or configuration entry is a failure because the install is incomplete.
@@ -244,7 +245,7 @@ governance:
       key: <base64 Ed25519 public key>
 ```
 
-`also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
+`also audit --policy` shows the effective file. `also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`; they remain available as advanced commands. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
 
 `also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory and fails when a policy exists but is unsigned, when a signature is invalid or untrusted, when a required role or approval is missing, and when an installed package violates the rules. There is no bypass flag: changing the policy is a reviewed, signed file change.
 
@@ -261,7 +262,7 @@ An adapter describes where a harness keeps each component and how it encodes con
 
 Cross-harness translation is deliberately honest. A component that has no equivalent in the target harness is skipped with a warning instead of being written into a file the harness ignores. Native data that cannot be translated is preserved in `.also-layers/` so a later round trip can restore it.
 
-Add a community adapter without recompiling:
+Add a community adapter without recompiling (advanced command):
 
 ```sh
 also add harness ./harness.json
@@ -285,38 +286,33 @@ Supported selectors include `instructions`, `skills`, `commands`, `agents`, `plu
 
 ### Main commands
 
+Core workflow:
+
+| Command | Purpose |
+|---|---|
+| `also install <package> [for <harness>] [from <namespace>]` | Materialize a package into a project and update `also.lock`. |
+| `also push [directory] [--semver V] [--bump kind]` | Publish the initialized infrastructure. |
+| `also audit [--drift\|--verify\|--policy]` | Inventory, differences, namespace verification or the effective policy. |
+| `also uninstall <package> [--namespace N]` | Remove an installation and reverse its configuration edits. |
+
+Setup and inspection:
+
 | Command | Purpose |
 |---|---|
 | `also setup` | Interactive first-run setup with harness and namespace choices. |
 | `also init <name> [for <harness>]` | Mark the current directory as portable infrastructure. |
-| `also connect <name> <git-url>` | Connect a remote namespace. |
-| `also use <namespace>` | Choose the active namespace. |
-| `also list [--versions] [--installs]` | List packages, versions, aliases or every install with its project. |
-| `also search [query]` | Search every connected namespace. |
-| `also show <package>[@version] [from <namespace>]` | Show a package manifest and its components. |
-| `also install <package> [for <harness>] [from <namespace>] [--except K] [--only] [--latest]` | Install a package into the project and update `also.lock`. |
-| `also install --frozen` | Reproduce `also.lock` exactly, using the lock's remote if needed. |
-| `also tag <package> <semver> [version]` | Point a semantic alias at a content version. |
+| `also connect <name> [<git-url>]` | Connect a namespace, or choose an existing one as default. |
 | `also adopt [directory] [for <harness>]` | Capture the initialized infrastructure and publish a new version. |
-| `also push [directory] [--semver V] [--bump kind] [--allow-empty]` | Publish the initialized directory. |
-| `also upgrade [--major]` | Upgrade packages installed in the current project; a major needs `--major`. |
-| `also reshape <harness> [--dir <path>|--all]` | Re-materialize this project's packages for another harness and update the lock. |
-| `also audit` | Inventory packages, digests, drift, policy and executable surface. |
-| `also drift` | Show only the differences from the recorded state. |
-| `also policy` | Show the project policy that install and audit enforce. |
-| `also tree` | Show only the installed infrastructure. |
-| `also uninstall <package> [--namespace N]` | Remove an installation and reverse its configuration edits. |
-| `also prune` | Drop install records whose project directory was deleted manually. |
-| `also doctor` | Check git, configuration, adapters, caches and installs. |
-| `also verify` | Verify package digests, version tags and installation state. |
-| `also repair <namespace>` | Re-clone a broken internal namespace cache. |
-| `also update` | Update the binary to the latest published release. |
+| `also upgrade [--major]` | Upgrade packages installed in the current project. |
+| `also tag <package> <semver> [version]` | Point a semantic alias at a content version. |
+| `also list [query] [--versions\|--installs\|--tree\|--harnesses]` | List packages, search, show installs, the installed tree or adapters. |
+| `also show <package>[@version] [from <namespace>]` | Show a package manifest and its components. |
+| `also doctor [--fix]` | Check and repair git, configuration, adapters, caches and installs. |
 
-The complete command reference, JSON output shapes and exit codes live in [docs/CLI.md](docs/CLI.md).
-
-### Update notices
-
-On a successful command, `also` consults the latest GitHub release at most once per day. It caches the answer in `~/.also/update-check.json`, caches a failed lookup briefly, and prints a short “New version available” line at most once per interval, on standard error, so machine-readable output stays clean. The lookup has a one-second timeout and runs only when standard error is a terminal. Set `ALSO_NO_UPDATE_CHECK=1` to disable it.
+Advanced commands (`version`, `config`, `exclude`, `include`, `policy ...`,
+`reshape`, `add harness`, `remove harness`) remain callable but are hidden from
+`also --help`. The complete command reference, JSON output shapes and exit codes
+live in [docs/CLI.md](docs/CLI.md).
 
 ## 4. Design principles
 
