@@ -428,6 +428,25 @@ func TestFindProjectRootFromSubdirectory(t *testing.T) {
 	}
 }
 
+func TestTOMLManagedBlockIsAdoptedAfterStateLoss(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config.toml")
+	block := "[mcp_servers.x]\ncommand = \"/bin/echo\"\n"
+	writeFile(t, file, string(tomlAppendBlock(nil, "mcp:x", block)))
+	edit, _, err := planTOMLMCP(&State{}, nil, file, "x", block, false)
+	if err != nil {
+		t.Fatalf("existing managed block was not adopted: %v", err)
+	}
+	tx := newTx()
+	if err := applyConfigEdit(tx, *edit); err != nil {
+		t.Fatal(err)
+	}
+	data := mustReadTestFile(t, file)
+	if strings.Count(string(data), "# also:begin mcp:x") != 1 {
+		t.Fatalf("TOML block was duplicated: %s", data)
+	}
+}
+
 func TestPushRefusesManagedInstructionBlock(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -489,6 +508,74 @@ func TestConvertAgentMapsModelsAndPermissions(t *testing.T) {
 	s = string(out)
 	if strings.Contains(s, "sonnet") || strings.Contains(s, "permissionMode") {
 		t.Fatalf("Claude-only fields leaked into OpenCode:\n%s", s)
+	}
+}
+
+func TestStateLossRemovesCreatedConfigFile(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(&State{Schema: SchemaState}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "opencode.json")); !os.IsNotExist(err) {
+		t.Fatalf("created config file survived state-loss uninstall: %v", err)
+	}
+}
+
+func TestConfigOriginsResetAfterLastUninstall(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	// The user now owns the same value the package used to manage.
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x","default_agent":"go-developer"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok := doc.RawAt("default_agent"); !ok || string(raw) != `"go-developer"` {
+		t.Fatalf("a stale origin deleted the user's value: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
 	}
 }
 
@@ -641,6 +728,43 @@ func TestReshapePreflightLeavesNothingHalfMigrated(t *testing.T) {
 		if in.Project != "" && in.Harness == "claude" {
 			t.Fatalf("state was mutated by a failed preflight: %+v", in)
 		}
+	}
+}
+
+func TestReshapeRoundTripKeepsUserConfig(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x","default_agent":"user-agent"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true, Force: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	if _, err := Reshape(cfg, st, "opencode", project, false, nil, false); err != nil {
+		t.Fatalf("opencode -> claude -> opencode failed: %v", err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok := doc.RawAt("default_agent"); !ok || string(raw) != `"user-agent"` {
+		t.Fatalf("round-trip lost the user value: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
 	}
 }
 

@@ -291,13 +291,13 @@ func checkLockConflicts(plans []*also.Plan, force bool) error {
 			key := e.File + "\x00" + strings.Join(e.Path, ".")
 			value := string(e.Value) + "\x00" + e.Block + "\x00" + e.Marker
 			if prev, ok := edits[key]; ok && prev != value {
-				return fmt.Errorf("also.lock entries configure %s (%s) differently; use --force or remove one", e.File, strings.Join(e.Path, "."))
+				return fmt.Errorf("also.lock entries configure %s (%s) differently; remove one entry (--force does not resolve a contradictory lock)", e.File, strings.Join(e.Path, "."))
 			}
 			edits[key] = value
 		}
 		for _, f := range p.NewFiles {
 			if prev, ok := files[f.Dest]; ok && prev != string(f.Data) {
-				return fmt.Errorf("also.lock entries write %s differently; use --force or remove one", f.Dest)
+				return fmt.Errorf("also.lock entries write %s differently; remove one entry (--force does not resolve a contradictory lock)", f.Dest)
 			}
 			files[f.Dest] = string(f.Data)
 		}
@@ -360,6 +360,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 			if lerr != nil {
 				return lerr
 			}
+			also.PrepareKnownConfigOrigins(st, project)
 			plan, perr := also.BuildPlan(st, set, pkg, version, entry.Harness, "project", project, also.InstallOptions{
 				Force: force, WithConfig: entry.WithConfig, Parts: entry.Parts, Exclude: entry.Exclude,
 			})

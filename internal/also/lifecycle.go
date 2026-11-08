@@ -94,6 +94,7 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	if err != nil {
 		return nil, set, err
 	}
+	PrepareKnownConfigOrigins(st, project)
 	opts := InstallOptions{Force: req.Force, WithConfig: req.WithConfig, Parts: req.Parts,
 		Exclude: req.Exclude, OnlyParts: req.OnlyParts}
 	plan, err := BuildPlan(st, set, pkg, version, req.Harness, scope, project, opts)
@@ -307,6 +308,7 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, m
 			continue
 		}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude}
+		PrepareKnownConfigOrigins(st, in.Project)
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
@@ -470,6 +472,9 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 	if err := SaveState(st); err != nil {
 		return rollback(err)
 	}
+	if err := CleanupConfigOrigins(in.Project, st, in.Edits, in.Block); err != nil {
+		warnings = append(warnings, "could not clean config origins: "+err.Error())
+	}
 	return warnings, nil
 }
 
@@ -536,6 +541,7 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude, OldHarness: in.Harness}
+		PrepareKnownConfigOrigins(st, in.Project)
 		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err

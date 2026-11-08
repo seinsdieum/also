@@ -593,7 +593,8 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 	if oldEdit != nil && exists && !jsonEqual(existing, oldEdit.Value) && !force {
 		return nil, "", fmt.Errorf("%s in %s was changed since it was installed; use --force to replace it", strings.Join(path, "."), file)
 	}
-	if exists && oldEdit == nil && !force {
+	knownOrigin := st != nil && st.knownOrigins != nil && st.knownOrigins[originKey(file, path)]
+	if exists && oldEdit == nil && !force && !knownOrigin {
 		return nil, "", fmt.Errorf("%s is already configured differently in %s; use --force to replace it (a backup is kept)", strings.Join(path, "."), file)
 	}
 	e := &ConfigEdit{File: file, Kind: "json-set", Path: path, Value: raw, CreatedFile: !fileExists(file)}
@@ -826,6 +827,11 @@ func planTOMLMCP(st *State, old *Install, file, name, block string, force bool) 
 			}
 		}
 	}
+	if _, ok := tomlBlockBody(data, marker); ok {
+		// The managed marker is present; this is our block even after state
+		// loss, so replay can replace it instead of refusing.
+		ours = true
+	}
 	if tomlHasMCPServer(data, name) && !ours {
 		return nil, "", fmt.Errorf("MCP server %q already exists in %s and is not managed by also; remove it manually or choose another name", name, file)
 	}
@@ -1029,7 +1035,15 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 		}
 		return st.Installs[i].Package < st.Installs[j].Package
 	})
-	return SaveState(st)
+	if err := SaveState(st); err != nil {
+		return err
+	}
+	if old != nil && old.Harness == plan.Install.Harness {
+		// Keep origins across a harness reshape: the other harness may be
+		// switched back later. Uninstall cleans them when the slot is gone.
+		_ = CleanupConfigOrigins(plan.Install.Project, st, old.Edits, old.Block)
+	}
+	return nil
 }
 
 func writeBlockTx(t *tx, b *BlockEdit, body []byte) error {
@@ -1149,7 +1163,8 @@ func applyConfigEdit(t *tx, e ConfigEdit) error {
 		if e.Block == "" {
 			return fmt.Errorf("internal: empty TOML block for %s", e.File)
 		}
-		out := tomlAppendBlock(data, e.Marker, e.Block)
+		base, _ := tomlRemoveBlock(data, e.Marker)
+		out := tomlAppendBlock(base, e.Marker, e.Block)
 		if _, err := parseTOMLMap(out); err != nil {
 			return fmt.Errorf("refusing to write invalid TOML to %s: %w", e.File, err)
 		}

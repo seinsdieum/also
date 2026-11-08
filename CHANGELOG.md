@@ -4,14 +4,20 @@
 
 ### Fixed
 
-- Config origins and instruction-file provenance are stored outside state in
-  `~/.also/config-origins`; after deleting `state.json`, `install --frozen`
-  still restores the user's original config and removes an instruction file
-  also created.
+- Config origins, created config files and instruction-file provenance are
+  stored outside state in `~/.also/config-origins`; after deleting `state.json`,
+  `install --frozen` still restores the user's original config, removes config
+  and instruction files also created, and lets a later manual edit become the
+  new base instead of being deleted by a stale origin.
 - `reshape` rolls back packages it already moved when a later apply fails, so
-  the state, lock and files do not end in a mixed harness.
+  the state, lock and files do not end in a mixed harness. An
+  OpenCode→Claude→OpenCode round trip no longer needs `--force` when the
+  original user values are recorded.
 - Frozen replay restores a pre-existing adopted file and an existing slot it
   upgraded when a later lock entry fails.
+- Codex TOML MCP blocks are recognized as also-managed after state loss, so
+  frozen replay replaces the existing marker block instead of duplicating or
+  refusing it.
 
 ## 1.4.0 (2026-11-08)
 
