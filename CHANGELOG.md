@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.1.0 (2026-11-08)
+
+This release turns `also` from an installer into a control plane: it can now
+prove what is installed, pin it, gate it and report what changed.
+
+### Added
+
+- `also audit` inventories packages, namespace, content version, full digest,
+  harness, source harness, parts, files, managed blocks, config entries and the
+  executable surface (MCP servers, hooks, plugins and commands). `--json`,
+  `--ci`, `--strict` and `--sbom` are supported.
+- `also drift` reports only the files, blocks and config entries that differ
+  from the recorded state.
+- `also.lock` records the resolved version, digest, namespace, harness, parts
+  and original constraint. `also install --frozen` replays it exactly;
+  `--update` and `--no-lock` control the file per command.
+- Semantic-version aliases over content versions: `also push --semver`,
+  `also push --bump major|minor|patch`, `also tag`, and range installs such as
+  `package@^1.4`.
+- `also.policy.yml` with namespace and package allow/deny lists, executable-kind
+  gates, a package size limit and literal-secret blocking. It is enforced before
+  install and upgrade writes anything, and re-checked by `also audit --ci`.
+- `also search` reads package names and descriptions from every connected
+  namespace.
+- Installed state records the full digest and executable components; older state
+  remains valid and is enriched on the next install.
+- `also update` verifies the GitHub build attestation when `gh` is installed and
+  authenticated, and reports whether verification ran.
+- The release workflow publishes `also.spdx.json` next to the binaries.
+- CycloneDX 1.5 SBOM output through `also audit --sbom`.
+- Documentation for the lockfile, policy, audit report and semantic aliases.
+
+### Changed
+
+- `also upgrade` respects the constraint recorded in `also.lock` and refreshes
+  the lock after a successful upgrade.
+- `also uninstall` removes the corresponding lock entry.
+- Package size and secret limits now apply to plain-text files as well as JSON,
+  YAML and TOML.
+- Custom parser fuzz targets cover JSONC edits, TOML blocks, command conversion
+  and agent frontmatter.
+
 ## 1.0.0 (2026-11-07)
 
 The first stable release. The initialized directory is the unit of work:

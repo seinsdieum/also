@@ -111,5 +111,11 @@ This state is what makes `upgrade`, `reshape`, `tree`, and `uninstall` safe and 
 - `@latest` or no suffix — version whose directory was last touched by the newest commit.
 - `@<4+ hex prefix>` — unique version prefix.
 - `@<label>` — newest version carrying that label.
+- `@^1.4`, `@~1.4.2`, `@1.x`, `@>=1.2 <2.0`, `@1.4.0` — the highest semantic
+  alias that satisfies the range.
 
-Labels are aliases only; there is no semantic-version comparison.
+A semantic version is a tag under `refs/tags/also/<package>/semver/<version>`
+that points at the same commit as the immutable content tag. The content tag
+remains canonical; moving an alias never changes the bytes a digest names.
+Projects can commit `also.lock` to pin the resolved content version and digest,
+and `also install --frozen` replays that pin exactly.

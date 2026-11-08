@@ -91,7 +91,7 @@ var excludedDirs = map[string]bool{
 
 func excludedFile(base string) bool {
 	switch base {
-	case ".DS_Store", "Thumbs.db", InfraFile:
+	case ".DS_Store", "Thumbs.db", InfraFile, LockFile, PolicyFile:
 		return true
 	}
 	return strings.HasSuffix(strings.ToLower(base), ".pyc")

@@ -14,6 +14,9 @@ schema because unknown JSON fields are ignored by older readers.
 | Namespace manifest | `also.set/v1` | stable |
 | Local infrastructure marker | `also.infra/v1` | stable |
 | Community adapter spec | `also.adapter/v1` | stable |
+| Project lockfile | `also.lock/v1` | stable |
+| Project policy | `also.policy/v1` | stable |
+| Audit report | `also.audit/v1` | stable |
 
 ### Package (`also.pkg/v1`)
 
@@ -58,6 +61,37 @@ needs `also.infra/v2`.
 before it is written to disk. Adapter specs are declarative; codecs and
 component kinds must exist in the binary.
 
+### Lockfile (`also.lock/v1`)
+
+`also.lock` is project-local desired state and is meant to be committed. Each
+entry records `package`, `namespace`, `remote`, `version` (content digest),
+`digest` (full SHA-256), optional `constraint`, `harness`, `source_harness`,
+`parts` and `with_config`. Entries are keyed by package and harness. Unknown
+fields are ignored; changing the meaning of an existing field needs v2.
+
+`--frozen` reads the lock and refuses to install anything that does not match.
+A missing lock entry is an error, not an empty resolution.
+
+### Policy (`also.policy/v1`)
+
+`also.policy.yml` is optional. `schema` is optional and defaults to v1.
+Allow lists are allowlists when non-empty; deny always wins. Package patterns
+use `path.Match`. Executable booleans default to allowed. The size limit
+defaults to 64 MiB. A malformed existing file is a hard error; a missing file
+is not.
+
+### Audit report (`also.audit/v1`)
+
+`also audit --json` prints an inventory with `packages`, `findings`, `summary`
+and optional `policy_file`. Findings have a severity (`fail` or `warn`) and a
+stable code such as `file-missing`, `file-modified`, `block-missing`,
+`block-modified`, `config-missing`, `config-modified`, `shared-file`,
+`shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
+`policy-namespace`, `policy-package` and `policy-executable`. New codes may be
+added; clients should treat an unknown code as a generic finding.
+
+`--sbom` emits CycloneDX 1.5, not an also schema.
+
 ## Versioning policy
 
 `also` uses semantic versioning for the CLI:
@@ -78,3 +112,12 @@ and a migration test must prove that user data survives.
 - Existing `also.state/v1` installs stay upgradeable and uninstallable.
 - Community adapters using `also.adapter/v1` keep loading.
 - Documented commands and flags keep their meaning within a major version.
+
+## What 1.1 adds
+
+`also.lock`, `also.policy.yml`, `also audit`, `also drift`, `also search`,
+`also tag`, semantic-version aliases and SBOM output are additive. Existing
+state and packages are unchanged. `Install` gained optional `digest` and
+`executables` fields inside `also.state/v1`; readers that do not know them
+ignore them. `also.lock` is optional: projects without it keep resolving the
+newest version, and `--frozen` is the explicit reproducibility mode.

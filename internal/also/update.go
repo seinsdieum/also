@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -230,12 +231,13 @@ func releaseAssetName(goos, goarch string) string {
 }
 
 type UpdateResult struct {
-	Current    string `json:"current"`
-	Latest     string `json:"latest"`
-	Updated    bool   `json:"updated"`
-	Reinstall  bool   `json:"reinstall,omitempty"`
-	ManualPath string `json:"manual_path,omitempty"`
-	Asset      string `json:"asset,omitempty"`
+	Current     string `json:"current"`
+	Latest      string `json:"latest"`
+	Updated     bool   `json:"updated"`
+	Reinstall   bool   `json:"reinstall,omitempty"`
+	ManualPath  string `json:"manual_path,omitempty"`
+	Asset       string `json:"asset,omitempty"`
+	Attestation string `json:"attestation,omitempty"` // verified | skipped
 }
 
 // reinstallHint tells users on a build newer than the published release how
@@ -282,6 +284,11 @@ func applyUpdate(current, exe string, windows bool) (*UpdateResult, error) {
 	if err := verifyAsset(data, assetName, sumData); err != nil {
 		return res, err
 	}
+	attestation, err := verifyAttestation(ctx, data, assetName)
+	if err != nil {
+		return res, err
+	}
+	res.Attestation = attestation
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
@@ -316,6 +323,41 @@ func applyUpdate(current, exe string, windows bool) (*UpdateResult, error) {
 	}
 	res.Updated = true
 	return res, nil
+}
+
+// verifyAttestation checks the published build provenance when the GitHub CLI
+// is installed and authenticated. Custom release URLs and CI fixtures skip it.
+func verifyAttestation(ctx context.Context, data []byte, name string) (string, error) {
+	if os.Getenv("ALSO_NO_ATTESTATION") != "" || releaseDownloadBase() != downloadBaseDefault {
+		return "skipped", nil
+	}
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		return "skipped", nil
+	}
+	authCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(authCtx, gh, "auth", "status").Run(); err != nil {
+		return "skipped", nil
+	}
+	tmp, err := os.CreateTemp("", "also-attest-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	out, err := exec.CommandContext(ctx, gh, "attestation", "verify", tmpName, "-R", "seinsdieum/also").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build attestation verification failed for %s: %s", name, strings.TrimSpace(string(out)))
+	}
+	return "verified", nil
 }
 
 func downloadAsset(ctx context.Context, url string) ([]byte, error) {

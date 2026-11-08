@@ -1,7 +1,9 @@
 # Architecture
 
-`also` has four layers. Keeping them separate is what allows a new harness to
-reuse an existing encoding without touching the installer.
+`also` has four core layers plus two project-level contracts. Keeping them
+separate is what allows a new harness to reuse an existing encoding without
+touching the installer, and lets audit inspect an install without downloading
+the package again.
 
 ## 1. Package format
 
@@ -56,7 +58,29 @@ harnesses in the same directory.
 
 Uninstalling consults that state. Files changed by the user are left in place
 unless `--force` is used. Configuration edits are removed only when the current
-value still matches what `also` wrote.
+value still matches what `also` wrote. Resources shared by another installation
+are detected and kept.
+
+## 5. Project contracts
+
+Two files live next to the project rather than in `~/.also`:
+
+- `also.lock` pins the resolved package, namespace, content version, digest,
+  harness and parts. It is the reproducible input for `install --frozen`.
+- `also.policy.yml` restricts namespaces, packages, executable component kinds,
+  package size and literal secrets. It is checked before writes and re-checked
+  by `audit --ci`.
+
+Both are optional. Neither replaces `state.json`: the lock says what should be
+installed, the state says what was actually written on this machine.
+
+## 6. Audit and evidence
+
+`also audit` compares the state record with the file system: files by SHA-256,
+managed blocks by body hash, JSON edits by path and value, TOML blocks by
+marker and body. It also reports the executable surface recorded at install
+time and emits CycloneDX 1.5 through `--sbom`. Audit never trusts the package
+cache and never re-downloads a package.
 
 ## Extension points
 

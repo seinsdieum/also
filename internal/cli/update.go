@@ -64,6 +64,7 @@ the current one because a running executable cannot be replaced.`
 				"current": res.Current, "latest": res.Latest,
 				"updated": res.Updated, "reinstall": res.Reinstall,
 				"manual_path": res.ManualPath, "asset": res.Asset,
+				"attestation": res.Attestation,
 			})
 		}
 		if res.Reinstall {
@@ -73,6 +74,9 @@ the current one because a running executable cannot be replaced.`
 		if res.Updated {
 			also.MarkUpdateSeen(res.Latest)
 			fmt.Printf("  %s updated also %s → %s\n", green("✓"), res.Current, blue(res.Latest))
+			if res.Attestation == "verified" {
+				fmt.Printf("  %s build attestation verified\n", green("✓"))
+			}
 			return nil
 		}
 		if res.ManualPath != "" {

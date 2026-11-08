@@ -64,6 +64,15 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: ${{ runner.temp }}/also.spdx.json
+          upload-release-assets: false
+      - name: add SBOM to the release
+        run: cp "${RUNNER_TEMP}/also.spdx.json" dist/also.spdx.json
       - name: checksums
         working-directory: dist
         run: sha256sum * > SHA256SUMS

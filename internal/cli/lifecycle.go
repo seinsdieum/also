@@ -22,6 +22,10 @@ func newInstallCmd() *cobra.Command {
 		offline  bool
 		noConfig bool
 		jsonOut  bool
+		frozen   bool
+		update   bool
+		noLock   bool
+		noPolicy bool
 	)
 	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
@@ -77,13 +81,85 @@ into native config with reversible bookkeeping.`
 				proj = root
 			}
 		}
+		if frozen && noLock {
+			return fmt.Errorf("--frozen needs the lockfile; do not combine it with --no-lock")
+		}
+		constraint := spec.Ref.Version
+		lockEnabled := !noLock
+		var lock *also.Lockfile
+		var entry *also.LockEntry
+		if lockEnabled {
+			lock, err = also.LoadLock(proj)
+			if err != nil {
+				return err
+			}
+			entry = lock.Find(spec.Ref.Package, harnessID)
+			if entry != nil && installSet != "" && installSet != entry.Namespace {
+				entry = nil
+			}
+			if frozen && entry == nil {
+				return fmt.Errorf("no lockfile entry for %s in %s; run without --frozen to resolve it", spec.Ref.Package, proj)
+			}
+			if entry != nil {
+				if err := entry.CheckEntry(); err != nil {
+					return err
+				}
+				if frozen {
+					if constraint != "" && constraint != entry.Version {
+						return fmt.Errorf("lockfile pins %s@%s but you requested %s; update %s first", spec.Ref.Package, entry.Version, constraint, also.LockFile)
+					}
+					spec.Ref.Version = entry.Version
+					if len(spec.Parts) == 0 {
+						spec.Parts = entry.Parts
+					}
+					if !entry.WithConfig {
+						noConfig = true
+					}
+				} else if constraint == "" {
+					if update && entry.Constraint != "" {
+						// --update re-resolves inside the recorded constraint.
+						// A major change needs an explicit version.
+						spec.Ref.Version = entry.Constraint
+						constraint = entry.Constraint
+					} else if !update {
+						spec.Ref.Version = entry.Version
+					}
+					if len(spec.Parts) == 0 {
+						spec.Parts = entry.Parts
+					}
+				}
+				if installSet == "" && from == "" {
+					installSet = entry.Namespace
+					if _, ok := cfg.Namespaces[entry.Namespace]; !ok {
+						return fmt.Errorf("lockfile namespace %q is not configured; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
+					}
+				}
+			}
+		}
+		expectedDigest := ""
+		if frozen && entry != nil {
+			expectedDigest = entry.Digest
+		}
 		return withLock(func() error {
 			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
 				Package: spec.Ref.spec(), Harness: harnessID, Scope: "project", Project: proj,
 				Parts: spec.Parts, Force: force, WithConfig: !noConfig, Offline: offline,
+				NoPolicy: noPolicy, ExpectedDigest: expectedDigest,
 			}, installSet, from)
 			if err != nil {
 				return err
+			}
+			if lockEnabled {
+				if frozen {
+					if err := entry.VerifyInstall(&plan.Install); err != nil {
+						return err
+					}
+				} else {
+					lock.Upsert(also.LockEntryFromInstall(&plan.Install, constraint))
+					if err := also.SaveLock(proj, lock); err != nil {
+						return err
+					}
+				}
 			}
 			if jsonOut {
 				return printJSON(planOutput(plan))
@@ -100,6 +176,10 @@ into native config with reversible bookkeeping.`
 	c.Flags().BoolVar(&offline, "offline", false, "use the local clone without fetching")
 	c.Flags().BoolVar(&noConfig, "no-config", false, "do not install MCP servers or hooks")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	c.Flags().BoolVar(&frozen, "frozen", false, "install exactly what also.lock pins; fail on any difference")
+	c.Flags().BoolVar(&update, "update", false, "ignore the lockfile and resolve the newest version")
+	c.Flags().BoolVar(&noLock, "no-lock", false, "do not read or write also.lock")
+	c.Flags().BoolVar(&noPolicy, "no-policy", false, "skip also.policy.yml checks")
 	return c
 }
 
@@ -198,6 +278,8 @@ func newUpgradeCmd() *cobra.Command {
 		force        bool
 		jsonOut      bool
 		legacyGlobal bool
+		noLock       bool
+		noPolicy     bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
 	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
@@ -224,9 +306,14 @@ func newUpgradeCmd() *cobra.Command {
 			pkgs = []string{infra.Name}
 		}
 		return withLock(func() error {
-			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal)
+			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal, noPolicy)
 			if err != nil {
 				return err
+			}
+			if !check && !noLock {
+				if err := refreshLockAfterUpgrade(cwd, results); err != nil {
+					return err
+				}
 			}
 			failed := 0
 			if jsonOut {
@@ -275,7 +362,46 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "report old global installs")
 	_ = c.Flags().MarkHidden("legacy-global")
+	c.Flags().BoolVar(&noLock, "no-lock", false, "do not update also.lock")
+	c.Flags().BoolVar(&noPolicy, "no-policy", false, "skip also.policy.yml checks")
 	return c
+}
+
+// refreshLockAfterUpgrade pins the versions that actually landed on disk.
+func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error {
+	lock, err := also.LoadLock(project)
+	if err != nil {
+		return err
+	}
+	st, err := also.LoadState()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, r := range results {
+		if r.Err != nil {
+			continue
+		}
+		for i := range st.Installs {
+			in := &st.Installs[i]
+			if in.Package != r.Install.Package || in.Harness != r.Install.Harness {
+				continue
+			}
+			if filepath.Clean(in.Project) != filepath.Clean(project) {
+				continue
+			}
+			constraint := ""
+			if old := lock.Find(in.Package, in.Harness); old != nil {
+				constraint = old.Constraint
+			}
+			lock.Upsert(also.LockEntryFromInstall(in, constraint))
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return also.SaveLock(project, lock)
 }
 
 type upgradeOutput struct {
@@ -574,6 +700,20 @@ func newUninstallCmd() *cobra.Command {
 				if !jsonOut {
 					fmt.Printf("uninstalled %s/%s@%s from %s\n", in.Set, in.Package, short(in.Version), in.Harness)
 					printWarnings("warnings", warnings)
+				}
+			}
+			if !legacyGlobal {
+				lock, err := also.LoadLock(absProj)
+				if err != nil {
+					return err
+				}
+				if len(lock.Packages) > 0 {
+					for _, item := range out {
+						lock.Remove(item.Package, item.Harness)
+					}
+					if err := also.SaveLock(absProj, lock); err != nil {
+						return err
+					}
 				}
 			}
 			if jsonOut {

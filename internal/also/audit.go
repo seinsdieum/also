@@ -1,0 +1,314 @@
+package also
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Audit is the inventory layer: what is installed, where it came from, what can
+// execute, and whether the files on disk still match the managed state. It never
+// downloads a package; the recorded digest is the evidence.
+const SchemaAudit = "also.audit/v1"
+
+type AuditFinding struct {
+	Severity string `json:"severity"` // fail | warn
+	Code     string `json:"code"`
+	Package  string `json:"package,omitempty"`
+	Harness  string `json:"harness,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type AuditPackage struct {
+	Package       string       `json:"package"`
+	Namespace     string       `json:"namespace"`
+	Version       string       `json:"version"`
+	Digest        string       `json:"digest,omitempty"`
+	Label         string       `json:"label,omitempty"`
+	Harness       string       `json:"harness"`
+	SourceHarness string       `json:"source_harness"`
+	Project       string       `json:"project,omitempty"`
+	Parts         []string     `json:"parts,omitempty"`
+	InstalledAt   time.Time    `json:"installed_at"`
+	Files         int          `json:"files"`
+	Missing       int          `json:"missing"`
+	Modified      int          `json:"modified"`
+	Shared        int          `json:"shared"`
+	Block         string       `json:"block,omitempty"`
+	Executables   []Executable `json:"executables,omitempty"`
+}
+
+type AuditSummary struct {
+	Packages    int `json:"packages"`
+	Files       int `json:"files"`
+	Missing     int `json:"missing"`
+	Modified    int `json:"modified"`
+	Shared      int `json:"shared"`
+	Executables int `json:"executables"`
+	Findings    int `json:"findings"`
+	Failures    int `json:"failures"`
+}
+
+type AuditReport struct {
+	Schema      string         `json:"schema"`
+	Project     string         `json:"project,omitempty"`
+	All         bool           `json:"all,omitempty"`
+	GeneratedAt time.Time      `json:"generated_at"`
+	Packages    []AuditPackage `json:"packages"`
+	Findings    []AuditFinding `json:"findings"`
+	Summary     AuditSummary   `json:"summary"`
+	PolicyFile  string         `json:"policy_file,omitempty"`
+}
+
+// Audit builds the report for one project (or every tracked install with all).
+func Audit(st *State, project string, all bool) (*AuditReport, error) {
+	if st == nil {
+		return nil, fmt.Errorf("no install state")
+	}
+	abs, err := AbsPath(project)
+	if err != nil {
+		return nil, err
+	}
+	report := &AuditReport{Schema: SchemaAudit, Project: abs, All: all, GeneratedAt: time.Now().UTC()}
+	policies := map[string]*Policy{}
+	for idx := range st.Installs {
+		in := &st.Installs[idx]
+		if !all {
+			if in.Scope == "global" || filepath.Clean(in.Project) != filepath.Clean(abs) {
+				continue
+			}
+		}
+		ap := AuditPackage{
+			Package: in.Package, Namespace: in.Set, Version: in.Version, Digest: in.Digest,
+			Label: in.Label, Harness: in.Harness, SourceHarness: in.SourceHarness,
+			Project: in.Project, Parts: in.Parts, InstalledAt: in.InstalledAt,
+			Files: len(in.Files), Executables: in.Executables,
+		}
+		add := func(severity, code, path, detail string) {
+			report.Findings = append(report.Findings, AuditFinding{
+				Severity: severity, Code: code, Package: in.Package, Harness: in.Harness,
+				Path: path, Detail: detail,
+			})
+		}
+		if in.Scope == "global" {
+			add("warn", "legacy-global", "", "old global install; remove it with: also uninstall "+in.Package+" --legacy-global")
+		}
+		if in.Digest == "" {
+			add("warn", "digest-missing", "", "state predates recorded digests; reinstall to make the inventory verifiable")
+		}
+		for _, f := range in.Files {
+			if len(st.ownersOf(f.Path)) > 1 {
+				ap.Shared++
+				add("warn", "shared-file", f.Path, "also owned by another install")
+			}
+			data, err := os.ReadFile(f.Path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					ap.Missing++
+					add("fail", "file-missing", f.Path, "recorded file is gone")
+					continue
+				}
+				add("fail", "file-unreadable", f.Path, err.Error())
+				continue
+			}
+			if ShortHash(data, 64) != f.SHA {
+				ap.Modified++
+				add("warn", "file-modified", f.Path, "content differs from the installed version")
+			}
+		}
+		if in.Block != nil {
+			state, detail := auditBlock(in.Block)
+			ap.Block = state
+			switch state {
+			case "missing":
+				add("fail", "block-missing", in.Block.File, detail)
+			case "modified":
+				add("warn", "block-modified", in.Block.File, detail)
+			}
+			if st.sharedBlock(in.Block, in.ID) {
+				add("warn", "shared-block", in.Block.File, "managed block is shared with another install")
+			}
+		}
+		for _, e := range in.Edits {
+			state, detail := auditConfigEdit(e)
+			if state == "ok" {
+				continue
+			}
+			severity := "warn"
+			code := "config-modified"
+			if state == "missing" {
+				severity, code = "fail", "config-missing"
+			}
+			add(severity, code, e.File, detail)
+			if st.sharedConfigEdit(e, in.ID) {
+				add("warn", "shared-config", e.File, "config entry is shared with another install")
+			}
+		}
+		if in.Project != "" {
+			p, ok := policies[in.Project]
+			if !ok {
+				p, err = LoadPolicy(in.Project)
+				if err != nil {
+					return nil, err
+				}
+				policies[in.Project] = p
+			}
+			if p != nil {
+				report.PolicyFile = filepath.Join(in.Project, PolicyFile)
+				if !p.NamespaceAllowed(in.Set) {
+					add("fail", "policy-namespace", "", "namespace is not allowed by "+PolicyFile)
+				}
+				if !p.PackageAllowed(in.Package) {
+					add("fail", "policy-package", "", "package is not allowed by "+PolicyFile)
+				}
+				if !p.ExecutablesAllowed(executableKinds(in.Executables)) {
+					add("fail", "policy-executable", "", "installed executable kind is not allowed by "+PolicyFile)
+				}
+			}
+		}
+		report.Packages = append(report.Packages, ap)
+	}
+	sort.Slice(report.Packages, func(i, j int) bool {
+		a, b := report.Packages[i], report.Packages[j]
+		if a.Project != b.Project {
+			return a.Project < b.Project
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		return a.Harness < b.Harness
+	})
+	sort.Slice(report.Findings, func(i, j int) bool {
+		a, b := report.Findings[i], report.Findings[j]
+		if a.Severity != b.Severity {
+			return a.Severity < b.Severity
+		}
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		if a.Code != b.Code {
+			return a.Code < b.Code
+		}
+		return a.Path < b.Path
+	})
+	report.Summarize()
+	return report, nil
+}
+
+func (r *AuditReport) Summarize() {
+	r.Summary = AuditSummary{}
+	for _, p := range r.Packages {
+		r.Summary.Packages++
+		r.Summary.Files += p.Files
+		r.Summary.Missing += p.Missing
+		r.Summary.Modified += p.Modified
+		r.Summary.Shared += p.Shared
+		r.Summary.Executables += len(p.Executables)
+	}
+	r.Summary.Findings = len(r.Findings)
+	for _, f := range r.Findings {
+		if f.Severity == "fail" {
+			r.Summary.Failures++
+		}
+	}
+}
+
+func (r *AuditReport) Components() []SBOMComponent {
+	out := make([]SBOMComponent, 0, len(r.Packages))
+	for _, p := range r.Packages {
+		out = append(out, SBOMComponent{
+			Name: p.Package, Namespace: p.Namespace, Version: p.Version, Digest: p.Digest,
+			Harness: p.Harness, SourceHarness: p.SourceHarness, Files: p.Files, Parts: p.Parts,
+		})
+	}
+	return out
+}
+
+func executableKinds(execs []Executable) []string {
+	var out []string
+	for _, e := range execs {
+		out = append(out, e.Kind)
+	}
+	return UniqueStrings(out)
+}
+
+func auditBlock(b *BlockEdit) (string, string) {
+	data, err := os.ReadFile(b.File)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "missing", "instructions file is gone"
+		}
+		return "unreadable", err.Error()
+	}
+	_, bs, be, _, found := findBlock(string(data), b.ID)
+	if !found {
+		return "missing", "managed block " + b.ID + " is gone"
+	}
+	if blockBodyHash(data[bs:be]) != b.SHA {
+		return "modified", "managed block " + b.ID + " was edited"
+	}
+	return "ok", ""
+}
+
+func auditConfigEdit(e ConfigEdit) (string, string) {
+	data, err := os.ReadFile(e.File)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "missing", "config file is gone"
+		}
+		return "unreadable", err.Error()
+	}
+	switch e.Kind {
+	case "json-set":
+		doc, err := ParseJSONC(data)
+		if err != nil {
+			return "unreadable", err.Error()
+		}
+		raw, ok := doc.RawAt(e.Path...)
+		if !ok {
+			return "missing", strings.Join(e.Path, ".") + " is gone"
+		}
+		if !jsonEqual(raw, e.Value) {
+			return "modified", strings.Join(e.Path, ".") + " was changed"
+		}
+		return "ok", ""
+	case "json-append":
+		doc, err := ParseJSONC(data)
+		if err != nil {
+			return "unreadable", err.Error()
+		}
+		raw, ok := doc.RawAt(e.Path...)
+		if !ok {
+			return "missing", strings.Join(e.Path, ".") + " is gone"
+		}
+		var arr []json.RawMessage
+		if json.Unmarshal(raw, &arr) != nil {
+			return "modified", strings.Join(e.Path, ".") + " is not an array"
+		}
+		for _, el := range arr {
+			if jsonEqual(el, e.Value) {
+				return "ok", ""
+			}
+		}
+		return "missing", strings.Join(e.Path, ".") + " entry is gone"
+	case "toml-block":
+		body, ok := tomlBlockBody(data, e.Marker)
+		if !ok {
+			return "missing", "managed block " + e.Marker + " is gone"
+		}
+		if strings.TrimSpace(body) != strings.TrimSpace(e.Block) {
+			return "modified", "managed block " + e.Marker + " was edited"
+		}
+		return "ok", ""
+	default:
+		return "unknown", "unsupported config edit kind " + e.Kind
+	}
+}

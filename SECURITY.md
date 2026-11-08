@@ -45,12 +45,30 @@ silently overwrites user changes. It does not sandbox what a skill, command,
 agent or hook does when the harness later runs it. Review a package before
 installing it, especially `hooks/` and executable scripts.
 
+`also audit` records and reports the executable surface: Model Context Protocol
+servers, hooks, plugins and commands. `also drift` shows files, managed blocks
+and configuration entries that no longer match the recorded state. Neither
+command executes package content.
+
+## Policy and continuous integration
+
+A repository can commit `also.policy.yml` to restrict namespaces, packages,
+executable component kinds, package size and literal secrets. The policy is
+enforced before an install or upgrade writes anything. `also audit --ci` exits 1
+on a missing file, block or config entry, and on a policy violation; `--strict`
+also fails on user edits. `--no-policy` is a local recovery flag and should not
+be used in CI.
+
+`also.lock` is the reproducibility control. `also install --frozen` fails
+instead of resolving a version or digest that differs from the lock. Commit the
+lockfile and review changes to it like any other dependency lock.
+
 ## Secrets
 
 `also push` refuses to encode literal credential-looking keys in MCP settings,
-JSON/YAML/TOML config files, command arguments and URLs. Environment references
-(`$TOKEN`, `${TOKEN}`, `{env:TOKEN}`) are allowed because the value is not
-stored in the package.
+JSON/YAML/TOML config files, plain-text notes, command arguments and URLs.
+Environment references (`$TOKEN`, `${TOKEN}`, `{env:TOKEN}`) are allowed because
+the value is not stored in the package.
 
 `--allow-secrets` bypasses the check and should be used only for intentional
 fixtures. Error messages list key locations, not secret values.
@@ -71,6 +89,12 @@ gh attestation verify also-darwin-arm64 --repo seinsdieum/also
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-`install.sh` verifies the SHA-256 checksum before installing. The attestation
-binds that binary to the release workflow and commit; it does not audit the
-source for you.
+`install.sh` and `install.ps1` verify the SHA-256 checksum and, when the GitHub
+CLI is installed and authenticated, run `gh attestation verify` before the
+binary is installed. `also update` does the same for its download. The
+attestation binds that binary to the release workflow and commit; it does not
+audit the source for you.
+
+Every release also publishes `also.spdx.json`, an SPDX SBOM generated from the
+release artifacts, and `also audit --sbom` emits a CycloneDX 1.5 inventory of
+what is installed. These documents are evidence, not a sandbox.

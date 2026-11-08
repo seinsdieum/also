@@ -39,6 +39,84 @@ func versionTagRef(pkg, version string) string {
 	return "refs/tags/" + versionTagName(pkg, version)
 }
 
+// Semantic-version aliases are mutable tags that point at one immutable
+// content-addressed version. The content version stays canonical; the alias
+// only answers "give me the latest 2.x".
+func semverTagName(pkg, semver string) string {
+	return "also/" + pkg + "/semver/" + semver
+}
+
+func semverTagRef(pkg, semver string) string {
+	return "refs/tags/" + semverTagName(pkg, semver)
+}
+
+// listSemverTags maps an alias to the commit it points at.
+func listSemverTags(dir, pkg string) (map[string]string, error) {
+	prefix := "refs/tags/" + semverTagName(pkg, "")
+	out, err := runGit(dir, "for-each-ref", "--format=%(refname) %(objectname) %(*objectname)", prefix)
+	if err != nil {
+		return nil, err
+	}
+	tags := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		semver := strings.TrimPrefix(fields[0], prefix)
+		if _, ok := ParseSemver(semver); !ok {
+			continue
+		}
+		commit := fields[1]
+		if len(fields) > 2 && fields[2] != "" {
+			commit = fields[2]
+		}
+		tags[semver] = commit
+	}
+	return tags, nil
+}
+
+// SemverAliases maps alias -> content version by matching commits.
+func (s *SetRepo) SemverAliases(pkg string) (map[string]string, error) {
+	versions, err := listVersionTags(s.Dir, pkg)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := listSemverTags(s.Dir, pkg)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for semver, commit := range aliases {
+		for version, vc := range versions {
+			if vc == commit {
+				out[semver] = version
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// SetSemver points an alias at an existing content version and pushes the tag.
+func (s *SetRepo) SetSemver(pkg, semver, version string) error {
+	if _, ok := ParseSemver(semver); !ok {
+		return fmt.Errorf("invalid semantic version %q; use MAJOR.MINOR.PATCH", semver)
+	}
+	commit, ok := s.tagCommit(pkg, version)
+	if !ok {
+		return fmt.Errorf("version %s of %q has no content tag", version, pkg)
+	}
+	if _, err := runGit(s.Dir, "update-ref", semverTagRef(pkg, semver), commit); err != nil {
+		return err
+	}
+	if err := pushTag(s.Dir, semverTagName(pkg, semver)); err != nil {
+		return err
+	}
+	s.invalidateVersionData()
+	return nil
+}
+
 func (s *SetRepo) tagCommit(pkg, version string) (string, bool) {
 	out, err := runGit(s.Dir, "rev-parse", "--verify", versionTagRef(pkg, version)+"^{commit}")
 	if err != nil {

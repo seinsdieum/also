@@ -128,9 +128,10 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 
 	inst := Install{
 		ID: id, Set: set.Name, SetRemote: set.Cfg.Remote, Package: pkg.Meta.Name,
-		Version: version.Version, Label: version.Label, SourceHarness: source.ID,
-		Harness: targetH.ID, Scope: scope, Project: project, Root: target.Root,
-		WithConfig: opts.WithConfig, Parts: UniqueStrings(opts.Parts), InstalledAt: time.Now().UTC(),
+		Version: version.Version, Digest: pkg.Meta.Digest, Label: version.Label,
+		SourceHarness: source.ID, Harness: targetH.ID, Scope: scope, Project: project,
+		Root: target.Root, WithConfig: opts.WithConfig, Parts: UniqueStrings(opts.Parts),
+		InstalledAt: time.Now().UTC(),
 	}
 
 	// ---- regular files ----
@@ -300,10 +301,55 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			}
 		}
 	}
+	inst.Executables = collectExecutables(render, opts.WithConfig)
 	inst.Warnings = UniqueStrings(plan.Warnings)
 	inst.Skipped = UniqueStrings(plan.Skipped)
 	plan.Install = inst
 	return plan, nil
+}
+
+// collectExecutables records the installed surface that can run code or start a
+// process, so audit and SBOM do not have to re-download the package.
+func collectExecutables(render *RenderPlan, withConfig bool) []Executable {
+	byKey := map[string]Executable{}
+	add := func(e Executable) {
+		if e.Name == "" {
+			return
+		}
+		byKey[e.Kind+"\x00"+e.Name] = e
+	}
+	for _, f := range render.Files {
+		switch f.Component {
+		case "plugin", "command", "hook":
+			add(Executable{Kind: f.Component, Name: filepath.Base(f.Dest), Detail: f.Dest})
+		}
+	}
+	if withConfig {
+		for name, s := range render.MCP {
+			detail := s.Transport
+			if len(s.Command) > 0 {
+				detail = strings.TrimSpace(detail + " " + strings.Join(s.Command, " "))
+			}
+			if s.URL != "" {
+				detail = strings.TrimSpace(detail + " " + s.URL)
+			}
+			add(Executable{Kind: "mcp", Name: name, Detail: detail})
+		}
+		for event, groups := range render.Hooks {
+			add(Executable{Kind: "hook", Name: event, Detail: fmt.Sprintf("%d group(s)", len(groups))})
+		}
+	}
+	out := make([]Executable, 0, len(byKey))
+	for _, e := range byKey {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func sourceHarnessForOld(opts InstallOptions, target string) string {

@@ -37,12 +37,21 @@ type ConfigEdit struct {
 	CreatedFile bool            `json:"created_file,omitempty"`
 }
 
+// Executable is one installed component that can run code or start a process:
+// an MCP server, a hook, a plugin or a slash command.
+type Executable struct {
+	Kind   string `json:"kind"` // mcp | hook | plugin | command
+	Name   string `json:"name"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type Install struct {
 	ID            string          `json:"id"`
 	Set           string          `json:"set"`
 	SetRemote     string          `json:"set_remote"`
 	Package       string          `json:"package"`
 	Version       string          `json:"version"`
+	Digest        string          `json:"digest,omitempty"`
 	Label         string          `json:"label,omitempty"`
 	SourceHarness string          `json:"source_harness"`
 	Harness       string          `json:"harness"`
@@ -55,6 +64,7 @@ type Install struct {
 	Files         []InstalledFile `json:"files"`
 	Block         *BlockEdit      `json:"block,omitempty"`
 	Edits         []ConfigEdit    `json:"edits,omitempty"`
+	Executables   []Executable    `json:"executables,omitempty"`
 	Warnings      []string        `json:"warnings,omitempty"`
 	Skipped       []string        `json:"skipped,omitempty"`
 }

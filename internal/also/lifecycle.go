@@ -27,14 +27,16 @@ func ParsePkgSpec(spec string) (pkg, version string, err error) {
 }
 
 type InstallRequest struct {
-	Package    string
-	Harness    string
-	Scope      string
-	Project    string
-	Parts      []string
-	Force      bool
-	WithConfig bool
-	Offline    bool
+	Package        string
+	Harness        string
+	Scope          string
+	Project        string
+	Parts          []string
+	Force          bool
+	WithConfig     bool
+	Offline        bool
+	NoPolicy       bool
+	ExpectedDigest string
 }
 
 func ResolveSetForInstall(cfg *Config, setName, remote string, offline bool) (*SetRepo, error) {
@@ -65,6 +67,10 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	if err != nil {
 		return nil, set, err
 	}
+	if req.ExpectedDigest != "" && pkg.Meta.Digest != req.ExpectedDigest {
+		return nil, set, fmt.Errorf("package %s@%s digest %s does not match the lockfile digest %s",
+			pkgName, version.Version, pkg.Meta.Digest, req.ExpectedDigest)
+	}
 	scope, err := cfg.Scope(req.Scope)
 	if err != nil {
 		return nil, set, err
@@ -76,6 +82,16 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 			return nil, set, err
 		}
 	}
+	var policy *Policy
+	if !req.NoPolicy {
+		policy, err = LoadPolicy(project)
+		if err != nil {
+			return nil, set, err
+		}
+		if err := checkPolicyPackage(policy, set.Name, pkg); err != nil {
+			return nil, set, err
+		}
+	}
 	st, err := LoadState()
 	if err != nil {
 		return nil, set, err
@@ -83,6 +99,9 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	opts := InstallOptions{Force: req.Force, WithConfig: req.WithConfig, Parts: req.Parts}
 	plan, err := BuildPlan(st, set, pkg, version, req.Harness, scope, project, opts)
 	if err != nil {
+		return nil, set, err
+	}
+	if err := checkPolicyExecutables(policy, plan.Install.Executables); err != nil {
 		return nil, set, err
 	}
 	if !planHasChanges(plan) {
@@ -102,6 +121,42 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	return plan, set, nil
 }
 
+func checkPolicyPackage(p *Policy, namespace string, pkg *Package) error {
+	if p == nil {
+		return nil
+	}
+	if !p.NamespaceAllowed(namespace) {
+		return fmt.Errorf("policy: namespace %q is not allowed; edit %s", namespace, PolicyFile)
+	}
+	if !p.PackageAllowed(pkg.Meta.Name) {
+		return fmt.Errorf("policy: package %q is not allowed; edit %s", pkg.Meta.Name, PolicyFile)
+	}
+	source, ok := ResolveHarness(pkg.Meta.SourceHarness)
+	if !ok {
+		return fmt.Errorf("policy: unknown source harness %q", pkg.Meta.SourceHarness)
+	}
+	servers, _, _ := ExtractBundleMCP(source, pkg.Files, source.BundleRootsFromFiles(pkg.Files))
+	if findings := p.CheckPackageFiles(pkg.Files, servers); len(findings) > 0 {
+		return fmt.Errorf("policy: %s", strings.Join(findings, "; "))
+	}
+	return nil
+}
+
+func checkPolicyExecutables(p *Policy, execs []Executable) error {
+	if p == nil || len(execs) == 0 {
+		return nil
+	}
+	var kinds []string
+	for _, e := range execs {
+		kinds = append(kinds, e.Kind)
+	}
+	if !p.ExecutablesAllowed(kinds) {
+		return fmt.Errorf("policy: installed components include a disallowed executable kind (%s); edit %s",
+			strings.Join(UniqueStrings(kinds), ", "), PolicyFile)
+	}
+	return nil
+}
+
 func planHasChanges(plan *Plan) bool {
 	return len(plan.NewFiles) > 0 || plan.Block != nil || len(plan.Edits) > 0
 }
@@ -119,13 +174,13 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 	if len(installs) == 0 {
 		return nil, fmt.Errorf("no matching installs")
 	}
-	return upgradeInstalls(cfg, st, installs, force, check)
+	return upgradeInstalls(cfg, st, installs, force, check, false)
 }
 
 // UpgradeInstallsInProject upgrades only the packages installed in one
 // directory, which is what the "also upgrade" command targets. Legacy global
 // installs are reported, not rewritten: their files live in the home dir.
-func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal bool) ([]UpgradeResult, error) {
+func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal, noPolicy bool) ([]UpgradeResult, error) {
 	abs, err := AbsPath(project)
 	if err != nil {
 		return nil, err
@@ -149,14 +204,14 @@ func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []str
 	if len(installs) == 0 && len(legacy) == 0 {
 		return nil, fmt.Errorf("no packages installed in %s; run: also install <package> for <harness>", abs)
 	}
-	results, err := upgradeInstalls(cfg, st, installs, force, check)
+	results, err := upgradeInstalls(cfg, st, installs, force, check, noPolicy)
 	if err != nil {
 		return nil, err
 	}
 	return append(results, legacy...), nil
 }
 
-func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bool) ([]UpgradeResult, error) {
+func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, noPolicy bool) ([]UpgradeResult, error) {
 	repos := map[string]*SetRepo{}
 	var out []UpgradeResult
 	for _, in := range installs {
@@ -168,6 +223,11 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bo
 			continue
 		}
 		latest, err := repo.Latest(in.Package)
+		if lock, lerr := LoadLock(in.Project); lerr == nil {
+			if entry := lock.Find(in.Package, in.Harness); entry != nil && entry.Constraint != "" {
+				latest, err = repo.ResolveVersion(in.Package, entry.Constraint)
+			}
+		}
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
@@ -190,9 +250,28 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bo
 			out = append(out, res)
 			continue
 		}
+		var policy *Policy
+		if !noPolicy {
+			policy, err = LoadPolicy(in.Project)
+			if err != nil {
+				res.Err = err
+				out = append(out, res)
+				continue
+			}
+			if err := checkPolicyPackage(policy, in.Set, pkg); err != nil {
+				res.Err = err
+				out = append(out, res)
+				continue
+			}
+		}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
+			res.Err = err
+			out = append(out, res)
+			continue
+		}
+		if err := checkPolicyExecutables(policy, plan.Install.Executables); err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue

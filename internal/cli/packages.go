@@ -83,7 +83,7 @@ func newListCmd() *cobra.Command {
 		}
 		if versions {
 			w := newTabWriter()
-			fmt.Fprintf(w, "PACKAGE\tVERSION\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
+			fmt.Fprintf(w, "PACKAGE\tVERSION\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
 			for _, r := range rows {
 				for _, v := range r.Versions {
 					inst := ""
@@ -95,13 +95,13 @@ func newListCmd() *cobra.Command {
 							}
 						}
 					}
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(v.Version), label(v.Label), v.Harness, fmtTime(v.Time), orDash(inst))
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(v.Version), orDash(strings.Join(v.Semver, ", ")), label(v.Label), v.Harness, fmtTime(v.Time), orDash(inst))
 				}
 			}
 			return w.Flush()
 		}
 		w := newTabWriter()
-		fmt.Fprintf(w, "PACKAGE\tLATEST\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
+		fmt.Fprintf(w, "PACKAGE\tLATEST\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
 		for _, r := range rows {
 			inst := ""
 			for _, in := range st.Installs {
@@ -114,7 +114,7 @@ func newListCmd() *cobra.Command {
 					break
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(r.Latest.Version), label(r.Latest.Label), r.Latest.Harness, fmtTime(r.Latest.Time), orDash(inst))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(r.Latest.Version), orDash(strings.Join(r.Latest.Semver, ", ")), label(r.Latest.Label), r.Latest.Harness, fmtTime(r.Latest.Time), orDash(inst))
 		}
 		return w.Flush()
 	}
@@ -239,6 +239,9 @@ func newShowCmd() *cobra.Command {
 			return printJSON(out)
 		}
 		fmt.Printf("package:  %s@%s\n", pkg.Meta.Name, v.Version)
+		if len(v.Semver) > 0 {
+			fmt.Printf("semver:   %s\n", strings.Join(v.Semver, ", "))
+		}
 		if v.Label != "" {
 			fmt.Printf("label:    %s\n", v.Label)
 		}
@@ -331,6 +334,8 @@ func newPushCmd() *cobra.Command {
 		allowSecret bool
 		allowLarge  bool
 		allFiles    bool
+		semver      string
+		bump        string
 		jsonOut     bool
 	)
 	c := newCmd("push [directory]", "Publish the initialized infrastructure in this directory")
@@ -393,7 +398,7 @@ Re-running push with unchanged content is a no-op.`
 			res, err := repo.Push(dir, also.PushOptions{
 				Name: name, Description: desc, Harness: harnessID, Label: label,
 				Message: message, AllowSecrets: allowSecret, AllowLarge: allowLarge,
-				DryRun: dryRun, AllFiles: allFiles,
+				DryRun: dryRun, AllFiles: allFiles, Semver: semver, Bump: bump,
 			})
 			if err != nil {
 				return err
@@ -403,6 +408,9 @@ Re-running push with unchanged content is a no-op.`
 					return printJSON(map[string]any{"dry_run": true, "result": res})
 				}
 				fmt.Printf("would push %s@%s (%s) to %s\n", res.Package, short(res.Version), res.Harness, res.Remote)
+				if res.Semver != "" {
+					fmt.Printf("semver alias: %s\n", res.Semver)
+				}
 				fmt.Printf("files: %d (%s)\n", res.Files, also.FormatBytes(res.Bytes))
 				for _, p := range res.Paths {
 					fmt.Printf("  %s\n", p)
@@ -426,6 +434,9 @@ Re-running push with unchanged content is a no-op.`
 				fmt.Printf(" (%s)", res.Label)
 			}
 			fmt.Printf(" [%s]\n", res.Harness)
+			if res.Semver != "" {
+				fmt.Printf("semver: %s\n", res.Semver)
+			}
 			fmt.Printf("files: %d (%s)\n", res.Files, also.FormatBytes(res.Bytes))
 			fmt.Printf("namespace: %s\n", setName)
 			printWarnings("warnings", res.Warnings)
@@ -442,6 +453,8 @@ Re-running push with unchanged content is a no-op.`
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
 	c.Flags().BoolVar(&allFiles, "all-files", false, "publish files outside the harness layout too")
+	c.Flags().StringVar(&semver, "semver", "", "tag this version with an exact semantic version, e.g. 1.4.0")
+	c.Flags().StringVar(&bump, "bump", "", "tag this version as the next major, minor or patch release")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

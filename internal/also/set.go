@@ -111,6 +111,7 @@ func (s *SetRepo) PackageTreeDir(pkg string) string {
 
 type VersionInfo struct {
 	Version string
+	Semver  []string
 	Label   string
 	Time    time.Time
 	Order   int `json:"-"`
@@ -225,6 +226,16 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 			Time: legacyTimes[key], Order: legacyOrder[key],
 		})
 	}
+	if aliases, aerr := s.SemverAliases(pkg); aerr == nil {
+		byVersion := map[string][]string{}
+		for semver, content := range aliases {
+			byVersion[content] = append(byVersion[content], semver)
+		}
+		for i := range out {
+			out[i].Semver = byVersion[out[i].Version]
+			sort.Strings(out[i].Semver)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Time.Equal(out[j].Time) {
 			return out[i].Time.After(out[j].Time)
@@ -235,6 +246,23 @@ func (s *SetRepo) Versions(pkg string) ([]VersionInfo, error) {
 		return out[i].Version > out[j].Version
 	})
 	return out, nil
+}
+
+// PackageMeta returns the manifest of the live tree, falling back to the
+// newest tagged version. It is the cheap lookup used by search.
+func (s *SetRepo) PackageMeta(pkg string) (PackageMeta, error) {
+	if meta, ok := readManifestAtCommit(s.Dir, pkg, "", "HEAD"); ok {
+		return meta, nil
+	}
+	latest, err := s.Latest(pkg)
+	if err != nil {
+		return PackageMeta{}, err
+	}
+	p, err := s.LoadPackage(pkg, latest.Version)
+	if err != nil {
+		return PackageMeta{}, err
+	}
+	return p.Meta, nil
 }
 
 func (s *SetRepo) Packages() ([]string, error) {
@@ -282,6 +310,41 @@ func (s *SetRepo) ResolveVersion(pkg, spec string) (VersionInfo, error) {
 	if strings.EqualFold(spec, "latest") {
 		return latest, nil
 	}
+	// A semantic-version range resolves through aliases, so the immutable
+	// content hash stays the version and "^2.1" is still expressible.
+	if looksLikeSemverSpec(spec) {
+		if aliases, aerr := s.SemverAliases(pkg); aerr == nil && len(aliases) > 0 {
+			if r, ok := ParseSemverRange(spec); ok {
+				var candidates []Semver
+				bySemver := map[string]string{}
+				for alias, content := range aliases {
+					v, ok := ParseSemver(alias)
+					if !ok || !r.Match(v) {
+						continue
+					}
+					candidates = append(candidates, v)
+					bySemver[v.String()] = content
+				}
+				if len(candidates) > 0 {
+					best, _ := HighestSemver(candidates)
+					content := bySemver[best.String()]
+					for _, v := range versions {
+						if v.Version == content {
+							return v, nil
+						}
+					}
+				}
+				if strings.ContainsAny(spec, "^~><*xX") {
+					var available []string
+					for alias := range aliases {
+						available = append(available, alias)
+					}
+					sort.Strings(available)
+					return VersionInfo{}, fmt.Errorf("no version of %q satisfies %q; semver aliases: %s", pkg, spec, strings.Join(available, ", "))
+				}
+			}
+		}
+	}
 	// Label match takes precedence only when no version prefix matches.
 	var prefix []VersionInfo
 	for _, v := range versions {
@@ -316,6 +379,18 @@ func checkVersionDigest(pkg, version string, meta PackageMeta) error {
 		return fmt.Errorf("version %s of %q points at manifest digest %s", version, pkg, got)
 	}
 	return nil
+}
+
+func looksLikeSemverSpec(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	switch s[0] {
+	case '^', '~', '>', '<', '*', 'v', 'V', 'x', 'X':
+		return true
+	}
+	return s[0] >= '0' && s[0] <= '9'
 }
 
 func joinVersions(vs []VersionInfo) string {
@@ -372,6 +447,10 @@ type PushOptions struct {
 	DryRun       bool
 	// AllFiles allows files outside the source harness layout into the package.
 	AllFiles bool
+	// Semver tags this push as an exact semantic version. Bump derives the next
+	// one from the highest existing alias instead.
+	Semver string
+	Bump   string
 }
 
 type PushResult struct {
@@ -384,6 +463,7 @@ type PushResult struct {
 	Paths     []string `json:"paths,omitempty"`
 	Bytes     int64    `json:"bytes"`
 	Existing  bool     `json:"existing"`
+	Semver    string   `json:"semver,omitempty"`
 	Warnings  []string `json:"warnings,omitempty"`
 	Remote    string   `json:"remote"`
 	Namespace string   `json:"namespace"`
@@ -450,6 +530,11 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		Warnings: warnings, Remote: s.Cfg.Remote, Namespace: s.Name,
 	}
 	if opts.DryRun {
+		semver, err := s.nextSemver(opts)
+		if err != nil {
+			return nil, err
+		}
+		res.Semver = semver
 		return res, nil
 	}
 	s.invalidateVersionData()
@@ -463,6 +548,11 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err := pullFF(s.Dir); err != nil {
 		return nil, err
 	}
+	semver, err := s.nextSemver(opts)
+	if err != nil {
+		return nil, err
+	}
+	res.Semver = semver
 	// Tag the live tree and any legacy version dirs before they are replaced.
 	if err := s.ensureTagsForCurrentTree(opts.Name); err != nil {
 		return nil, err
@@ -474,6 +564,11 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		}
 		if err := s.pushVersionTags(opts.Name, version); err != nil {
 			return res, err
+		}
+		if semver != "" {
+			if err := s.SetSemver(opts.Name, semver, version); err != nil {
+				return res, err
+			}
 		}
 		return res, nil
 	}
@@ -524,7 +619,63 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err := s.pushVersionTags(opts.Name, version); err != nil {
 		return res, err
 	}
+	if semver != "" {
+		if err := s.SetSemver(opts.Name, semver, version); err != nil {
+			return res, err
+		}
+	}
 	return res, nil
+}
+
+// nextSemver returns the alias requested by --semver or derived by --bump.
+func (s *SetRepo) nextSemver(opts PushOptions) (string, error) {
+	if opts.Bump == "" {
+		if opts.Semver == "" {
+			return "", nil
+		}
+		v, ok := ParseSemver(opts.Semver)
+		if !ok {
+			return "", fmt.Errorf("invalid --semver %q; use MAJOR.MINOR.PATCH", opts.Semver)
+		}
+		return v.String(), nil
+	}
+	switch opts.Bump {
+	case "major", "minor", "patch":
+	default:
+		return "", fmt.Errorf("invalid --bump %q; use major, minor or patch", opts.Bump)
+	}
+	aliases, err := s.SemverAliases(opts.Name)
+	if err != nil {
+		return "", err
+	}
+	var known []Semver
+	for alias := range aliases {
+		if v, ok := ParseSemver(alias); ok {
+			known = append(known, v)
+		}
+	}
+	var next Semver
+	if len(known) > 0 {
+		base, _ := HighestSemver(known)
+		switch opts.Bump {
+		case "major":
+			next = Semver{Major: base.Major + 1}
+		case "minor":
+			next = Semver{Major: base.Major, Minor: base.Minor + 1}
+		case "patch":
+			next = Semver{Major: base.Major, Minor: base.Minor, Patch: base.Patch + 1}
+		}
+	} else {
+		switch opts.Bump {
+		case "major":
+			next = Semver{Major: 1}
+		case "minor":
+			next = Semver{Minor: 1}
+		case "patch":
+			next = Semver{Patch: 1}
+		}
+	}
+	return next.String(), nil
 }
 
 // restorePaths puts a set clone back after a write or commit failure. The
