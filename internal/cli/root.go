@@ -73,6 +73,7 @@ func NewRoot() *cobra.Command {
 		newReshapeCmd(),
 		newTreeCmd(),
 		newUninstallCmd(),
+		newPruneCmd(),
 	)
 	return root
 }

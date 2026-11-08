@@ -238,6 +238,103 @@ func hasCode(findings []AuditFinding, code string) bool {
 	return false
 }
 
+func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"game-developer","theme":"dark"}`)
+	res, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "opencode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(project, "opencode.json")
+	writeFile(t, config, `{"theme":"dark"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{
+		Package: "p", Harness: "opencode", Project: project, WithConfig: true,
+	}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok := doc.RawAt("default_agent"); !ok || string(raw) != `"game-developer"` {
+		t.Fatalf("default_agent was not installed: %s", data)
+	}
+	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
+		t.Fatalf("unrelated config was lost: %s", data)
+	}
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := st.InstallsOf("p")[0]
+	if in.Version != res.Version {
+		t.Fatalf("unexpected install version: %s", in.Version)
+	}
+	if _, err := Uninstall(st, in, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err = ParseJSONC(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.RawAt("default_agent"); ok {
+		t.Fatalf("default_agent was not reversed: %s", data)
+	}
+	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
+		t.Fatalf("unrelated config was removed: %s", data)
+	}
+}
+
+func TestPruneMissingProjects(t *testing.T) {
+	live := t.TempDir()
+	gone := filepath.Join(t.TempDir(), "deleted")
+	st := &State{Installs: []Install{
+		{ID: "a", Package: "live", Project: live},
+		{ID: "b", Package: "gone", Project: gone},
+		{ID: "c", Package: "global", Scope: "global"},
+	}}
+	removed := st.PruneMissingProjects()
+	if len(removed) != 1 || removed[0].Package != "gone" {
+		t.Fatalf("wrong records pruned: %+v", removed)
+	}
+	if len(st.Installs) != 2 {
+		t.Fatalf("live/global records were removed: %+v", st.Installs)
+	}
+}
+
+func TestFindByIDSurvivesRemove(t *testing.T) {
+	st := &State{Installs: []Install{
+		{ID: "a", Package: "first", Harness: "opencode", Set: "ns"},
+		{ID: "b", Package: "second", Harness: "opencode", Set: "ns"},
+	}}
+	in := st.FindByID("a")
+	if in == nil {
+		t.Fatal("missing install")
+	}
+	st.Remove("a")
+	if in.Package != "first" || in.Set != "ns" {
+		t.Fatalf("caller read a shifted install: %+v", in)
+	}
+	if len(st.Installs) != 1 || st.Installs[0].Package != "second" {
+		t.Fatalf("wrong install was removed: %+v", st.Installs)
+	}
+}
+
 func TestPlainTextSecretScan(t *testing.T) {
 	files := map[string]*SnapshotFile{
 		"notes.txt": {Data: []byte("api_key: sk-abcdefghijklmnop\n")},

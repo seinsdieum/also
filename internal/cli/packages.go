@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,27 +84,28 @@ func newListCmd() *cobra.Command {
 		}
 		if versions {
 			w := newTabWriter()
-			fmt.Fprintf(w, "PACKAGE\tVERSION\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
+			fmt.Fprintf(w, "PACKAGE\tVERSION\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\tDIR\n")
 			for _, r := range rows {
 				for _, v := range r.Versions {
-					inst := ""
+					inst, dir := "", ""
 					for _, in := range st.Installs {
 						if in.Set == name && in.Package == r.Name && in.Version == v.Version {
 							inst = in.Harness
+							dir = displayDir(in.Project)
 							if in.Version == r.Latest.Version {
 								inst += " *"
 							}
 						}
 					}
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(v.Version), orDash(strings.Join(v.Semver, ", ")), label(v.Label), v.Harness, fmtTime(v.Time), orDash(inst))
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(v.Version), orDash(strings.Join(v.Semver, ", ")), label(v.Label), v.Harness, fmtTime(v.Time), orDash(inst), orDash(dir))
 				}
 			}
 			return w.Flush()
 		}
 		w := newTabWriter()
-		fmt.Fprintf(w, "PACKAGE\tLATEST\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\n")
+		fmt.Fprintf(w, "PACKAGE\tLATEST\tSEMVER\tLABEL\tSOURCE HARNESS\tUPDATED\tINSTALLED\tDIR\n")
 		for _, r := range rows {
-			inst := ""
+			inst, dir := "", ""
 			for _, in := range st.Installs {
 				if in.Set == name && in.Package == r.Name {
 					mark := ""
@@ -111,10 +113,11 @@ func newListCmd() *cobra.Command {
 						mark = " *"
 					}
 					inst = in.Harness + mark
+					dir = displayDir(in.Project)
 					break
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(r.Latest.Version), orDash(strings.Join(r.Latest.Semver, ", ")), label(r.Latest.Label), r.Latest.Harness, fmtTime(r.Latest.Time), orDash(inst))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, short(r.Latest.Version), orDash(strings.Join(r.Latest.Semver, ", ")), label(r.Latest.Label), r.Latest.Harness, fmtTime(r.Latest.Time), orDash(inst), orDash(dir))
 		}
 		return w.Flush()
 	}
@@ -299,6 +302,24 @@ func newShowCmd() *cobra.Command {
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before reading")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
+}
+
+func displayDir(p string) string {
+	if p == "" {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return p
+	}
+	rel, err := filepath.Rel(cwd, p)
+	if err != nil {
+		return p
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return p
+	}
+	return rel
 }
 
 func displayRel(rel string, h *also.Harness, dir string) string {

@@ -19,7 +19,8 @@ not need an `if harness == "..."` branch.
 | Field | Meaning |
 |---|---|
 | `ID`, `Display`, `Aliases` | Identity and CLI aliases. |
-| `Global`, `Project`, `Bundle`, `Roots` | Native layout and bundle roots. |
+| `Project`, `Bundle`, `Roots` | Native project layout and bundle roots. |
+| `GlobalBase` | Detection hint for `also setup` only. |
 | `Hooks` | Source config files, supported events, target file/root key. |
 | `MCP` | Source config files, native encoding, optional destination resolver. |
 | `Settings` | Mergeable keys, source configs, target file. |
@@ -31,6 +32,14 @@ not need an `if harness == "..."` branch.
 Reusable native encodings live in `MCPFormat`: `claude-json`, `qwen-json`,
 `opencode-json`, `codex-toml`. Command dialects are `claude`/`qwen`; agent
 dialects are `claude`/`opencode`. A new harness usually reuses one of these.
+
+`Settings.Keys` is an allowlist of reversible top-level config keys, not a
+whole-file install. For OpenCode it is `default_agent` and `permissions`; MCP
+and hooks are merged separately. Other top-level keys in `opencode.json`
+(`theme`, `model`, `keybinds`, ...) stay user-owned and are never overwritten,
+which is why `adopt` does not capture them. Add a key to the adapter only when
+the value is part of the infrastructure contract rather than a local
+preference.
 
 ## Adding a harness
 

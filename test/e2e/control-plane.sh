@@ -17,7 +17,7 @@ export HOME="$WORK/home"
 export USERPROFILE="$WORK/home"
 export ALSO_HOME="$WORK/also"
 export ALSO_NO_UPDATE_CHECK=1
-mkdir -p "$HOME" "$WORK/src"
+mkdir -p "$HOME" "$WORK/src" "$WORK/src2"
 git init --bare -q "$WORK/remote.git"
 
 "$WORK/bin/also" setup --yes --harness claude \
@@ -27,6 +27,11 @@ cd "$WORK/src"
 printf 'rules\n' > CLAUDE.md
 printf '{"mcpServers":{"x":{"command":"/bin/echo"}}}\n' > .mcp.json
 "$WORK/bin/also" init demo for claude >/dev/null
+"$WORK/bin/also" push --semver 1.0.0 >/dev/null
+
+cd "$WORK/src2"
+printf 'other rules\n' > CLAUDE.md
+"$WORK/bin/also" init other for claude >/dev/null
 "$WORK/bin/also" push --semver 1.0.0 >/dev/null
 
 # A user project with a committed lock and policy.
@@ -42,6 +47,22 @@ git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 "$WORK/bin/also" audit --sbom "$WORK/sbom.json" >/dev/null
 grep -q 'CycloneDX' "$WORK/sbom.json"
 "$WORK/bin/also" policy >/dev/null
+
+# Two packages in one project: uninstall must remove the right state record and
+# the matching lock entry, not the neighbor after the slice shifts.
+"$WORK/bin/also" install other for claude >/dev/null
+git add also.lock
+git -c user.name=ci -c user.email=ci@example.invalid commit -qm second
+"$WORK/bin/also" audit --ci >/dev/null
+"$WORK/bin/also" uninstall other for claude | grep -q 'other'
+if grep -q '"package": "other"' also.lock; then
+	echo "control-plane: uninstall left the wrong lock entry" >&2
+	exit 1
+fi
+grep -q '"package": "demo"' also.lock
+git add also.lock
+git -c user.name=ci -c user.email=ci@example.invalid commit -qm removed
+"$WORK/bin/also" audit --ci >/dev/null
 
 # A second checkout must reproduce the lock exactly.
 mkdir -p "$WORK/app2"

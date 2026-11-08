@@ -86,8 +86,12 @@ Capture infrastructure that already exists in a harness layout:
 ```sh
 cd ../existing-project
 also init existing-rules for claude
-also adopt for claude
+also adopt for claude --semver 1.0.0
 ```
+
+`adopt` already publishes a version, so the semantic tag belongs on the same
+command. Running `push --semver` afterwards creates a second version with the
+same content but no description.
 
 Keep the package and the tool current from the directory where it is installed:
 
@@ -255,6 +259,7 @@ Supported selectors include `instructions`, `skills`, `commands`, `agents`, `plu
 | `also policy` | Show the project policy that install and audit enforce. |
 | `also tree` | Show only the installed infrastructure. |
 | `also uninstall <package>` | Remove an installation and reverse its configuration edits. |
+| `also prune` | Drop install records whose project directory was deleted manually. |
 | `also doctor` | Check git, configuration, adapters, caches and installs. |
 | `also verify` | Verify package digests, version tags and installation state. |
 | `also repair <namespace>` | Re-clone a broken internal namespace cache. |

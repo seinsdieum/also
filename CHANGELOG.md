@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.1 (2026-11-08)
+
+### Fixed
+
+- `also uninstall` no longer reads a shifted install record after removing the
+  first of several packages. The output and `also.lock` now name and remove the
+  package that was actually uninstalled. `FindByID` returns a copy to prevent
+  the same class of bug in other callers.
+- OpenCode's `default_agent` is captured by `adopt` and installed reversibly
+  into `opencode.json`; unrelated keys stay user-owned. The adapter allowlist
+  is documented in `docs/ADAPTERS.md`.
+- `also adopt` accepts `--semver` and `--bump`, so adopting and tagging is one
+  publish instead of a second `push` with different content metadata.
+- `also list` shows the installation directory, not only the harness.
+- `also prune` removes state records whose project directory was deleted
+  manually; `doctor` points to it. Existing projects with missing files are
+  still left to `audit` and `drift`.
+- The control-plane E2E now installs two packages, uninstalls one, and verifies
+  that the surviving lock entry is the correct one.
+
 ## 1.2.0 (2026-11-08)
 
 This release makes the committed lockfile the root of trust and tightens the

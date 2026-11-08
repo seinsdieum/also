@@ -80,6 +80,12 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 	add("state", "ok", fmt.Sprintf("%d install(s)", len(st.Installs)))
 	for _, in := range st.Installs {
 		label := fmt.Sprintf("%s/%s (%s)", in.Set, in.Package, in.Harness)
+		if in.Project != "" {
+			if _, err := os.Stat(in.Project); os.IsNotExist(err) {
+				add("install "+label, "warn", "project directory is gone; run: also prune")
+				continue
+			}
+		}
 		if in.Scope == "global" {
 			add("install "+label, "warn", "legacy global install; remove it with: also uninstall "+in.Package+" --legacy-global")
 			continue

@@ -74,7 +74,7 @@ also search [query] [--refresh] [--json]
 also show <package>[@version] [from <namespace>] [--json]
 also push [directory] [--semver V | --bump major|minor|patch] [--dry-run] [--all-files] [--json]
 also tag <package> <semver> [version] [from <namespace>]
-also adopt [directory] [for <harness>] [--name N] [--into <dir>] [--json]
+also adopt [directory] [for <harness>] [--name N] [--semver V | --bump kind] [--into <dir>] [--json]
 ```
 
 `also push` publishes the nearest initialized directory. With no argument it
@@ -87,6 +87,8 @@ layout are refused unless `--all-files` is passed. `adopt` extracts the
 initialized directory's harness-native files into a portable bundle and
 publishes it straight to the namespace. Without `--into` the extracted bundle
 is temporary. `--no-push` keeps the bundle and therefore requires `--into`.
+`adopt` already publishes, so put the semantic tag on the same command
+(`also adopt --semver 1.0.0`) instead of re-pushing the directory afterwards.
 
 `also search` reads package names and descriptions from every connected
 namespace. It is not a public catalog and sends no telemetry.
@@ -123,6 +125,7 @@ also upgrade [package...] [--check] [--no-lock] [--json]
 also reshape <harness> [package...] [--json]
 also tree [for <harness>] [--json]
 also uninstall <package> [for <harness>] [--all] [--json]
+also prune [--dry-run] [--json]
 ```
 
 Installs always target the current directory. One package can be installed
@@ -131,6 +134,8 @@ package argument installs every entry in `also.lock` for the recorded harness
 and parts, which is the intended CI form. `also upgrade` upgrades the packages
 installed in the current directory, not packages elsewhere. `also uninstall`
 defaults to the current directory; use `--dir <dir>` to choose another one.
+If a project directory was deleted manually, `also prune` removes its stale
+state records; it never touches existing projects with missing files.
 
 A project policy (`also.policy.yml`) is enforced before an install or upgrade
 writes anything. There is no bypass flag: to change the policy, edit the file
@@ -230,6 +235,7 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | `upgrade` | array of package, harness, old, new, status, error |
 | `reshape` | array of package, from, to, status, error |
 | `uninstall` | array of namespace, package, version, harness, warnings |
+| `prune` | dry_run, removed array (namespace, package, version, harness, project) |
 | `audit` | schema, project, packages, findings, summary, lock, policy_file |
 | `drift` | schema, project, findings, summary |
 | `policy` | file, exists, namespaces, packages, executables, limits |

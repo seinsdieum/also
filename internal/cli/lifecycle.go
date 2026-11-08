@@ -742,17 +742,20 @@ func newUninstallCmd() *cobra.Command {
 				if in == nil {
 					continue
 				}
+				// Uninstall removes the slice element, so read everything the
+				// output and lockfile need before the mutation.
+				namespace, pkg, version, harness := in.Set, in.Package, in.Version, in.Harness
 				warnings, err := also.Uninstall(st, in, force)
 				if err != nil {
 					return err
 				}
 				item := uninstallOutput{
-					Namespace: in.Set, Package: in.Package, Version: in.Version,
-					Harness: in.Harness, Warnings: unique(warnings),
+					Namespace: namespace, Package: pkg, Version: version,
+					Harness: harness, Warnings: unique(warnings),
 				}
 				out = append(out, item)
 				if !jsonOut {
-					fmt.Printf("uninstalled %s/%s@%s from %s\n", in.Set, in.Package, short(in.Version), in.Harness)
+					fmt.Printf("uninstalled %s/%s@%s from %s\n", namespace, pkg, short(version), harness)
 					printWarnings("warnings", warnings)
 				}
 			}
@@ -786,6 +789,63 @@ func newUninstallCmd() *cobra.Command {
 	return c
 }
 
+func newPruneCmd() *cobra.Command {
+	var (
+		dryRun  bool
+		jsonOut bool
+	)
+	c := newCmd("prune", "Drop install records whose project directory no longer exists")
+	c.Long = `Removes stale state entries after a project directory was deleted manually.
+Only records whose project path is gone are removed; existing projects with
+missing or modified files are left for audit and drift to report.`
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return fmt.Errorf("usage: also prune [--dry-run] [--json]")
+		}
+		st, err := also.LoadState()
+		if err != nil {
+			return err
+		}
+		type pruneOutput struct {
+			Namespace string `json:"namespace"`
+			Package   string `json:"package"`
+			Version   string `json:"version"`
+			Harness   string `json:"harness"`
+			Project   string `json:"project"`
+		}
+		var out []pruneOutput
+		for _, in := range st.PruneMissingProjects() {
+			out = append(out, pruneOutput{
+				Namespace: in.Set, Package: in.Package, Version: in.Version,
+				Harness: in.Harness, Project: in.Project,
+			})
+		}
+		if !dryRun && len(out) > 0 {
+			if err := also.SaveState(st); err != nil {
+				return err
+			}
+		}
+		if jsonOut {
+			return printJSON(map[string]any{"dry_run": dryRun, "removed": out})
+		}
+		if len(out) == 0 {
+			fmt.Println("nothing to prune")
+			return nil
+		}
+		for _, item := range out {
+			verb := "pruned"
+			if dryRun {
+				verb = "would prune"
+			}
+			fmt.Printf("%s %s/%s@%s from %s (%s)\n", verb, item.Namespace, item.Package, short(item.Version), item.Harness, item.Project)
+		}
+		return nil
+	}
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be removed")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	return c
+}
+
 func newAdoptCmd() *cobra.Command {
 	var (
 		name        string
@@ -798,6 +858,8 @@ func newAdoptCmd() *cobra.Command {
 		desc        string
 		allowSecret bool
 		allowLarge  bool
+		semver      string
+		bump        string
 		jsonOut     bool
 	)
 	c := newCmd("adopt [directory] [for <harness>]", "Capture the initialized infrastructure into a package")
@@ -906,6 +968,7 @@ temporary unless --into is given.`
 			pushRes, err := repo.Push(res.BundleDir, also.PushOptions{
 				Name: name, Description: desc, Harness: harnessID, Message: message,
 				AllowSecrets: allowSecret, AllowLarge: allowLarge, AllFiles: true,
+				Semver: semver, Bump: bump,
 			})
 			if err != nil {
 				return err
@@ -922,6 +985,9 @@ temporary unless --into is given.`
 				return nil
 			}
 			fmt.Printf("pushed %s@%s [%s]\n", name, pushRes.Version, harnessID)
+			if pushRes.Semver != "" {
+				fmt.Printf("semver: %s\n", pushRes.Semver)
+			}
 			printWarnings("package warnings", pushRes.Warnings)
 			return nil
 		})
@@ -936,6 +1002,8 @@ temporary unless --into is given.`
 	c.Flags().StringVar(&desc, "description", "", "package description")
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secrets")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
+	c.Flags().StringVar(&semver, "semver", "", "tag the adopted version with an exact semantic version")
+	c.Flags().StringVar(&bump, "bump", "", "tag the adopted version as the next major, minor or patch release")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }

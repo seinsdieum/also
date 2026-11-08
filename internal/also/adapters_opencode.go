@@ -27,7 +27,7 @@ func opencodeAdapter() *Harness {
 			Resolve: pickOpenCodeConfig,
 		},
 		Settings: SettingsAdapter{
-			Keys:    []string{"permissions"},
+			Keys:    []string{"default_agent", "permissions"},
 			Configs: []string{"opencode.jsonc", "opencode.json"},
 			Target:  func(t Target) string { return t.MCP },
 		},

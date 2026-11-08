@@ -101,10 +101,14 @@ func SaveState(st *State) error {
 	return atomicWrite(StatePath(), data, 0o600)
 }
 
+// FindByID returns a copy. Callers may hold it across a state mutation (for
+// example Uninstall, which removes the slice element) without reading a
+// different install after the slice shifts.
 func (s *State) FindByID(id string) *Install {
 	for idx := range s.Installs {
 		if s.Installs[idx].ID == id {
-			return &s.Installs[idx]
+			in := s.Installs[idx]
+			return &in
 		}
 	}
 	return nil
@@ -183,6 +187,24 @@ func (s *State) sharedBlock(b *BlockEdit, selfID string) bool {
 		}
 	}
 	return false
+}
+
+// PruneMissingProjects drops install records whose project directory no longer
+// exists. It never removes files; the directory is already gone.
+func (s *State) PruneMissingProjects() []Install {
+	var removed []Install
+	out := s.Installs[:0]
+	for _, in := range s.Installs {
+		if in.Project != "" {
+			if _, err := os.Stat(in.Project); os.IsNotExist(err) {
+				removed = append(removed, in)
+				continue
+			}
+		}
+		out = append(out, in)
+	}
+	s.Installs = out
+	return removed
 }
 
 func (s *State) Remove(id string) {
