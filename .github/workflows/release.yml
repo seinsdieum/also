@@ -75,6 +75,7 @@ jobs:
         with:
           path: dist
           format: spdx-json
+          syft-version: v1.18.0
           output-file: ${{ runner.temp }}/also.spdx.json
           upload-release-assets: false
       - name: add SBOM to the release
