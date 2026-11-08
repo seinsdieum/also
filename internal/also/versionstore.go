@@ -110,7 +110,7 @@ func (s *SetRepo) SetSemver(pkg, semver, version string) error {
 	if _, err := runGit(s.Dir, "update-ref", semverTagRef(pkg, semver), commit); err != nil {
 		return err
 	}
-	if err := pushTag(s.Dir, semverTagName(pkg, semver)); err != nil {
+	if err := pushTagForce(s.Dir, semverTagName(pkg, semver)); err != nil {
 		return err
 	}
 	s.invalidateVersionData()

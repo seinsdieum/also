@@ -39,6 +39,13 @@ func TestSemverAliasesResolveRanges(t *testing.T) {
 	if _, err := repo.ResolveVersion("p", "^2.0.0"); err == nil {
 		t.Fatal("^2.0.0 should not resolve")
 	}
+	if err := repo.SetSemver("p", "1.2.0", second.Version); err != nil {
+		t.Fatalf("moving an alias must be allowed: %v", err)
+	}
+	moved, err := repo.ResolveVersion("p", "1.2.0")
+	if err != nil || moved.Version != second.Version {
+		t.Fatalf("alias did not move: %+v, %v", moved, err)
+	}
 }
 
 func TestLockfileRoundTrip(t *testing.T) {

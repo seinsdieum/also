@@ -303,6 +303,15 @@ func pushTag(dir, tag string) error {
 	return nil
 }
 
+// pushTagForce moves a mutable alias tag (semantic version). Content version
+// tags are never pushed with force.
+func pushTagForce(dir, tag string) error {
+	if _, err := runGit(dir, "push", "--quiet", "--force", "origin", "refs/tags/"+tag); err != nil {
+		return fmt.Errorf("cannot push alias tag %s: %w", tag, err)
+	}
+	return nil
+}
+
 func pushHead(dir string) error {
 	args := []string{"push", "--quiet", "origin", "HEAD"}
 	if _, err := runGit(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err != nil {
