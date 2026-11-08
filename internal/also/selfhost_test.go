@@ -428,6 +428,16 @@ func TestFindProjectRootFromSubdirectory(t *testing.T) {
 	}
 }
 
+func TestPushRefusesManagedInstructionBlock(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "<!-- also:begin p/opencode -->\nrules\n<!-- also:end p/opencode -->\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "opencode"}); err == nil {
+		t.Fatal("expected a managed block to be refused")
+	}
+}
+
 func TestPushRefusesPackageWithoutComponents(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)

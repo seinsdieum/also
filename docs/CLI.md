@@ -85,7 +85,9 @@ files ignored by `.gitignore` are excluded. Before publishing, `--dry-run`
 lists every file that would be included; files outside the source harness
 layout are refused unless `--all-files` is passed. A package with no installable
 component is refused unless `--allow-empty` is passed, so a `.gitignore` that
-hides the layout cannot silently publish a broken version. `adopt` extracts the
+hides the layout cannot silently publish a broken version. A source instruction
+file that already contains an also-managed block is refused: use `adopt` to
+capture a live installation, or remove the block first. `adopt` extracts the
 initialized directory's harness-native files into a portable bundle and
 publishes it straight to the namespace. Without `--into` the extracted bundle
 is temporary. `--no-push` keeps the bundle and therefore requires `--into`.
@@ -166,7 +168,8 @@ project-owned `AGENTS.md` and `opencode.json` untouched. `also upgrade` upgrades
 the packages installed in the current directory, not packages elsewhere;
 `--major` is required to cross a major version. `also reshape` is scoped to the
 current project, updates `also.lock`, and `--all` is the explicit machine-wide
-form. `also uninstall` defaults to the current directory; use `--dir <dir>` to
+form. Reshape preflights every package before writing; an apply-time I/O failure
+can still leave earlier packages migrated, and a rerun completes the rest. `also uninstall` defaults to the current directory; use `--dir <dir>` to
 choose another one. If a project directory was deleted manually, `also prune`
 removes its stale state records; it never touches existing projects with
 missing files.
@@ -210,8 +213,10 @@ for every install.
 
 A modified file is a warning, because the edit may be intentional. A missing
 file, managed instruction block or configuration entry is a failure. `--ci`
-exits 1 on a failure and requires a git-tracked `also.lock`: state in `$HOME`
-is only a cache, so the committed lock is the source of truth. It also fails
+exits 1 on a failure and requires a git-tracked `also.lock` when the project is
+inside git: state in `$HOME` is only a cache, so the committed lock is the
+source of truth. A directory outside git has no tracking metadata; `--ci` then
+checks only the local lock and files. It also fails
 when the lock pins a package that is not installed, when the installed version
 or digest differs, when an install is missing from the lock, and when an
 installed file, managed instruction block or managed config file is tracked by

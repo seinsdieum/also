@@ -379,7 +379,15 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		for _, in := range beforeState.Installs {
 			before[in.ID] = true
 		}
-		var applied []string
+		type fileSnap struct {
+			data []byte
+			mode os.FileMode
+		}
+		type appliedEntry struct {
+			id    string
+			files map[string]fileSnap
+		}
+		var applied []appliedEntry
 		rollback := func() {
 			if len(applied) == 0 {
 				return
@@ -388,20 +396,36 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 			if lerr != nil {
 				return
 			}
-			for _, id := range applied {
-				if in := st.FindByID(id); in != nil {
+			for _, item := range applied {
+				if in := st.FindByID(item.id); in != nil {
 					_, _ = also.Uninstall(st, in, true)
+				}
+				for path, snap := range item.files {
+					_ = os.MkdirAll(filepath.Dir(path), 0o755)
+					_ = os.WriteFile(path, snap.data, snap.mode)
 				}
 			}
 		}
 		out := make([]installOutput, 0, len(lock.Packages))
-		for _, entry := range lock.Packages {
+		for idx, entry := range lock.Packages {
 			if err := entry.CheckEntry(); err != nil {
 				return err
 			}
 			entryCfg := configWithLockNamespace(cfg, entry.Namespace, entry.Remote)
 			if _, ok := entryCfg.Namespaces[entry.Namespace]; !ok {
 				return fmt.Errorf("lockfile namespace %q is not configured and the lock has no remote; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
+			}
+			snap := map[string]fileSnap{}
+			if idx < len(plans) {
+				for _, f := range plans[idx].NewFiles {
+					fi, serr := os.Stat(f.Dest)
+					if serr != nil || !fi.Mode().IsRegular() {
+						continue
+					}
+					if data, rerr := os.ReadFile(f.Dest); rerr == nil {
+						snap[f.Dest] = fileSnap{data: data, mode: fi.Mode().Perm()}
+					}
+				}
 			}
 			plan, _, err := also.InstallPackage(entryCfg, also.InstallRequest{
 				Package: entry.Package + "@" + entry.Version, Harness: entry.Harness,
@@ -413,7 +437,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
 			}
 			if !before[plan.Install.ID] {
-				applied = append(applied, plan.Install.ID)
+				applied = append(applied, appliedEntry{id: plan.Install.ID, files: snap})
 			}
 			out = append(out, planOutput(plan))
 		}

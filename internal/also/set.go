@@ -506,6 +506,11 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err != nil {
 		return nil, err
 	}
+	if classified.Instr != "" {
+		if f := snap.Files[classified.Instr]; f != nil && containsMarker(f.Data) {
+			return nil, fmt.Errorf("the source instruction file contains an also-managed block; use also adopt to capture a live installation, or remove the block before push")
+		}
+	}
 	if len(classified.Other) > 0 && !opts.AllFiles {
 		return nil, fmt.Errorf("refusing to publish files outside the %s layout (use --all-files if this is intentional):\n  %s",
 			h.ID, strings.Join(classified.Other, "\n  "))

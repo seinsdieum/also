@@ -61,7 +61,10 @@ ownership and harness migration.
   nested projects, harness-root files and an empty lock after uninstall.
 - `install --frozen` preflights destination conflicts, cross-entry config
   conflicts and policy executables before writing the first entry, and rolls
-  back entries it applied if a later write fails.
+  back entries it applied if a later write fails, restoring any pre-existing
+  files it adopted.
+- `push` refuses a source instruction file that already contains an also-managed
+  block; use `adopt` to capture a live installation.
 - `reshape` preflights every package before applying any, and checks every
   project before `--all`; it refuses a symlinked `.gitignore` before mutating.
 - Scoped `exclude infra for <harness>` merges with the shared block instead of
