@@ -482,7 +482,7 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/.claude/settings.json", "/sub/.mcp.json", "/bom/.mcp.json", "/dup/opencode.json", "/case/.MCP.JSON"} {
 		found := false
 		for path := range paths {
-			if strings.HasSuffix(path, suffix) {
+			if strings.HasSuffix(strings.ToLower(path), strings.ToLower(suffix)) {
 				found = true
 				break
 			}
