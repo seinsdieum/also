@@ -16,6 +16,9 @@
   removes the new instruction/config files it created.
 - Codex TOML created-file provenance is retained, and a modified TOML managed
   block needs `--force` like JSON.
+- Config origins are fully cleaned when the last owner is removed, including
+  after a successful or failed reshape; reshape preflight reports the exact
+  per-package error instead of a generic message.
 - `reshape` rolls back packages it already moved when a later apply fails, so
   the state, lock and files do not end in a mixed harness. An
   OpenCode→Claude→OpenCode round trip no longer needs `--force` when the

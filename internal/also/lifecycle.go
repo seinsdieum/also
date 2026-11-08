@@ -472,7 +472,7 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 	if err := SaveState(st); err != nil {
 		return rollback(err)
 	}
-	if err := CleanupConfigOrigins(in.Project, st, in.Edits, in.Block); err != nil {
+	if err := CleanupConfigOrigins(in.Project, st); err != nil {
 		warnings = append(warnings, "could not clean config origins: "+err.Error())
 	}
 	return warnings, nil
@@ -567,7 +567,9 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		})
 	}
 	if failed {
-		return out, fmt.Errorf("reshape preflight failed; no packages were changed")
+		// Return the per-package errors so the CLI can print the exact
+		// conflicting key or missing component.
+		return out, nil
 	}
 	if err := reshapePlansConflict(steps, force); err != nil {
 		return out, err
@@ -600,6 +602,17 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 						break
 					}
 				}
+			}
+			// New-harness origins were merged before the failure; after
+			// reverting every applied package they are unowned.
+			seenProject := map[string]bool{}
+			for _, a := range applied {
+				key := PathKey(a.in.Project)
+				if key == "" || seenProject[key] {
+					continue
+				}
+				seenProject[key] = true
+				_ = CleanupConfigOrigins(a.in.Project, st)
 			}
 			return out, fmt.Errorf("reshape failed; applied packages were rolled back: %w", err)
 		}

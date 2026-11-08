@@ -153,7 +153,7 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 // CleanupConfigOrigins drops origin entries for paths and files that no
 // remaining install owns. Without this a later manual edit would be mistaken
 // for the base of a previous ownership epoch and removed on uninstall.
-func CleanupConfigOrigins(project string, st *State, edits []ConfigEdit, block *BlockEdit) error {
+func CleanupConfigOrigins(project string, st *State) error {
 	if project == "" || st == nil {
 		return nil
 	}
@@ -203,8 +203,7 @@ func CleanupConfigOrigins(project string, st *State, edits []ConfigEdit, block *
 			changed = true
 		}
 	}
-	if block != nil {
-		rel := relProjectFile(project, block.File)
+	for rel := range f.Blocks {
 		ownedBlock := false
 		for idx := range st.Installs {
 			if b := st.Installs[idx].Block; b != nil && relProjectFile(project, b.File) == rel {
@@ -213,10 +212,8 @@ func CleanupConfigOrigins(project string, st *State, edits []ConfigEdit, block *
 			}
 		}
 		if !ownedBlock {
-			if _, ok := f.Blocks[rel]; ok {
-				delete(f.Blocks, rel)
-				changed = true
-			}
+			delete(f.Blocks, rel)
+			changed = true
 		}
 	}
 	if !changed {

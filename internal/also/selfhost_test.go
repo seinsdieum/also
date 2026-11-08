@@ -826,7 +826,16 @@ func TestReshapePreflightLeavesNothingHalfMigrated(t *testing.T) {
 	writeFile(t, filepath.Join(project, ".claude", "agents", "a2.md"), "conflict\n")
 	st, _ := LoadState()
 	results, err := Reshape(cfg, st, "claude", project, false, nil, false)
-	if err == nil {
+	if err != nil {
+		t.Fatalf("preflight should report per-package errors: %v", err)
+	}
+	failed := false
+	for _, r := range results {
+		if r.Err != nil {
+			failed = true
+		}
+	}
+	if !failed {
 		t.Fatalf("expected a preflight failure: %+v", results)
 	}
 	if _, err := os.Stat(filepath.Join(project, ".claude", "agents", "a1.md")); !os.IsNotExist(err) {
@@ -961,6 +970,10 @@ func TestReshapeRemovesOldConfigEdits(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(project, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("uninstall left the new instruction file behind: %v", err)
+	}
+	origins, _ := loadConfigOrigins(project)
+	if len(origins.Entries) != 0 || len(origins.Blocks) != 0 || len(origins.Files) != 0 {
+		t.Fatalf("origins survived the last uninstall: %+v", origins)
 	}
 }
 

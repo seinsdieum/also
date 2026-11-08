@@ -1050,7 +1050,7 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	if old != nil && old.Harness == plan.Install.Harness {
 		// Keep origins across a harness reshape: the other harness may be
 		// switched back later. Uninstall cleans them when the slot is gone.
-		_ = CleanupConfigOrigins(plan.Install.Project, st, old.Edits, old.Block)
+		_ = CleanupConfigOrigins(plan.Install.Project, st)
 	}
 	return nil
 }
