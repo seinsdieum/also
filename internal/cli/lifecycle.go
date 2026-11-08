@@ -375,9 +375,9 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 			return err
 		}
 		beforeState, _ := also.LoadState()
-		before := map[string]bool{}
+		before := map[string]also.Install{}
 		for _, in := range beforeState.Installs {
-			before[in.ID] = true
+			before[in.ID] = in
 		}
 		type fileSnap struct {
 			data []byte
@@ -386,24 +386,41 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		type appliedEntry struct {
 			id    string
 			files map[string]fileSnap
+			old   *also.Install
 		}
 		var applied []appliedEntry
+		restoreSnapshots := func(files map[string]fileSnap) {
+			for path, snap := range files {
+				_ = os.MkdirAll(filepath.Dir(path), 0o755)
+				_ = os.WriteFile(path, snap.data, snap.mode)
+			}
+		}
 		rollback := func() {
 			if len(applied) == 0 {
 				return
 			}
-			st, lerr := also.LoadState()
-			if lerr != nil {
-				return
-			}
 			for _, item := range applied {
+				if item.old != nil {
+					oldCfg := configWithLockNamespace(cfg, item.old.Set, item.old.SetRemote)
+					_, _, rerr := also.InstallPackage(oldCfg, also.InstallRequest{
+						Package: item.old.Package + "@" + item.old.Version, Harness: item.old.Harness,
+						Scope: item.old.Scope, Project: item.old.Project,
+						Parts: item.old.Parts, Exclude: item.old.Exclude,
+						Force: true, WithConfig: item.old.WithConfig, ExpectedDigest: item.old.Digest,
+					}, item.old.Set, "")
+					if rerr == nil {
+						restoreSnapshots(item.files)
+						continue
+					}
+				}
+				st, lerr := also.LoadState()
+				if lerr != nil {
+					continue
+				}
 				if in := st.FindByID(item.id); in != nil {
 					_, _ = also.Uninstall(st, in, true)
 				}
-				for path, snap := range item.files {
-					_ = os.MkdirAll(filepath.Dir(path), 0o755)
-					_ = os.WriteFile(path, snap.data, snap.mode)
-				}
+				restoreSnapshots(item.files)
 			}
 		}
 		out := make([]installOutput, 0, len(lock.Packages))
@@ -436,8 +453,11 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 				rollback()
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
 			}
-			if !before[plan.Install.ID] {
+			old, existed := before[plan.Install.ID]
+			if !existed {
 				applied = append(applied, appliedEntry{id: plan.Install.ID, files: snap})
+			} else {
+				applied = append(applied, appliedEntry{id: plan.Install.ID, files: snap, old: &old})
 			}
 			out = append(out, planOutput(plan))
 		}
