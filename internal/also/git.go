@@ -227,6 +227,25 @@ func cloneOrInit(remote, dir string) (created bool, err error) {
 		}
 		return false, err
 	}
+	if !hasCommits(dir) {
+		// A bare repository initialized on a machine with a different default
+		// branch can have HEAD pointing at a ref that was never pushed. The
+		// clone then has tags but an empty worktree. Check out the first real
+		// remote branch instead of treating the namespace as empty.
+		refs, refErr := runGit(dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
+		if refErr == nil {
+			for _, ref := range strings.Split(refs, "\n") {
+				ref = strings.TrimSpace(ref)
+				if ref == "" || strings.HasSuffix(ref, "/HEAD") {
+					continue
+				}
+				branch := strings.TrimPrefix(ref, "origin/")
+				if _, err := runGit(dir, "checkout", "--quiet", "-B", branch, ref); err == nil {
+					break
+				}
+			}
+		}
+	}
 	return false, nil
 }
 

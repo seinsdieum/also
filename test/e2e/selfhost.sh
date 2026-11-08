@@ -161,11 +161,9 @@ mkdir -p "$WORK/home-ci"
 	"$ALSO" install --frozen >/dev/null
 	"$ALSO" audit --ci --strict >/dev/null
 	if ! "$ALSO" audit --verify; then
-		echo "--- verify debug ---" >&2
+		echo "--- verify diagnostics ---" >&2
 		"$ALSO" audit --verify --json >&2 || true
 		"$ALSO" list --installs >&2 || true
-		find "$ALSO_HOME" -maxdepth 4 -type d -print >&2 | head -40
-		python3 -c 'import json,os;print(open(os.path.join(os.environ["ALSO_HOME"],"state.json")).read())' >&2 || true
 		exit 1
 	fi
 	"$ALSO" list --tree >/dev/null
