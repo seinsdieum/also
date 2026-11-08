@@ -3,6 +3,7 @@ package also
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -950,6 +951,9 @@ func TestReshapeKeepsSemver(t *testing.T) {
 }
 
 func TestReshapeRollsBackAppliedPackagesOnWriteFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based write failure is not reliable on Windows")
+	}
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
 	p1 := filepath.Join(tmp, "p1")
