@@ -149,7 +149,7 @@ func trackedInfraFindings(in *Install, tracked map[string]bool, requireLock bool
 func harnessRootNames() map[string]bool {
 	roots := map[string]bool{}
 	add := func(p string) {
-		p = strings.TrimSuffix(filepath.ToSlash(p), "/")
+		p = strings.ToLower(strings.TrimSuffix(filepath.ToSlash(p), "/"))
 		if p == "" || p == "." {
 			return
 		}
@@ -177,7 +177,7 @@ func harnessRootNames() map[string]bool {
 func instructionNames() map[string]bool {
 	out := map[string]bool{}
 	for _, h := range Harnesses() {
-		if base := filepath.Base(h.Project.Instr); base != "" && base != "." {
+		if base := strings.ToLower(filepath.Base(h.Project.Instr)); base != "" && base != "." {
 			out[base] = true
 		}
 	}
@@ -214,50 +214,50 @@ func harnessConfigPaths(h *Harness) map[string]bool {
 // configHasExecutable reports whether a tracked config file defines an
 // executable surface: an MCP server, hook, plugin or command. A user-owned
 // config with only cosmetic settings is not infrastructure and stays quiet.
-func configHasExecutable(path string) bool {
+func configExecutableState(path string) (executable, readable bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return false, false
 	}
 	if strings.EqualFold(filepath.Ext(path), ".toml") {
+		if _, err := parseTOMLMap(data); err != nil {
+			return false, false
+		}
 		body := string(data)
 		for _, key := range []string{"mcp_servers", "[hooks", "[[hooks", "plugins"} {
 			if strings.Contains(body, key) {
-				return true
+				return true, true
 			}
 		}
-		return false
+		return false, true
 	}
 	doc, err := ParseJSONC(data)
 	if err != nil {
-		return false
+		return false, false
 	}
 	nonEmpty := func(raw []byte) bool {
 		return !jsonEqual(raw, []byte("{}")) && !jsonEqual(raw, []byte("[]")) && string(raw) != "null"
 	}
-	// Check every specific MCP spelling. An empty mcp.servers must not hide a
-	// non-empty mcpServers or mcp_servers sibling, and the parent mcp object is
-	// only a fallback when no specific key exists.
 	foundSpecific := false
 	for _, path := range [][]string{{"mcp", "servers"}, {"mcpServers"}, {"mcp_servers"}} {
 		if raw, ok := doc.RawAt(path...); ok {
 			foundSpecific = true
 			if nonEmpty(raw) {
-				return true
+				return true, true
 			}
 		}
 	}
 	if !foundSpecific {
-		if raw, ok := doc.RawAt("mcp"); ok {
-			return nonEmpty(raw)
+		if raw, ok := doc.RawAt("mcp"); ok && nonEmpty(raw) {
+			return true, true
 		}
 	}
 	for _, path := range [][]string{{"hooks"}, {"plugins"}, {"commands"}} {
 		if raw, ok := doc.RawAt(path...); ok && nonEmpty(raw) {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }
 
 func underHarnessRoot(path, root string, roots map[string]bool) bool {
@@ -265,7 +265,7 @@ func underHarnessRoot(path, root string, roots map[string]bool) bool {
 	if err != nil {
 		return false
 	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
+	parts := strings.Split(strings.ToLower(filepath.ToSlash(rel)), "/")
 	for i := 0; i+1 < len(parts); i++ {
 		if roots[parts[i]] {
 			return true
@@ -292,7 +292,7 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	genericConfig := map[string]bool{}
 	for _, h := range Harnesses() {
 		for cfg := range harnessConfigPaths(h) {
-			base := filepath.Base(cfg)
+			base := strings.ToLower(filepath.Base(cfg))
 			if base == ".mcp.json" || strings.HasPrefix(base, "opencode.") {
 				specificConfig[base] = true
 			} else {
@@ -338,13 +338,23 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		base := filepath.Base(path)
-		if specificConfig[base] && configHasExecutable(path) {
-			add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
-		} else if genericConfig[base] && configHasExecutable(path) && underHarnessRoot(path, root, roots) {
-			add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
+		base := strings.ToLower(filepath.Base(path))
+		if specificConfig[base] {
+			executable, readable := configExecutableState(path)
+			if !readable {
+				add("stale-infra", path, "tracked harness config cannot be parsed; remove it or untrack it (git rm --cached)")
+			} else if executable {
+				add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
+			}
+		} else if genericConfig[base] && underHarnessRoot(path, root, roots) {
+			executable, readable := configExecutableState(path)
+			if !readable {
+				add("stale-infra", path, "tracked harness config cannot be parsed; remove it or untrack it (git rm --cached)")
+			} else if executable {
+				add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
+			}
 		}
-		parts := strings.Split(filepath.ToSlash(rel), "/")
+		parts := strings.Split(strings.ToLower(filepath.ToSlash(rel)), "/")
 		// Any tracked file below a known harness root (including a nested
 		// project or another harness than the one currently installed) is
 		// infrastructure, not product code.
@@ -354,7 +364,7 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 				break
 			}
 		}
-		if instructions[filepath.Base(path)] {
+		if instructions[strings.ToLower(filepath.Base(path))] {
 			if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
 				add("block-tracked", path, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file (git rm --cached)")
 			}

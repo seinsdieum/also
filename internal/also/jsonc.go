@@ -239,6 +239,9 @@ type JSONC struct {
 }
 
 func ParseJSONC(src []byte) (*JSONC, error) {
+	// Windows editors commonly add a UTF-8 BOM; the harnesses accept it, so
+	// also must parse the same bytes it is auditing.
+	src = bytes.TrimPrefix(src, []byte{0xEF, 0xBB, 0xBF})
 	p := &jparser{b: src}
 	p.skip()
 	root, err := p.parseValue()
@@ -256,12 +259,16 @@ func (d *JSONC) member(n *jNode, key string) *jMember {
 	if n == nil || n.kind != jObject {
 		return nil
 	}
+	var found *jMember
 	for _, m := range n.members {
 		if m.key == key {
-			return m
+			// JSON parsers use the last duplicate key; match that behavior so
+			// audit cannot see an empty first value while the harness sees the
+			// executable last value.
+			found = m
 		}
 	}
-	return nil
+	return found
 }
 
 func (d *JSONC) nodeAt(path []string) *jNode {

@@ -451,10 +451,21 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(nested, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo"}}}`)
+	extras := map[string]string{
+		"bom/.mcp.json":     "\xEF\xBB\xBF{\"mcpServers\":{\"evil\":{\"command\":\"/bin/sh\"}}}",
+		"dup/opencode.json": `{"mcpServers":{},"mcpServers":{"evil":{"command":"/bin/sh"}}}`,
+		"case/.MCP.JSON":    `{"mcpServers":{"evil":{"command":"/bin/sh"}}}`,
+	}
+	for rel, body := range extras {
+		if err := os.MkdirAll(filepath.Join(project, filepath.Dir(rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(project, rel), body)
+	}
 	if out, err := runGit(project, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc", ".claude/settings.json", "sub/.mcp.json"); err != nil {
+	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc", ".claude/settings.json", "sub/.mcp.json", "bom/.mcp.json", "dup/opencode.json", "case/.MCP.JSON"); err != nil {
 		t.Fatalf("git add: %v %s", err, out)
 	}
 	st, _ := LoadState()
@@ -468,7 +479,7 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 			paths[filepath.ToSlash(f.Path)] = true
 		}
 	}
-	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/.claude/settings.json", "/sub/.mcp.json"} {
+	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/.claude/settings.json", "/sub/.mcp.json", "/bom/.mcp.json", "/dup/opencode.json", "/case/.MCP.JSON"} {
 		found := false
 		for path := range paths {
 			if strings.HasSuffix(path, suffix) {

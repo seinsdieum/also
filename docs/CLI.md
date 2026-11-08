@@ -139,7 +139,9 @@ or managed config file is tracked by git (`infra-tracked`, `block-tracked`,
 `config-tracked`), or when a tracked file under a harness directory is not
 owned by an install (`stale-infra`). `--strict` also exits 1 on warnings; shared
 identical files, blocks and config entries are informational and do not fail
-it. `--sbom` writes CycloneDX 1.5.
+it. A tracked harness config that cannot be parsed is a failure, not a silent
+pass, and config/instruction names are compared case-insensitively. `--sbom`
+writes CycloneDX 1.5.
 
 ### Uninstall
 
@@ -220,8 +222,9 @@ for <harness>` removes only entries that no remaining installed harness needs.
 
 Policy files are enforced from the project up to the git root. A nested
 `also.policy.yml` can add restrictions but cannot loosen a root deny, executable
-gate or signature requirement; `audit --policy` shows the merged effective
-policy and the nearest file.
+gate or signature requirement, and its added approvals/roles must be satisfied
+by the merged signature set; `audit --policy` shows the merged effective policy
+and the nearest file.
 
 `reshape` re-materializes this project's packages for another harness, updates
 the lock and the managed ignore block, preflights every package before writing,

@@ -226,6 +226,50 @@ func VerifyPolicy(project string) (*PolicyVerification, error) {
 			}
 		}
 	}
+	merged, err := LoadPolicy(project)
+	if err != nil {
+		return nil, err
+	}
+	if merged != nil && merged.Governance != nil && merged.Governance.RequireSignature {
+		gov := merged.Governance
+		required := gov.RequiredApprovals
+		if required <= 0 {
+			required = 1
+		}
+		combined.Required = required
+		if !combined.Signed {
+			combined.Valid = false
+			if combined.Error == "" {
+				combined.Error = "policy is not signed"
+			}
+		}
+		if combined.Signatures < required {
+			combined.Valid = false
+			if combined.Error == "" {
+				combined.Error = fmt.Sprintf("need %d approval(s), have %d", required, combined.Signatures)
+			}
+		}
+		var missing []string
+		for _, role := range gov.RequiredRoles {
+			found := false
+			for _, have := range combined.Roles {
+				if have == role {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missing = append(missing, role)
+			}
+		}
+		combined.MissingRoles = UniqueStrings(missing)
+		if len(missing) > 0 {
+			combined.Valid = false
+			if combined.Error == "" {
+				combined.Error = "missing required role(s): " + strings.Join(missing, ", ")
+			}
+		}
+	}
 	return combined, nil
 }
 

@@ -323,6 +323,55 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNestedPolicyCannotAddUnsignedGovernance(t *testing.T) {
+	root := t.TempDir()
+	gitInit(t, root)
+	priv := filepath.Join(t.TempDir(), "alice.key")
+	pub, err := GeneratePolicyKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvTrustedPolicyKeys, pub)
+	writeFile(t, filepath.Join(root, PolicyFile), `schema: also.policy/v1
+governance:
+  require_signature: true
+  required_approvals: 1
+  required_roles: [security]
+  approvers:
+    - name: alice
+      role: security
+      key: `+pub+`
+`)
+	if _, err := SignPolicy(root, priv); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nested, PolicyFile), `schema: also.policy/v1
+governance:
+  required_approvals: 2
+  required_roles: [maintainer]
+`)
+	status, err := VerifyPolicy(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Valid {
+		t.Fatalf("unsigned nested governance was accepted: %+v", status)
+	}
+	if status.Signatures < 1 || status.Required < 2 {
+		t.Fatalf("combined counts are wrong: %+v", status)
+	}
+	if len(status.MissingRoles) == 0 {
+		t.Fatalf("missing maintainer role was not reported: %+v", status)
+	}
+	if _, err := LoadVerifiedPolicy(nested); err == nil {
+		t.Fatal("install path accepted the unverified nested governance")
+	}
+}
+
 func TestPolicySignatureRolesAndApprovals(t *testing.T) {
 	project := t.TempDir()
 	priv1 := filepath.Join(t.TempDir(), "alice.key")

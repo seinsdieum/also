@@ -84,3 +84,9 @@ Advanced or plumbing commands remain callable but are hidden from `--help`:
 - The policy chain stops at a real git root, not at a directory that merely
   contains an empty `.git`. `audit --json` reports the policy file that was
   actually loaded.
+- `audit` fails closed on an unreadable tracked harness config, accepts a UTF-8
+  BOM like the harnesses do, uses the last duplicate JSON key like standard
+  parsers, and compares config/instruction names case-insensitively so a
+  case-variant file cannot bypass the gate on macOS or Windows.
+- `policy verify` enforces the merged governance totals: a nested policy cannot
+  add approvals or roles without the signatures that satisfy them.
