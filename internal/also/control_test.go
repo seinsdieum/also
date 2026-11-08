@@ -1,6 +1,7 @@
 package also
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,8 +40,11 @@ func TestSemverAliasesResolveRanges(t *testing.T) {
 	if _, err := repo.ResolveVersion("p", "^2.0.0"); err == nil {
 		t.Fatal("^2.0.0 should not resolve")
 	}
-	if err := repo.SetSemver("p", "1.2.0", second.Version); err != nil {
-		t.Fatalf("moving an alias must be allowed: %v", err)
+	if err := repo.SetSemver("p", "1.2.0", second.Version, false); err == nil {
+		t.Fatal("moving an alias without --move must fail")
+	}
+	if err := repo.SetSemver("p", "1.2.0", second.Version, true); err != nil {
+		t.Fatalf("explicit move must be allowed: %v", err)
 	}
 	moved, err := repo.ResolveVersion("p", "1.2.0")
 	if err != nil || moved.Version != second.Version {
@@ -243,7 +247,7 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	repo := openRepo(t, cfg)
 	bundle := filepath.Join(tmp, "bundle")
 	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
-	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"game-developer","permission":{"edit":"ask"},"theme":"dark"}`)
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"game-developer","permission":{"edit":"ask"},"theme":"dark","model":"provider/model","keybinds":{"leader":"space"},"custom":"keep"}`)
 	res, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "opencode"})
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +257,7 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := filepath.Join(project, "opencode.json")
-	writeFile(t, config, `{"theme":"dark"}`)
+	writeFile(t, config, `{"custom":"keep"}`)
 	if _, _, err := InstallPackage(cfg, InstallRequest{
 		Package: "p", Harness: "opencode", Project: project, WithConfig: true,
 	}, "", ""); err != nil {
@@ -273,7 +277,14 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	if raw, ok := doc.RawAt("permission", "edit"); !ok || string(raw) != `"ask"` {
 		t.Fatalf("permission block was not installed: %s", data)
 	}
-	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
+	for key, want := range map[string]string{
+		"theme": `"dark"`, "model": `"provider/model"`, "keybinds": `{"leader":"space"}`,
+	} {
+		if raw, ok := doc.RawAt(key); !ok || !jsonEqual(raw, json.RawMessage(want)) {
+			t.Fatalf("%s was not installed: %s", key, data)
+		}
+	}
+	if raw, ok := doc.RawAt("custom"); !ok || string(raw) != `"keep"` {
 		t.Fatalf("unrelated config was lost: %s", data)
 	}
 	st, err := LoadState()
@@ -301,8 +312,112 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	if _, ok := doc.RawAt("permission", "edit"); ok {
 		t.Fatalf("permission block was not reversed: %s", data)
 	}
-	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
+	for _, key := range []string{"theme", "model", "keybinds"} {
+		if _, ok := doc.RawAt(key); ok {
+			t.Fatalf("%s was not reversed: %s", key, data)
+		}
+	}
+	if raw, ok := doc.RawAt("custom"); !ok || string(raw) != `"keep"` {
 		t.Fatalf("unrelated config was removed: %s", data)
+	}
+}
+
+func TestPolicySignatureRolesAndApprovals(t *testing.T) {
+	project := t.TempDir()
+	priv1 := filepath.Join(t.TempDir(), "alice.key")
+	priv2 := filepath.Join(t.TempDir(), "bob.key")
+	pub1, err := GeneratePolicyKey(priv1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub2, err := GeneratePolicyKey(priv2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvTrustedPolicyKeys, pub1+","+pub2)
+
+	policyPath := filepath.Join(project, PolicyFile)
+	writeFile(t, policyPath, `schema: also.policy/v1
+governance:
+  require_signature: true
+  required_approvals: 2
+  required_roles: [security, maintainer]
+  approvers:
+    - name: alice
+      role: security
+      key: `+pub1+`
+    - name: bob
+      role: maintainer
+      key: `+pub2+`
+`)
+	if _, err := SignPolicy(project, priv1); err != nil {
+		t.Fatal(err)
+	}
+	status, err := VerifyPolicy(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Valid || status.Signatures != 1 {
+		t.Fatalf("one signature must not satisfy two approvals: %+v", status)
+	}
+	if _, err := SignPolicy(project, priv2); err != nil {
+		t.Fatal(err)
+	}
+	status, err = VerifyPolicy(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Valid || status.Signatures != 2 {
+		t.Fatalf("two approvers should verify: %+v", status)
+	}
+	if _, err := LoadVerifiedPolicy(project); err != nil {
+		t.Fatal(err)
+	}
+
+	// Editing the policy invalidates the signatures.
+	writeFile(t, policyPath, string(mustReadTestFile(t, policyPath))+"\n# edited\n")
+	if _, err := LoadVerifiedPolicy(project); err == nil {
+		t.Fatal("a modified policy must not verify")
+	}
+}
+
+func mustReadTestFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestUnsignedPolicyFailsCIAudit(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "CLAUDE.md"), "rules\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, PolicyFile), "schema: also.policy/v1\n")
+	if _, _, err := InstallPackage(cfg, InstallRequest{
+		Package: "p", Harness: "claude", Project: project,
+	}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := Audit(st, project, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCode(report.Findings, "policy-unsigned") {
+		t.Fatalf("unsigned policy was not reported: %+v", report.Findings)
 	}
 }
 

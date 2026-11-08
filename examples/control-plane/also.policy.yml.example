@@ -1,0 +1,22 @@
+schema: also.policy/v1
+namespaces:
+  allow: [personal]
+packages:
+  allow: []
+  deny: [experiment, "scratch/*"]
+executables:
+  allow_hooks: true
+  allow_mcp: true
+  allow_plugins: false
+  allow_commands: true
+limits:
+  max_package_bytes: 67108864
+  allow_literal_secrets: false
+governance:
+  require_signature: true
+  required_approvals: 1
+  required_roles: [maintainer]
+  approvers:
+    - name: maintainer
+      role: maintainer
+      key: <base64 Ed25519 public key>

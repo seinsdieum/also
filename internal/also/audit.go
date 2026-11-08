@@ -126,6 +126,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 	}
 	projectInstalls := map[lockKey]*Install{}
 	policies := map[string]*Policy{}
+	policyStatus := map[string]*PolicyVerification{}
 	for idx := range st.Installs {
 		in := &st.Installs[idx]
 		if !all {
@@ -213,6 +214,24 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 			}
 			if p != nil {
 				report.PolicyFile = filepath.Join(in.Project, PolicyFile)
+				status, ok := policyStatus[in.Project]
+				if !ok {
+					var verr error
+					status, verr = VerifyPolicy(in.Project)
+					if verr != nil {
+						add("fail", "policy-signature-invalid", "", verr.Error())
+					}
+					policyStatus[in.Project] = status
+				}
+				if status == nil || !status.Signed {
+					severity := "warn"
+					if requireLock {
+						severity = "fail"
+					}
+					add(severity, "policy-unsigned", "", "policy is not signed; run also policy sign")
+				} else if !status.Valid {
+					add("fail", "policy-signature-invalid", "", status.Error)
+				}
 				if !p.NamespaceAllowed(in.Set) {
 					add("fail", "policy-namespace", "", "namespace is not allowed by "+PolicyFile)
 				}

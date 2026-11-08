@@ -57,6 +57,10 @@ jobs:
           go build -o "$dir/also-windows-amd64.exe" .
           $hash = (Get-FileHash "$dir/also-windows-amd64.exe" -Algorithm SHA256).Hash.ToLower()
           "$hash  also-windows-amd64.exe" | Out-File -Encoding ascii "$dir/SHA256SUMS"
+      - name: control-plane on Windows
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./test/e2e/control-plane.ps1
+
       - name: run install.ps1 against the fixture
         shell: pwsh
         env:

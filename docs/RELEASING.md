@@ -1,8 +1,8 @@
 # Releasing
 
-A release is a tag plus a published artifact. Treat the tag as the point where
-the project asks strangers to trust the binary. The rules below exist because a
-feature-complete release is not the same thing as a checked release.
+A release is a tag plus published artifacts. The only question that matters is
+whether the exact commit being tagged has passed the full gate and the
+released-binary E2E.
 
 ## Before the tag
 
@@ -12,15 +12,15 @@ feature-complete release is not the same thing as a checked release.
    interfaces. It never calls a model.
 3. `CHANGELOG.md` has a section for the version and the version string in
    `internal/also/paths.go` matches it.
-4. `docs/CLI.md`, `docs/CONTRACTS.md` and `README.md` describe the shipped
-   behavior, including any new lock, policy or audit field.
+4. `docs/CLI.md`, `docs/CONTRACTS.md`, `docs/GOVERNANCE.md` and `README.md`
+   describe the shipped behavior, including lock, policy and signature fields.
 5. CI on `main` is green for the exact commit that will be tagged.
+
+If a check is red, the release does not exist. There is no alternate gate and no
+tagging around a failure.
 
 ## Tagging
 
-- Feature releases wait at least 24 hours after the last functional change on
-  `main`. Hotfixes may ship sooner, but only after the full gate and a manual
-  E2E with the built binary.
 - Tag the commit that CI verified. Do not tag `HEAD` if `HEAD` moved after CI.
 - Use an annotated tag: `git tag -a vX.Y.Z -m "..." <commit>`.
 - Do not move or delete a published tag unless the release is broken and the
@@ -28,14 +28,14 @@ feature-complete release is not the same thing as a checked release.
 
 ## After the tag
 
-1. The release workflow runs `test`, builds all six binaries, generates
+1. The release workflow runs the full gate, builds all six binaries, generates
    `also.spdx.json`, signs build provenance and publishes the release.
 2. Verify the published artifacts:
    - `gh release view vX.Y.Z` lists seven assets plus `SHA256SUMS`;
    - `gh attestation verify <binary> -R seinsdieum/also` succeeds;
    - `install.sh` installs the expected version and commit;
    - a released-binary E2E runs `init`, `push --semver`, `install --frozen`,
-     `audit --ci` and `audit --sbom`.
+     `policy verify --ci`, `audit --ci` and `audit --sbom`.
 3. Add the release URL to the changelog if it is not already there.
 
 ## Version policy

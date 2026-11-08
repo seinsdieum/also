@@ -81,7 +81,7 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 			return nil, set, err
 		}
 	}
-	policy, err := LoadPolicy(project)
+	policy, err := LoadVerifiedPolicy(project)
 	if err != nil {
 		return nil, set, err
 	}
@@ -246,7 +246,7 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bo
 			out = append(out, res)
 			continue
 		}
-		policy, err := LoadPolicy(in.Project)
+		policy, err := LoadVerifiedPolicy(in.Project)
 		if err != nil {
 			res.Err = err
 			out = append(out, res)

@@ -73,7 +73,7 @@ also list [--refresh] [--versions] [--json]
 also search [query] [--refresh] [--json]
 also show <package>[@version] [from <namespace>] [--json]
 also push [directory] [--semver V | --bump major|minor|patch] [--dry-run] [--all-files] [--json]
-also tag <package> <semver> [version] [from <namespace>]
+also tag <package> <semver> [version] [from <namespace>] [--move]
 also adopt [directory] [for <harness>] [--name N] [--semver V | --bump kind] [--into <dir>] [--json]
 ```
 
@@ -93,10 +93,12 @@ is temporary. `--no-push` keeps the bundle and therefore requires `--into`.
 `also search` reads package names and descriptions from every connected
 namespace. It is not a public catalog and sends no telemetry.
 
-Content versions stay canonical. `--semver` and `--bump` create a mutable
-semantic alias over the immutable content tag; `also tag` moves an alias to an
-existing version. Installs accept exact versions, prefixes, labels and semantic
-ranges such as `^1.4` and `>=1.2 <2.0`.
+Content versions stay canonical. `--semver` and `--bump` create an immutable
+semantic alias over the content tag; `also tag` creates an alias on an existing
+version, and `also tag --move` is the explicit path for retargeting one. A move
+uses a lease and refuses to overwrite a remote change this clone has not seen.
+Installs accept exact versions, prefixes, labels and semantic ranges such as
+`^1.4` and `>=1.2 <2.0`.
 
 ### The lockfile
 
@@ -106,8 +108,8 @@ parts and whether configuration was installed. Commit it.
 
 - `also install --frozen` requires an entry and fails if anything would resolve
   differently.
-- `also install --update` ignores the lock for one command.
-- `also install --no-lock` neither reads nor writes the file.
+- `also install --update` ignores the pins for one command and writes the new
+  result to the lock.
 - `also upgrade` respects the recorded constraint and updates the lock after a
   successful upgrade.
 - `also uninstall` removes its entry.
@@ -118,10 +120,10 @@ which records what was actually written on this machine.
 ## Installs
 
 ```sh
-also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--no-lock] [--json]
+also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--json]
 also install --frozen            # replay every entry in also.lock
 also install <part> <kind> from <package> [for <harness>] [from <namespace>]
-also upgrade [package...] [--check] [--no-lock] [--json]
+also upgrade [package...] [--check] [--json]
 also reshape <harness> [package...] [--json]
 also tree [for <harness>] [--json]
 also uninstall <package> [for <harness>] [--all] [--json]
@@ -147,10 +149,25 @@ and review the change like any other committed configuration.
 also audit [--all] [--json] [--ci] [--strict] [--sbom <path>]
 also drift [--all] [--json]
 also policy [--json]
+also policy keygen --private <path> [--public <path>]
+also policy trust --key <public-key> [--name <name>] [--list] [--remove <key|name>]
+also policy sign --key <private-key> [--dir <path>]
+also policy verify [--ci] [--json]
 ```
 
 `also policy` prints the effective file when it exists, or says that the
 project has no policy. It does not change anything.
+
+`also policy keygen` creates an Ed25519 key. The private key stays outside the
+repository; the base64 public key goes into `governance.approvers`. Trust the
+public key with `also policy trust` or `ALSO_TRUSTED_POLICY_KEYS`; a policy
+cannot trust its own key. `also policy sign` signs the exact bytes of
+`also.policy.yml` and writes `also.policy.sig`. `also policy verify --ci` fails
+when signatures, roles or approvals do not satisfy the governance block.
+
+When a policy exists, `audit --ci` also fails on an unsigned policy, an invalid
+or untrusted signature, a missing required role and insufficient approvals.
+The `also.policy.sig` file is committed with the policy.
 
 `also audit` reports the installed packages, namespace, content version, full
 digest, harness, source harness, parts, recorded file count, missing and
@@ -238,7 +255,8 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | `prune` | dry_run, removed array (namespace, package, version, harness, project) |
 | `audit` | schema, project, packages, findings, summary, lock, policy_file |
 | `drift` | schema, project, findings, summary |
-| `policy` | file, exists, namespaces, packages, executables, limits |
+| `policy` | file, exists, namespaces, packages, executables, limits, governance, signature |
+| `policy verify` | file, signed, valid, signatures, required, roles, missing_roles, error |
 | `search` | query, results with namespace, package, version, description |
 | `tag` | human confirmation on stdout; no JSON mode |
 | `setup` | harness, default_namespace, namespaces, installed |

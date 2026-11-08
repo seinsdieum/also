@@ -566,7 +566,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 			return res, err
 		}
 		if semver != "" {
-			if err := s.SetSemver(opts.Name, semver, version); err != nil {
+			if err := s.SetSemver(opts.Name, semver, version, false); err != nil {
 				return res, err
 			}
 		}
@@ -620,7 +620,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 		return res, err
 	}
 	if semver != "" {
-		if err := s.SetSemver(opts.Name, semver, version); err != nil {
+		if err := s.SetSemver(opts.Name, semver, version, false); err != nil {
 			return res, err
 		}
 	}

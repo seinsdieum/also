@@ -116,6 +116,7 @@ This state is what makes `upgrade`, `reshape`, `tree`, and `uninstall` safe and 
 
 A semantic version is a tag under `refs/tags/also/<package>/semver/<version>`
 that points at the same commit as the immutable content tag. The content tag
-remains canonical; moving an alias never changes the bytes a digest names.
+remains canonical; an alias is immutable unless `also tag --move` explicitly
+retargets it, and a move never changes the bytes a digest names.
 Projects can commit `also.lock` to pin the resolved content version and digest,
 and `also install --frozen` replays that pin exactly.

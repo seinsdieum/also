@@ -16,6 +16,7 @@ schema because unknown JSON fields are ignored by older readers.
 | Community adapter spec | `also.adapter/v1` | stable |
 | Project lockfile | `also.lock/v1` | stable |
 | Project policy | `also.policy/v1` | stable |
+| Policy signature | `also.policy.sig/v1` | stable |
 | Audit report | `also.audit/v1` | stable |
 
 ### Package (`also.pkg/v1`)
@@ -80,6 +81,17 @@ use `path.Match`. Executable booleans default to allowed. The size limit
 defaults to 64 MiB. A malformed existing file is a hard error; a missing file
 is not.
 
+`governance` is optional and has `require_signature`, `required_approvals`,
+`required_roles` and `approvers` (name, role, base64 Ed25519 public key). The
+signature file is `also.policy.sig`, schema `also.policy.sig/v1`, with an array
+of `key`, `signature` and `signed_at`. Signatures cover the exact bytes of the
+policy file. Trusted public keys are external to the policy
+(`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`).
+
+`also audit --ci` treats an unsigned policy, an invalid or untrusted signature,
+a missing required role and insufficient approvals as failures. A legacy policy
+without `governance` still installs locally but fails the CI gate.
+
 ### Audit report (`also.audit/v1`)
 
 `also audit --json` prints an inventory with `packages`, `findings`, `summary`,
@@ -88,8 +100,9 @@ Findings have a severity (`fail` or `warn`) and a
 stable code such as `file-missing`, `file-modified`, `block-missing`,
 `block-modified`, `config-missing`, `config-modified`, `shared-file`,
 `shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
-`policy-namespace`, `policy-package` and `policy-executable`. New codes may be
-added; clients should treat an unknown code as a generic finding.
+`policy-namespace`, `policy-package`, `policy-executable`, `policy-unsigned`
+and `policy-signature-invalid`. New codes may be added; clients should treat an
+unknown code as a generic finding.
 
 `--sbom` emits CycloneDX 1.5, not an also schema.
 
@@ -114,7 +127,7 @@ and a migration test must prove that user data survives.
 - Community adapters using `also.adapter/v1` keep loading.
 - Documented commands and flags keep their meaning within a major version.
 
-## What 1.1 and 1.2 add
+## What 1.1 through 1.3 add
 
 `also.lock`, `also.policy.yml`, `also audit`, `also drift`, `also search`,
 `also tag`, semantic-version aliases and SBOM output are additive. Existing
@@ -127,5 +140,9 @@ reproducibility mode.
 `also audit --ci` is stricter: it requires a git-tracked `also.lock` and treats
 a lock/state mismatch as a failure. This is a deliberate behavior change for
 the CI gate, not a schema change. The `--no-policy` flag was removed in 1.2.0
-because a policy bypass defeats the trust model; a policy change is a reviewed
-file change.
+because a policy bypass defeats the trust model, and `--no-lock` was removed in
+1.3.0 because the lockfile is the committed source of truth.
+
+1.3.0 adds `also.policy.sig/v1`, Ed25519 signatures, roles and approvals.
+`audit --ci` fails when a policy is unsigned or a signature, role or approval is
+missing. The policy's trust anchor lives outside the file.

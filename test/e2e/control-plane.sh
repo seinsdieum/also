@@ -23,6 +23,31 @@ git init --bare -q "$WORK/remote.git"
 "$WORK/bin/also" setup --yes --harness claude \
 	--namespace personal="$WORK/remote.git" --default-namespace personal >/dev/null
 
+POLICY_KEY="$WORK/policy.key"
+POLICY_PUB=$("$WORK/bin/also" policy keygen --private "$POLICY_KEY" 2>/dev/null)
+export ALSO_TRUSTED_POLICY_KEYS="$POLICY_PUB"
+
+write_policy() {
+	deny=${1:-}
+	cat > also.policy.yml <<EOF
+schema: also.policy/v1
+namespaces:
+  allow: [personal]
+governance:
+  require_signature: true
+  required_approvals: 1
+  required_roles: [security]
+  approvers:
+    - name: ci
+      role: security
+      key: $POLICY_PUB
+EOF
+	if [ -n "$deny" ]; then
+		printf 'packages:\n  deny: [%s]\n' "$deny" >> also.policy.yml
+	fi
+	"$WORK/bin/also" policy sign --key "$POLICY_KEY" >/dev/null
+}
+
 cd "$WORK/src"
 printf 'rules\n' > CLAUDE.md
 printf '{"mcpServers":{"x":{"command":"/bin/echo"}}}\n' > .mcp.json
@@ -37,12 +62,13 @@ printf 'other rules\n' > CLAUDE.md
 # A user project with a committed lock and policy.
 mkdir -p "$WORK/app"
 cd "$WORK/app"
-printf 'schema: also.policy/v1\nnamespaces:\n  allow: [personal]\n' > also.policy.yml
+write_policy
 "$WORK/bin/also" install 'demo@^1.0' for claude >/dev/null
 git init -q .
-git add also.lock also.policy.yml CLAUDE.md
+git add also.lock also.policy.yml also.policy.sig CLAUDE.md
 git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 
+"$WORK/bin/also" policy verify --ci >/dev/null
 "$WORK/bin/also" audit --ci >/dev/null
 "$WORK/bin/also" audit --sbom "$WORK/sbom.json" >/dev/null
 grep -q 'CycloneDX' "$WORK/sbom.json"
@@ -66,23 +92,23 @@ git -c user.name=ci -c user.email=ci@example.invalid commit -qm removed
 
 # A second checkout must reproduce the lock exactly.
 mkdir -p "$WORK/app2"
-cp also.lock also.policy.yml "$WORK/app2/"
+cp also.lock also.policy.yml also.policy.sig "$WORK/app2/"
 cd "$WORK/app2"
 git init -q .
-git add also.lock also.policy.yml
+git add also.lock also.policy.yml also.policy.sig
 git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 "$WORK/bin/also" install --frozen >/dev/null
 "$WORK/bin/also" audit --ci >/dev/null
 
-# Policy denial must fail the CI gate.
-printf 'schema: also.policy/v1\npackages:\n  deny: [demo]\n' > also.policy.yml
+# Policy denial must fail the CI gate with a valid signature.
+write_policy demo
 if "$WORK/bin/also" audit --ci >/dev/null 2>&1; then
 	echo "control-plane: policy denial did not fail audit --ci" >&2
 	exit 1
 fi
 
 # Drift must fail the CI gate too.
-printf 'schema: also.policy/v1\nnamespaces:\n  allow: [personal]\n' > also.policy.yml
+write_policy
 rm -f CLAUDE.md
 if "$WORK/bin/also" audit --ci >/dev/null 2>&1; then
 	echo "control-plane: missing managed block did not fail audit --ci" >&2

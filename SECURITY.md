@@ -56,9 +56,17 @@ A repository can commit `also.policy.yml` to restrict namespaces, packages,
 executable component kinds, package size and literal secrets. The policy is
 enforced before an install or upgrade writes anything. `also audit --ci` exits 1
 on a missing file, block or config entry, on a lock/state mismatch, on an
-untracked or missing `also.lock`, and on a policy violation; `--strict` also
-fails on user edits. There is no policy bypass flag; changing the policy is a
-reviewed file change.
+untracked or missing `also.lock`, on an unsigned or invalid policy signature,
+on a missing role or approval, and on a policy violation; `--strict` also fails
+on user edits. There is no policy bypass flag; changing the policy is a
+reviewed, signed file change.
+
+Policy signatures are detached Ed25519 signatures over the exact bytes of
+`also.policy.yml`, stored in `also.policy.sig`. The trusted public keys live
+outside the policy (`~/.also/trusted-policy-keys` or
+`ALSO_TRUSTED_POLICY_KEYS`), so a policy cannot trust its own key. Signatures
+prove that a trusted approver reviewed those bytes; they do not sandbox what a
+hook or MCP server does later.
 
 `also.lock` is the reproducibility control. `also install --frozen` fails
 instead of resolving a version or digest that differs from the lock. Commit the

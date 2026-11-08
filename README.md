@@ -146,13 +146,14 @@ Content hashes are good for integrity and awkward for humans. `also` adds semant
 ```sh
 also push --semver 1.4.0          # tag this exact content as 1.4.0
 also push --bump patch            # derive the next alias from the highest one
-also tag code-review 1.4.1        # move an alias to an existing version
+also tag code-review 1.4.1        # create an alias on an existing version
+also tag code-review 1.4.1 --move # explicitly move an existing alias
 also install 'code-review@^1.4'   # resolve the highest matching alias
 ```
 
-The installed version remains the digest. The alias only answers "give me the latest 1.x".
+The installed version remains the digest. The alias only answers "give me the latest 1.x". Aliases are immutable by default; moving one requires `--move`, and the move refuses to overwrite a remote change this clone has not seen.
 
-`also install` writes `also.lock`, a small JSON file that pins the package, namespace, content version, digest, harness, parts and the original constraint. Keep it in git. `also install --frozen` refuses to resolve anything new, `--update` ignores the lock for one command, and `--no-lock` disables the file entirely.
+`also install` writes `also.lock`, a small JSON file that pins the package, namespace, content version, digest, harness, parts and the original constraint. Keep it in git. `also install --frozen` refuses to resolve anything new, and `--update` ignores the pins for one command while still writing the result.
 
 ### Audit, drift and the executable surface
 
@@ -199,7 +200,25 @@ limits:
   allow_literal_secrets: false
 ```
 
-`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory, so a package that was installed before the policy changed is reported. There is no bypass flag: changing the policy is a reviewed file change.
+The policy can require approvals and roles:
+
+```yaml
+governance:
+  require_signature: true
+  required_approvals: 2
+  required_roles: [security, maintainer]
+  approvers:
+    - name: alice
+      role: security
+      key: <base64 Ed25519 public key>
+    - name: bob
+      role: maintainer
+      key: <base64 Ed25519 public key>
+```
+
+`also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
+
+`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory and fails when a policy exists but is unsigned, when a signature is invalid or untrusted, when a required role or approval is missing, and when an installed package violates the rules. There is no bypass flag: changing the policy is a reviewed, signed file change.
 
 ### Adapters and cross-harness architecture
 
@@ -279,7 +298,7 @@ On a successful command, `also` consults the latest GitHub release at most once 
 
 **Evidence over promises.** `also audit` reports the installed version, full digest, source namespace, file state, drift and executable surface. A package is never downloaded just to prove what is already installed; the recorded digest is the evidence.
 
-**Content address first, semantic version as an alias.** The version is the content digest. A semantic alias is a movable label on top, so `^2.1` works without giving up immutability or reproducibility.
+**Content address first, semantic version as an alias.** The version is the content digest. A semantic alias is an immutable label on top, so `^2.1` works without giving up immutability or reproducibility; an explicit `--move` is the only way to retarget one.
 
 **One binary, no service.** Namespaces are ordinary git repositories. There is no control plane to host, no account to create, and no telemetry. A lockfile and a policy file are the only project artifacts.
 
@@ -307,7 +326,9 @@ Useful documents:
 - [docs/ADAPTERS.md](docs/ADAPTERS.md) for adding a harness without recompiling;
 - [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md) for the package contract;
 - [docs/CONTRACTS.md](docs/CONTRACTS.md) for schema stability and migration policy;
+- [examples/control-plane](examples/control-plane) for a copyable repository layout;
 - [docs/CI.md](docs/CI.md) for the lockfile, audit and policy workflow in CI;
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md) for policy keys, roles and approvals;
 - [docs/RELEASING.md](docs/RELEASING.md) for the release checklist and version policy;
 - [docs/CLI.md](docs/CLI.md) for the command reference.
 

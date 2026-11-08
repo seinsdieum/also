@@ -1,0 +1,34 @@
+name: also
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      ALSO_NO_UPDATE_CHECK: "1"
+      ALSO_NO_SETUP: "1"
+      ALSO_TRUSTED_POLICY_KEYS: ${{ secrets.ALSO_POLICY_PUBLIC_KEYS }}
+      ALSO_NAMESPACE_URL: ${{ secrets.ALSO_NAMESPACE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install also
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: connect namespace
+        run: |
+          also setup --yes --harness opencode \
+            --namespace personal="$ALSO_NAMESPACE_URL" \
+            --default-namespace personal
+      - run: also install --frozen
+      - run: also policy verify --ci
+      - run: also audit --ci
+      - run: also audit --sbom also.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: also-sbom
+          path: also.cdx.json

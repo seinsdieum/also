@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.3.0 (2026-11-08)
+
+This release makes policy governance cryptographic and removes the remaining
+local escape hatches.
+
+### Added
+
+- Signed policies: `also.policy.sig` with detached Ed25519 signatures, roles
+  and approvals. New commands: `also policy keygen`, `also policy trust`,
+  `also policy sign` and `also policy verify --ci`.
+- A trust anchor outside the policy: `~/.also/trusted-policy-keys` or
+  `ALSO_TRUSTED_POLICY_KEYS`. A policy cannot trust its own key.
+- `governance.require_signature`, `required_approvals`, `required_roles` and an
+  approver list with names, roles and public keys.
+- `audit --ci` fails on an unsigned policy, an invalid or untrusted signature, a
+  missing required role and insufficient approvals, in addition to lock and
+  drift failures.
+- Windows control-plane E2E in CI and a 101-version scale test.
+
+### Changed
+
+- Semantic-version aliases are immutable by default. `also tag --move` is the
+  explicit retarget path and uses a force-with-lease push that refuses an unseen
+  remote change.
+- OpenCode round-trips `theme`, `model`, `small_model` and `keybinds` in
+  addition to `default_agent`, `permission` and `permissions`.
+
+### Removed
+
+- `--no-lock` on `install` and `upgrade`. The lockfile is always read and
+  written; `--frozen` replays it and `--update` still records the result.
+
 ## 1.2.2 (2026-11-08)
 
 ### Fixed
@@ -45,8 +77,7 @@ release gate.
   `go mod verify` and the committed-lock E2E.
 - `test/e2e/control-plane.sh` is part of CI: it reproduces a lock, audits it,
   emits an SBOM, and proves that policy denial and drift fail the gate.
-- `docs/RELEASING.md` documents the release checklist, the 24-hour observation
-  window for feature releases and hotfix rules.
+- `docs/RELEASING.md` documents the release checklist and version policy.
 - Bug and feature issue templates.
 
 ### Changed
@@ -77,7 +108,7 @@ prove what is installed, pin it, gate it and report what changed.
   from the recorded state.
 - `also.lock` records the resolved version, digest, namespace, harness, parts
   and original constraint. `also install --frozen` replays it exactly;
-  `--update` and `--no-lock` control the file per command.
+  `--update` re-resolves and writes the result.
 - Semantic-version aliases over content versions: `also push --semver`,
   `also push --bump major|minor|patch`, `also tag`, and range installs such as
   `package@^1.4`.

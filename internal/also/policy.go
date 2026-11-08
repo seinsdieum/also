@@ -21,6 +21,20 @@ type Policy struct {
 	Packages    PolicyPackages    `yaml:"packages" json:"packages"`
 	Executables PolicyExecutables `yaml:"executables" json:"executables"`
 	Limits      PolicyLimits      `yaml:"limits" json:"limits"`
+	Governance  *PolicyGovernance `yaml:"governance,omitempty" json:"governance,omitempty"`
+}
+
+type PolicyGovernance struct {
+	RequireSignature  bool             `yaml:"require_signature" json:"require_signature"`
+	RequiredApprovals int              `yaml:"required_approvals" json:"required_approvals"`
+	RequiredRoles     []string         `yaml:"required_roles,omitempty" json:"required_roles,omitempty"`
+	Approvers         []PolicyApprover `yaml:"approvers" json:"approvers"`
+}
+
+type PolicyApprover struct {
+	Name string `yaml:"name" json:"name"`
+	Role string `yaml:"role" json:"role"`
+	Key  string `yaml:"key" json:"key"` // base64 Ed25519 public key
 }
 
 type PolicyNamespaces struct {

@@ -303,11 +303,16 @@ func pushTag(dir, tag string) error {
 	return nil
 }
 
-// pushTagForce moves a mutable alias tag (semantic version). Content version
-// tags are never pushed with force.
-func pushTagForce(dir, tag string) error {
-	if _, err := runGit(dir, "push", "--quiet", "--force", "origin", "refs/tags/"+tag); err != nil {
-		return fmt.Errorf("cannot push alias tag %s: %w", tag, err)
+// pushTagWithLease moves an alias only if the remote still points at the
+// commit this clone saw. An empty lease creates a new tag normally.
+func pushTagWithLease(dir, tag, remote string) error {
+	args := []string{"push", "--quiet"}
+	if remote != "" {
+		args = append(args, "--force-with-lease=refs/tags/"+tag+":"+remote)
+	}
+	args = append(args, "origin", "refs/tags/"+tag)
+	if _, err := runGit(dir, args...); err != nil {
+		return fmt.Errorf("cannot move alias tag %s: %w", tag, err)
 	}
 	return nil
 }

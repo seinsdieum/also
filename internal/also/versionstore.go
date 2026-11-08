@@ -99,7 +99,10 @@ func (s *SetRepo) SemverAliases(pkg string) (map[string]string, error) {
 }
 
 // SetSemver points an alias at an existing content version and pushes the tag.
-func (s *SetRepo) SetSemver(pkg, semver, version string) error {
+// Aliases are immutable by default; allowMove is only for the explicit
+// "also tag --move" path and still refuses to overwrite a remote change that
+// this clone has not seen.
+func (s *SetRepo) SetSemver(pkg, semver, version string, allowMove bool) error {
 	if _, ok := ParseSemver(semver); !ok {
 		return fmt.Errorf("invalid semantic version %q; use MAJOR.MINOR.PATCH", semver)
 	}
@@ -107,14 +110,52 @@ func (s *SetRepo) SetSemver(pkg, semver, version string) error {
 	if !ok {
 		return fmt.Errorf("version %s of %q has no content tag", version, pkg)
 	}
+	current, exists := s.refCommit(semverTagRef(pkg, semver))
+	moving := exists && current != commit
+	remote := ""
+	if moving {
+		if !allowMove {
+			return fmt.Errorf("semantic alias %s of %q already points at another version; use also tag --move", semver, pkg)
+		}
+		remote = remoteTagCommit(s.Dir, semverTagName(pkg, semver))
+		if remote != "" && remote != current {
+			return fmt.Errorf("semantic alias %s of %q moved on the remote; fetch it before moving", semver, pkg)
+		}
+	}
 	if _, err := runGit(s.Dir, "update-ref", semverTagRef(pkg, semver), commit); err != nil {
 		return err
 	}
-	if err := pushTagForce(s.Dir, semverTagName(pkg, semver)); err != nil {
+	if moving {
+		if err := pushTagWithLease(s.Dir, semverTagName(pkg, semver), remote); err != nil {
+			_, _ = runGit(s.Dir, "update-ref", semverTagRef(pkg, semver), current)
+			s.invalidateVersionData()
+			return err
+		}
+	} else if err := pushTag(s.Dir, semverTagName(pkg, semver)); err != nil {
 		return err
 	}
 	s.invalidateVersionData()
 	return nil
+}
+
+func (s *SetRepo) refCommit(ref string) (string, bool) {
+	out, err := runGit(s.Dir, "rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(out), true
+}
+
+func remoteTagCommit(dir, tag string) string {
+	out, err := runGit(dir, "ls-remote", "--tags", "origin", "refs/tags/"+tag)
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func (s *SetRepo) tagCommit(pkg, version string) (string, bool) {

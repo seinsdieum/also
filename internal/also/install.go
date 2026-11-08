@@ -1044,6 +1044,29 @@ func applyConfigEdit(t *tx, e ConfigEdit) error {
 	return fmt.Errorf("unknown config edit kind %q", e.Kind)
 }
 
+// pruneEmptyJSONParents removes container objects/arrays that became empty
+// after also removed their last managed leaf. It stops at the first non-empty
+// parent, so a user-owned sibling always keeps the container alive.
+func pruneEmptyJSONParents(data []byte, path []string) []byte {
+	for i := len(path) - 1; i >= 1; i-- {
+		parent := path[:i]
+		doc, err := ParseJSONC(data)
+		if err != nil {
+			return data
+		}
+		raw, ok := doc.RawAt(parent...)
+		if !ok || !isEmptyJSON(raw) {
+			return data
+		}
+		next, _, err := doc.Remove(parent...)
+		if err != nil {
+			return data
+		}
+		data = next
+	}
+	return data
+}
+
 func isEmptyJSON(data []byte) bool {
 	doc, err := ParseJSONC(data)
 	if err != nil {
@@ -1106,6 +1129,9 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 			out, err = doc.Set(v, e.Path...)
 		} else {
 			out, _, err = doc.Remove(e.Path...)
+			if err == nil {
+				out = pruneEmptyJSONParents(out, e.Path)
+			}
 		}
 		if err != nil {
 			return false, "", err

@@ -241,10 +241,15 @@ func newPolicyCmd() *cobra.Command {
 			fmt.Printf("no policy at %s\n", path)
 			return nil
 		}
+		status, err := also.VerifyPolicy(project)
+		if err != nil {
+			return err
+		}
 		if jsonOut {
 			return printJSON(map[string]any{
 				"file": path, "exists": true, "namespaces": p.Namespaces,
 				"packages": p.Packages, "executables": p.Executables, "limits": p.Limits,
+				"governance": p.Governance, "signature": status,
 			})
 		}
 		fmt.Printf("policy: %s\n", path)
@@ -255,11 +260,34 @@ func newPolicyCmd() *cobra.Command {
 			policyBool(p.Executables.AllowPlugins), policyBool(p.Executables.AllowCommands))
 		fmt.Printf("limits:     max_package_bytes=%d allow_literal_secrets=%t\n",
 			p.Limits.MaxPackageBytes, p.Limits.AllowLiteralSecrets)
+		printPolicySignature(p, status)
 		return nil
 	}
 	c.Flags().StringVarP(&dir, "dir", "p", "", "directory whose policy to read (default: current directory)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	c.AddCommand(newPolicyKeygenCmd(), newPolicyTrustCmd(), newPolicySignCmd(), newPolicyVerifyCmd())
 	return c
+}
+
+func printPolicySignature(p *also.Policy, status *also.PolicyVerification) {
+	if p.Governance == nil {
+		fmt.Println("governance: none (legacy unsigned policy)")
+		return
+	}
+	fmt.Printf("governance: require_signature=%t approvals=%d roles=%v\n",
+		p.Governance.RequireSignature, p.Governance.RequiredApprovals, p.Governance.RequiredRoles)
+	for _, a := range p.Governance.Approvers {
+		fmt.Printf("  approver: %s role=%s key=%s\n", a.Name, orDash(a.Role), short(a.Key))
+	}
+	if status == nil {
+		fmt.Println("signature:  none")
+		return
+	}
+	fmt.Printf("signature:  signed=%t valid=%t count=%d/%d roles=%v\n",
+		status.Signed, status.Valid, status.Signatures, status.Required, status.Roles)
+	if status.Error != "" {
+		fmt.Printf("            %s\n", status.Error)
+	}
 }
 
 func policyBool(v *bool) string {
@@ -397,14 +425,16 @@ func newTagCmd() *cobra.Command {
 		setFlag string
 		from    string
 		refresh bool
+		move    bool
 	)
 	c := newCmd("tag <package> <semver> [version]", "Point a semantic-version alias at a content version")
-	c.Long = `Semantic versions are aliases over immutable content-addressed versions:
+	c.Long = `Semantic versions are immutable aliases over content-addressed versions:
 "also tag code-review 1.2.0" makes code-review@^1.2 resolvable while the
-package version remains its digest. Re-tagging moves the alias.`
+package version remains its digest. Use --move only when retargeting an
+existing alias; the push is leased and refuses an unseen remote change.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) < 2 || len(args) > 3 {
-			return fmt.Errorf("usage: also tag <package> <semver> [version]")
+			return fmt.Errorf("usage: also tag <package> <semver> [version] [--move]")
 		}
 		pkg, semver := args[0], args[1]
 		if !also.ValidName(pkg) {
@@ -431,7 +461,7 @@ package version remains its digest. Re-tagging moves the alias.`
 			if err != nil {
 				return err
 			}
-			if err := repo.SetSemver(pkg, semver, v.Version); err != nil {
+			if err := repo.SetSemver(pkg, semver, v.Version, move); err != nil {
 				return err
 			}
 			fmt.Printf("tagged %s %s -> %s@%s\n", pkg, semver, pkg, short(v.Version))
@@ -441,5 +471,6 @@ package version remains its digest. Re-tagging moves the alias.`
 	addNamespaceFlag(c, &setFlag)
 	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before tagging")
+	c.Flags().BoolVar(&move, "move", false, "move an existing alias; refuses if the remote changed since the last fetch")
 	return c
 }
