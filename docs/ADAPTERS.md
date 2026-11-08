@@ -47,7 +47,13 @@ config is merged with the main package.
 `Settings.Keys` is an allowlist of reversible top-level config keys, not a
 whole-file install. For OpenCode it covers `default_agent`, `experimental`,
 `theme`, `model`, `small_model`, `keybinds`, `permission` and the V2
-`permissions`; MCP and hooks are merged separately. Each key is written and reversed independently, so
+`permissions`; MCP and hooks are merged separately.
+
+An OpenCode package whose agents already use the native V2 `permissions` array
+is copied verbatim on an OpenCode install, so `action: subagent` and
+`external_directory` work as written. Only a cross-harness install rewrites the
+array. OpenCode v2 accepts V1 `permission`, `tools` and `temperature` through
+its compatibility layer; `temperature` is stored but not sent by v2. Each key is written and reversed independently, so
 a package can carry the intended agent and model defaults without replacing the
 whole file. Add a key to the adapter when the value is part of the
 infrastructure contract.
