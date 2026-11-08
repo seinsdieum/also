@@ -9,6 +9,13 @@
   `install --frozen` still restores the user's original config, removes config
   and instruction files also created, and lets a later manual edit become the
   new base instead of being deleted by a stale origin.
+- Origins track the value `also` last wrote. A user edit after state loss or
+  between packages is no longer overwritten silently; the install asks for
+  `--force`.
+- Reshape records origins for the new harness, so a later state-loss uninstall
+  removes the new instruction/config files it created.
+- Codex TOML created-file provenance is retained, and a modified TOML managed
+  block needs `--force` like JSON.
 - `reshape` rolls back packages it already moved when a later apply fails, so
   the state, lock and files do not end in a mixed harness. An
   OpenCode→Claude→OpenCode round trip no longer needs `--force` when the

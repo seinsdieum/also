@@ -14,10 +14,12 @@ import (
 const SchemaConfigOrigins = "also.config-origins/v1"
 
 type ConfigOrigin struct {
-	File   string          `json:"file"`
-	Path   []string        `json:"path,omitempty"`
-	Value  json.RawMessage `json:"value,omitempty"`
-	Absent bool            `json:"absent,omitempty"`
+	File    string          `json:"file"`
+	Path    []string        `json:"path,omitempty"`
+	Value   json.RawMessage `json:"value,omitempty"`
+	Absent  bool            `json:"absent,omitempty"`
+	BaseSet bool            `json:"base_set,omitempty"`
+	Managed json.RawMessage `json:"managed,omitempty"`
 }
 
 type configOriginFile struct {
@@ -94,10 +96,10 @@ func PrepareKnownConfigOrigins(st *State, project string) {
 		return
 	}
 	base := PathKey(project)
-	st.knownOrigins = map[string]bool{}
+	st.knownOrigins = map[string]ConfigOrigin{}
 	for _, e := range f.Entries {
 		file := filepath.Join(base, filepath.FromSlash(e.File))
-		st.knownOrigins[originKey(file, e.Path)] = true
+		st.knownOrigins[originKey(file, e.Path)] = e
 	}
 }
 
@@ -118,11 +120,14 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 	}
 	for i := range edits {
 		e := &edits[i]
-		if e.Kind != "json-set" {
-			continue
-		}
 		rel := relProjectFile(project, e.File)
 		if rel == "" {
+			continue
+		}
+		if f.Files[rel] {
+			e.CreatedFile = true
+		}
+		if e.Kind != "json-set" {
 			continue
 		}
 		origin, ok := index[originKey(rel, e.Path)]
@@ -134,9 +139,6 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 			e.Base = nil
 		} else {
 			e.Base = origin.Value
-		}
-		if f.Files[rel] {
-			e.CreatedFile = true
 		}
 	}
 	if block != nil {
@@ -233,9 +235,9 @@ func MergeConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 	if err != nil {
 		return err
 	}
-	seen := map[string]bool{}
-	for _, e := range f.Entries {
-		seen[originKey(e.File, e.Path)] = true
+	index := map[string]int{}
+	for i := range f.Entries {
+		index[originKey(f.Entries[i].File, f.Entries[i].Path)] = i
 	}
 	changed := false
 	for _, e := range edits {
@@ -247,10 +249,17 @@ func MergeConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 			continue
 		}
 		key := originKey(rel, e.Path)
-		if seen[key] {
+		if i, ok := index[key]; ok {
+			// Track what also last wrote. A user edit no longer matches it,
+			// so the next plan asks for --force instead of silently losing it.
+			if !jsonEqual(f.Entries[i].Managed, e.Value) {
+				f.Entries[i].Managed = append(json.RawMessage{}, e.Value...)
+				changed = true
+			}
 			continue
 		}
-		origin := ConfigOrigin{File: rel, Path: append([]string{}, e.Path...)}
+		origin := ConfigOrigin{File: rel, Path: append([]string{}, e.Path...), BaseSet: true,
+			Managed: append(json.RawMessage{}, e.Value...)}
 		switch {
 		case e.BaseSet:
 			origin.Value = e.Base
@@ -262,11 +271,11 @@ func MergeConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 			origin.Absent = true
 		}
 		f.Entries = append(f.Entries, origin)
-		seen[key] = true
+		index[key] = len(f.Entries) - 1
 		changed = true
 	}
 	for _, e := range edits {
-		if !e.CreatedFile || e.Kind != "json-set" {
+		if !e.CreatedFile {
 			continue
 		}
 		rel := relProjectFile(project, e.File)

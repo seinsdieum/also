@@ -428,6 +428,40 @@ func TestFindProjectRootFromSubdirectory(t *testing.T) {
 	}
 }
 
+func TestCodexCreatedConfigRemovedAfterStateLoss(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
+	writeFile(t, filepath.Join(bundle, "config.toml"), "[mcp_servers.x]\ncommand = \"/bin/echo\"\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "c", Harness: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "codex", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "config.toml")); err != nil {
+		t.Fatalf("codex config was not created: %v", err)
+	}
+	if err := SaveState(&State{Schema: SchemaState}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "codex", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("c")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("state-loss uninstall left the created codex config: %v", err)
+	}
+}
+
 func TestTOMLManagedBlockIsAdoptedAfterStateLoss(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "config.toml")
@@ -444,6 +478,15 @@ func TestTOMLManagedBlockIsAdoptedAfterStateLoss(t *testing.T) {
 	data := mustReadTestFile(t, file)
 	if strings.Count(string(data), "# also:begin mcp:x") != 1 {
 		t.Fatalf("TOML block was duplicated: %s", data)
+	}
+	// A user edit inside the managed block needs --force.
+	edited := strings.Replace(string(data), `/bin/echo`, `/bin/evil`, 1)
+	writeFile(t, file, edited)
+	if _, _, err := planTOMLMCP(&State{}, nil, file, "x", block, false); err == nil {
+		t.Fatal("a modified TOML block must require --force")
+	}
+	if _, _, err := planTOMLMCP(&State{}, nil, file, "x", block, true); err != nil {
+		t.Fatalf("--force should allow the TOML replacement: %v", err)
 	}
 }
 
@@ -538,6 +581,72 @@ func TestStateLossRemovesCreatedConfigFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(project, "opencode.json")); !os.IsNotExist(err) {
 		t.Fatalf("created config file survived state-loss uninstall: %v", err)
+	}
+}
+
+func TestUserEditAfterStateLossNeedsForce(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(&State{Schema: SchemaState}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x","default_agent":"mine"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err == nil {
+		t.Fatal("a user edit after state loss must not be overwritten without --force")
+	}
+	if !strings.Contains(string(mustReadTestFile(t, filepath.Join(project, "opencode.json"))), "mine") {
+		t.Fatal("the user edit was lost")
+	}
+}
+
+func TestReshapeStateLossRemovesNewHarnessFiles(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"dev","mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
+	writeFile(t, filepath.Join(bundle, ".opencode", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(&State{Schema: SchemaState}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "claude", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CLAUDE.md", ".mcp.json"} {
+		if _, err := os.Stat(filepath.Join(project, name)); !os.IsNotExist(err) {
+			t.Fatalf("state-loss uninstall left %s: %v", name, err)
+		}
 	}
 }
 

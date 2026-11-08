@@ -81,7 +81,7 @@ type State struct {
 	Schema   string    `json:"schema"`
 	Installs []Install `json:"installs"`
 	// knownOrigins is transient context for BuildPlan. It is not persisted.
-	knownOrigins map[string]bool
+	knownOrigins map[string]ConfigOrigin
 }
 
 func LoadState() (*State, error) {

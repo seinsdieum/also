@@ -603,6 +603,11 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			}
 			return out, fmt.Errorf("reshape failed; applied packages were rolled back: %w", err)
 		}
+		if err := MergeConfigOrigins(s.in.Project, s.plan.Edits, s.plan.Block); err != nil {
+			res.Err = err
+			out = append(out, res)
+			return out, err
+		}
 		res.Status = "reshaped"
 		out = append(out, res)
 		applied = append(applied, s)

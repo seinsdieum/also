@@ -593,7 +593,13 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 	if oldEdit != nil && exists && !jsonEqual(existing, oldEdit.Value) && !force {
 		return nil, "", fmt.Errorf("%s in %s was changed since it was installed; use --force to replace it", strings.Join(path, "."), file)
 	}
-	knownOrigin := st != nil && st.knownOrigins != nil && st.knownOrigins[originKey(file, path)]
+	knownOrigin := false
+	if st != nil && st.knownOrigins != nil {
+		if origin, ok := st.knownOrigins[originKey(file, path)]; ok {
+			knownOrigin = jsonEqual(existing, origin.Managed) ||
+				(origin.BaseSet && !origin.Absent && jsonEqual(existing, origin.Value))
+		}
+	}
 	if exists && oldEdit == nil && !force && !knownOrigin {
 		return nil, "", fmt.Errorf("%s is already configured differently in %s; use --force to replace it (a backup is kept)", strings.Join(path, "."), file)
 	}
@@ -827,9 +833,12 @@ func planTOMLMCP(st *State, old *Install, file, name, block string, force bool) 
 			}
 		}
 	}
-	if _, ok := tomlBlockBody(data, marker); ok {
+	if body, ok := tomlBlockBody(data, marker); ok {
 		// The managed marker is present; this is our block even after state
-		// loss, so replay can replace it instead of refusing.
+		// loss. A modified body still needs an explicit --force.
+		if strings.TrimSpace(body) != strings.TrimSpace(block) && !force {
+			return nil, "", fmt.Errorf("MCP block %q in %s was modified; use --force to replace it", marker, file)
+		}
 		ours = true
 	}
 	if tomlHasMCPServer(data, name) && !ours {
