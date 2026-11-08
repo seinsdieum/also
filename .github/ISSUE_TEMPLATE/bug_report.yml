@@ -1,0 +1,65 @@
+name: Bug report
+description: Something installed, audited or upgraded incorrectly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste secret values, private namespace URLs or credentials.
+        Redact paths and tokens before submitting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command, the observed result and the expected result.
+      placeholder: |
+        also install code-review for opencode
+        expected ...
+        got ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: also version
+      description: Output of `also version`.
+      placeholder: "also 1.2.0, commit ..., built ..."
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and architecture
+      placeholder: macOS 15 arm64, Ubuntu 24.04 amd64, Windows 11 amd64
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Harness
+      placeholder: Claude Code, Codex CLI, OpenCode, Qwen Code, or a community adapter
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Commands or a small namespace/project layout. Remove credentials.
+      render: shell
+  - type: textarea
+    id: audit
+    attributes:
+      label: Audit output
+      description: |
+        Paste `also audit --json` if it is safe to share. Remove paths and
+        namespace remotes you do not want public.
+      render: json
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials and private URLs from this report.
+          required: true
+        - label: I searched existing issues for the same failure.
+          required: true

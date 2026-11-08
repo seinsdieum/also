@@ -18,8 +18,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: modules
+        run: go mod verify
       - name: test
-        run: go test -count=1 ./...
+        run: go test -count=1 -race ./...
 
   build:
     needs: test

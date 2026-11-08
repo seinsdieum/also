@@ -55,9 +55,10 @@ command executes package content.
 A repository can commit `also.policy.yml` to restrict namespaces, packages,
 executable component kinds, package size and literal secrets. The policy is
 enforced before an install or upgrade writes anything. `also audit --ci` exits 1
-on a missing file, block or config entry, and on a policy violation; `--strict`
-also fails on user edits. `--no-policy` is a local recovery flag and should not
-be used in CI.
+on a missing file, block or config entry, on a lock/state mismatch, on an
+untracked or missing `also.lock`, and on a policy violation; `--strict` also
+fails on user edits. There is no policy bypass flag; changing the policy is a
+reviewed file change.
 
 `also.lock` is the reproducibility control. `also install --frozen` fails
 instead of resolving a version or digest that differs from the lock. Commit the

@@ -115,7 +115,7 @@ func TestAuditReportsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := Audit(st, project, false)
+	report, err := Audit(st, project, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestAuditReportsDrift(t *testing.T) {
 	if err := os.WriteFile(inst.Files[0].Path, []byte("user edit\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	report, err = Audit(st, project, false)
+	report, err = Audit(st, project, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestAuditReportsDrift(t *testing.T) {
 	if err := os.WriteFile(inst.Block.File, []byte("no managed block\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	report, err = Audit(st, project, false)
+	report, err = Audit(st, project, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +168,74 @@ func TestControlFilesAreNotPublished(t *testing.T) {
 	if _, ok := snap.Files["CLAUDE.md"]; !ok {
 		t.Fatal("harness file was dropped")
 	}
+}
+
+func TestAuditBindsStateToLock(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	sampleBundle(t, bundle)
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{
+		Package: "p", Harness: "claude", Project: project, WithConfig: true,
+	}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Without a committed lock, --ci must refuse to call the state proof.
+	report, err := Audit(st, project, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCode(report.Findings, "lock-missing") || report.Summary.Failures == 0 {
+		t.Fatalf("missing lock was not a failure: %+v", report.Findings)
+	}
+
+	lock := &Lockfile{Schema: SchemaLock}
+	lock.Upsert(LockEntryFromInstall(&st.Installs[0], ""))
+	if err := SaveLock(project, lock); err != nil {
+		t.Fatal(err)
+	}
+	report, err = Audit(st, project, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Lock == nil || report.Lock.Verified != 1 || report.Summary.Failures != 0 {
+		t.Fatalf("matching lock should verify: lock=%+v summary=%+v", report.Lock, report.Summary)
+	}
+
+	// A state that disagrees with the committed lock is a failure, even if the
+	// files on disk are intact.
+	st.Installs[0].Version = ShortHash([]byte("other"), 16)
+	if err := SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	report, err = Audit(st, project, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCode(report.Findings, "lock-version-mismatch") || report.Summary.Failures == 0 {
+		t.Fatalf("state/lock version mismatch was not a failure: %+v", report.Findings)
+	}
+}
+
+func hasCode(findings []AuditFinding, code string) bool {
+	for _, f := range findings {
+		if f.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPlainTextSecretScan(t *testing.T) {

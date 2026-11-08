@@ -171,6 +171,8 @@ also drift                       # only the differences
 
 `also audit` never downloads a package; the recorded digest is the evidence. A modified file is a warning because you may have edited it on purpose. A missing file, managed block or configuration entry is a failure because the install is incomplete.
 
+`also audit --ci` additionally requires a git-tracked `also.lock` and compares every entry with the local state: a lock entry that is not installed, a version or digest mismatch, an unexpected extra install, or a missing lock is a failure. The lock is the committed source of truth; `~/.also/state.json` is the per-machine cache. That is what makes the CI gate meaningful even if the local state was edited.
+
 ### Policy
 
 A project can commit `also.policy.yml`:
@@ -193,7 +195,7 @@ limits:
   allow_literal_secrets: false
 ```
 
-`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory, so a package that was installed before the policy changed is reported. `--no-policy` exists for local recovery, but continuous integration should not use it.
+`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory, so a package that was installed before the policy changed is reported. There is no bypass flag: changing the policy is a reviewed file change.
 
 ### Adapters and cross-harness architecture
 
@@ -301,6 +303,7 @@ Useful documents:
 - [docs/PACKAGE_FORMAT.md](docs/PACKAGE_FORMAT.md) for the package contract;
 - [docs/CONTRACTS.md](docs/CONTRACTS.md) for schema stability and migration policy;
 - [docs/CI.md](docs/CI.md) for the lockfile, audit and policy workflow in CI;
+- [docs/RELEASING.md](docs/RELEASING.md) for the release checklist and version policy;
 - [docs/CLI.md](docs/CLI.md) for the command reference.
 
 Before opening a pull request, run `make check`, keep user-facing text in complete English sentences, and add a test for any new branch, parser, security check or installer path. Adapter changes must keep the declarative path bounds and must not execute code. Security issues should go through the private channel described in [SECURITY.md](SECURITY.md), not through a public issue.

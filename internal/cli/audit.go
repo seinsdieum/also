@@ -56,7 +56,7 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 		if err != nil {
 			return err
 		}
-		report, err := also.Audit(st, project, all)
+		report, err := also.Audit(st, project, all, ci)
 		if err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ are warnings; missing files, blocks and config entries are failures.`
 		if err != nil {
 			return err
 		}
-		report, err := also.Audit(st, project, all)
+		report, err := also.Audit(st, project, all, false)
 		if err != nil {
 			return err
 		}
@@ -168,6 +168,16 @@ func printAudit(report *also.AuditReport) {
 		scope = "all tracked installs"
 	}
 	fmt.Printf("inventory: %s\n", scope)
+	if report.Lock != nil {
+		switch {
+		case !report.Lock.Exists:
+			fmt.Println("lock:      missing (also.lock is the committed source of truth)")
+		case report.Lock.InGit && !report.Lock.Tracked:
+			fmt.Printf("lock:      %d entries, %d verified, not tracked by git\n", report.Lock.Entries, report.Lock.Verified)
+		default:
+			fmt.Printf("lock:      %d entries, %d verified\n", report.Lock.Entries, report.Lock.Verified)
+		}
+	}
 	if report.Summary.Packages == 0 {
 		fmt.Println("no packages installed")
 		return

@@ -1,0 +1,34 @@
+name: Feature request
+description: A workflow that also does not handle well today.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and where does the current behavior fail?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: The smallest change that would solve the problem.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds, other commands, or why the current behavior is not enough.
+  - type: input
+    id: version
+    attributes:
+      label: also version
+      placeholder: "also 1.2.0"
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This is about reversible ownership, audit, policy or the lockfile.
+        - label: This is about one harness adapter.
+        - label: This is about a new harness.

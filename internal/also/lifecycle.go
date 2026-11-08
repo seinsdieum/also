@@ -35,7 +35,6 @@ type InstallRequest struct {
 	Force          bool
 	WithConfig     bool
 	Offline        bool
-	NoPolicy       bool
 	ExpectedDigest string
 }
 
@@ -82,15 +81,12 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 			return nil, set, err
 		}
 	}
-	var policy *Policy
-	if !req.NoPolicy {
-		policy, err = LoadPolicy(project)
-		if err != nil {
-			return nil, set, err
-		}
-		if err := checkPolicyPackage(policy, set.Name, pkg); err != nil {
-			return nil, set, err
-		}
+	policy, err := LoadPolicy(project)
+	if err != nil {
+		return nil, set, err
+	}
+	if err := checkPolicyPackage(policy, set.Name, pkg); err != nil {
+		return nil, set, err
 	}
 	st, err := LoadState()
 	if err != nil {
@@ -174,13 +170,13 @@ func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) (
 	if len(installs) == 0 {
 		return nil, fmt.Errorf("no matching installs")
 	}
-	return upgradeInstalls(cfg, st, installs, force, check, false)
+	return upgradeInstalls(cfg, st, installs, force, check)
 }
 
 // UpgradeInstallsInProject upgrades only the packages installed in one
 // directory, which is what the "also upgrade" command targets. Legacy global
 // installs are reported, not rewritten: their files live in the home dir.
-func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal, noPolicy bool) ([]UpgradeResult, error) {
+func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal bool) ([]UpgradeResult, error) {
 	abs, err := AbsPath(project)
 	if err != nil {
 		return nil, err
@@ -204,14 +200,14 @@ func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []str
 	if len(installs) == 0 && len(legacy) == 0 {
 		return nil, fmt.Errorf("no packages installed in %s; run: also install <package> for <harness>", abs)
 	}
-	results, err := upgradeInstalls(cfg, st, installs, force, check, noPolicy)
+	results, err := upgradeInstalls(cfg, st, installs, force, check)
 	if err != nil {
 		return nil, err
 	}
 	return append(results, legacy...), nil
 }
 
-func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, noPolicy bool) ([]UpgradeResult, error) {
+func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bool) ([]UpgradeResult, error) {
 	repos := map[string]*SetRepo{}
 	var out []UpgradeResult
 	for _, in := range installs {
@@ -250,19 +246,16 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, n
 			out = append(out, res)
 			continue
 		}
-		var policy *Policy
-		if !noPolicy {
-			policy, err = LoadPolicy(in.Project)
-			if err != nil {
-				res.Err = err
-				out = append(out, res)
-				continue
-			}
-			if err := checkPolicyPackage(policy, in.Set, pkg); err != nil {
-				res.Err = err
-				out = append(out, res)
-				continue
-			}
+		policy, err := LoadPolicy(in.Project)
+		if err != nil {
+			res.Err = err
+			out = append(out, res)
+			continue
+		}
+		if err := checkPolicyPackage(policy, in.Set, pkg); err != nil {
+			res.Err = err
+			out = append(out, res)
+			continue
 		}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)

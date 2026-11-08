@@ -25,7 +25,6 @@ func newInstallCmd() *cobra.Command {
 		frozen   bool
 		update   bool
 		noLock   bool
-		noPolicy bool
 	)
 	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
@@ -38,6 +37,12 @@ into native config with reversible bookkeeping.`
 		cfg, err := also.LoadConfig()
 		if err != nil {
 			return err
+		}
+		if len(args) == 0 {
+			if !frozen || noLock {
+				return fmt.Errorf("usage: also install <package> [for <harness>] [from <namespace>], or also install --frozen with no package to replay also.lock")
+			}
+			return installFromLock(cfg, project, force, offline, jsonOut)
 		}
 		spec, err := parseInstallArgs(args, cfg)
 		if err != nil {
@@ -71,15 +76,9 @@ into native config with reversible bookkeeping.`
 			}
 			installSet = spec.Ref.Namespace
 		}
-		proj := project
-		if proj == "" {
-			proj, err = os.Getwd()
-			if err != nil {
-				return err
-			}
-			if root, _, ferr := also.FindInfra(proj); ferr == nil {
-				proj = root
-			}
+		proj, err := installProject(project)
+		if err != nil {
+			return err
 		}
 		if frozen && noLock {
 			return fmt.Errorf("--frozen needs the lockfile; do not combine it with --no-lock")
@@ -144,7 +143,7 @@ into native config with reversible bookkeeping.`
 			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
 				Package: spec.Ref.spec(), Harness: harnessID, Scope: "project", Project: proj,
 				Parts: spec.Parts, Force: force, WithConfig: !noConfig, Offline: offline,
-				NoPolicy: noPolicy, ExpectedDigest: expectedDigest,
+				ExpectedDigest: expectedDigest,
 			}, installSet, from)
 			if err != nil {
 				return err
@@ -179,7 +178,6 @@ into native config with reversible bookkeeping.`
 	c.Flags().BoolVar(&frozen, "frozen", false, "install exactly what also.lock pins; fail on any difference")
 	c.Flags().BoolVar(&update, "update", false, "ignore the lockfile and resolve the newest version")
 	c.Flags().BoolVar(&noLock, "no-lock", false, "do not read or write also.lock")
-	c.Flags().BoolVar(&noPolicy, "no-policy", false, "skip also.policy.yml checks")
 	return c
 }
 
@@ -221,6 +219,64 @@ func planOutput(plan *also.Plan) installOutput {
 		out.ConfigChanges = append(out.ConfigChanges, configChange{File: e.File, Kind: e.Kind, Path: e.Path, Marker: e.Marker})
 	}
 	return out
+}
+
+// installFromLock replays every entry in also.lock. It is the CI path:
+// one command, no package argument, no resolution.
+func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool) error {
+	project, err := installProject(dir)
+	if err != nil {
+		return err
+	}
+	lock, err := also.LoadLock(project)
+	if err != nil {
+		return err
+	}
+	if len(lock.Packages) == 0 {
+		return fmt.Errorf("also.lock is missing or empty in %s; run also install <package> first", project)
+	}
+	return withLock(func() error {
+		out := make([]installOutput, 0, len(lock.Packages))
+		for _, entry := range lock.Packages {
+			if err := entry.CheckEntry(); err != nil {
+				return err
+			}
+			if _, ok := cfg.Namespaces[entry.Namespace]; !ok {
+				return fmt.Errorf("lockfile namespace %q is not configured; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
+			}
+			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
+				Package: entry.Package + "@" + entry.Version, Harness: entry.Harness,
+				Scope: "project", Project: project, Parts: entry.Parts, Force: force,
+				WithConfig: entry.WithConfig, Offline: offline, ExpectedDigest: entry.Digest,
+			}, entry.Namespace, "")
+			if err != nil {
+				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
+			out = append(out, planOutput(plan))
+		}
+		if jsonOut {
+			return printJSON(out)
+		}
+		fmt.Printf("installed %d package(s) from also.lock\n", len(out))
+		for _, item := range out {
+			fmt.Printf("  %s/%s@%s -> %s\n", item.Namespace, item.Package, short(item.Version), item.Harness)
+		}
+		return nil
+	})
+}
+
+func installProject(dir string) (string, error) {
+	if dir != "" {
+		return also.AbsPath(dir)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if root, _, ferr := also.FindInfra(cwd); ferr == nil {
+		return root, nil
+	}
+	return also.AbsPath(cwd)
 }
 
 func resolveHarnessWord(cfg *also.Config, requested string, sawFor bool) (string, error) {
@@ -279,7 +335,6 @@ func newUpgradeCmd() *cobra.Command {
 		jsonOut      bool
 		legacyGlobal bool
 		noLock       bool
-		noPolicy     bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
 	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
@@ -306,7 +361,7 @@ func newUpgradeCmd() *cobra.Command {
 			pkgs = []string{infra.Name}
 		}
 		return withLock(func() error {
-			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal, noPolicy)
+			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal)
 			if err != nil {
 				return err
 			}
@@ -363,7 +418,6 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "report old global installs")
 	_ = c.Flags().MarkHidden("legacy-global")
 	c.Flags().BoolVar(&noLock, "no-lock", false, "do not update also.lock")
-	c.Flags().BoolVar(&noPolicy, "no-policy", false, "skip also.policy.yml checks")
 	return c
 }
 

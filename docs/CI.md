@@ -63,13 +63,15 @@ Notes:
 - `install --frozen` fails if the lock is missing, if a package resolves to a
   different version, or if a digest differs. It never silently updates the
   lock; use `also upgrade` locally and commit the new lock.
-- `audit --ci` fails on a missing file, managed block or config entry, and on a
-  policy violation. A user-edited file is a warning, because edits can be
-  intentional.
+- `audit --ci` fails on a missing file, managed block or config entry, on a
+  version or digest mismatch against `also.lock`, on a missing or untracked
+  lock, on an install that is missing from the lock, and on a policy violation.
+  A user-edited file is a warning, because edits can be intentional. The lock is
+  the committed source of truth; `~/.also/state.json` is only the local cache.
 - `audit --strict` also fails on a warning, which is the right default when the
   repository owns the files and no local edits are expected.
 - `audit --sbom` writes CycloneDX 1.5 and never downloads a package.
 - The namespace URL is a secret only if the repository is private. Prefer the
   platform's git credential or a read-only deploy key; `also` does not store
   tokens in its config.
-- `--no-policy` exists for local recovery. Do not pass it in CI.
+- There is no policy bypass flag. A policy change is a reviewed file change.

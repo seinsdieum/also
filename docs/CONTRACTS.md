@@ -113,11 +113,18 @@ and a migration test must prove that user data survives.
 - Community adapters using `also.adapter/v1` keep loading.
 - Documented commands and flags keep their meaning within a major version.
 
-## What 1.1 adds
+## What 1.1 and 1.2 add
 
 `also.lock`, `also.policy.yml`, `also audit`, `also drift`, `also search`,
 `also tag`, semantic-version aliases and SBOM output are additive. Existing
 state and packages are unchanged. `Install` gained optional `digest` and
 `executables` fields inside `also.state/v1`; readers that do not know them
-ignore them. `also.lock` is optional: projects without it keep resolving the
-newest version, and `--frozen` is the explicit reproducibility mode.
+ignore them. `also.lock` is optional for ordinary installs: projects without it
+keep resolving the newest version, and `--frozen` is the explicit
+reproducibility mode.
+
+`also audit --ci` is stricter: it requires a git-tracked `also.lock` and treats
+a lock/state mismatch as a failure. This is a deliberate behavior change for
+the CI gate, not a schema change. The `--no-policy` flag was removed in 1.2.0
+because a policy bypass defeats the trust model; a policy change is a reviewed
+file change.

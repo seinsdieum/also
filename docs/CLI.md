@@ -116,7 +116,8 @@ which records what was actually written on this machine.
 ## Installs
 
 ```sh
-also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--no-lock] [--no-policy] [--json]
+also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--no-lock] [--json]
+also install --frozen            # replay every entry in also.lock
 also install <part> <kind> from <package> [for <harness>] [from <namespace>]
 also upgrade [package...] [--check] [--no-lock] [--json]
 also reshape <harness> [package...] [--json]
@@ -125,14 +126,15 @@ also uninstall <package> [for <harness>] [--all] [--json]
 ```
 
 Installs always target the current directory. One package can be installed
-into several harnesses in the same directory. `also upgrade` upgrades the
-packages installed in the current directory, not packages elsewhere.
-`also uninstall` defaults to the current directory; use `--dir <dir>` to
-choose another one.
+into several harnesses in the same directory. `also install --frozen` with no
+package argument installs every entry in `also.lock` for the recorded harness
+and parts, which is the intended CI form. `also upgrade` upgrades the packages
+installed in the current directory, not packages elsewhere. `also uninstall`
+defaults to the current directory; use `--dir <dir>` to choose another one.
 
 A project policy (`also.policy.yml`) is enforced before an install or upgrade
-writes anything. Use `--no-policy` only for local recovery; continuous
-integration should keep the policy on.
+writes anything. There is no bypass flag: to change the policy, edit the file
+and review the change like any other committed configuration.
 
 ## Audit, drift and policy
 
@@ -153,8 +155,11 @@ downloads a package.
 
 A modified file is a warning, because the edit may be intentional. A missing
 file, managed instruction block or configuration entry is a failure. `--ci`
-exits 1 on a failure; `--strict` exits 1 on any finding. `drift` prints only the
-differences.
+exits 1 on a failure and requires a git-tracked `also.lock`: state in `$HOME`
+is only a cache, so the committed lock is the source of truth. It also fails
+when the lock pins a package that is not installed, when the installed version
+or digest differs, and when an install is missing from the lock. `--strict`
+exits 1 on any finding. `drift` prints only the differences.
 
 `--sbom` writes a CycloneDX 1.5 JSON document for the inventory. It contains one
 application component per installed package with the full SHA-256 digest and

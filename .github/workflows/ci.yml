@@ -30,6 +30,17 @@ jobs:
       - name: test
         run: go test -count=1 -race ./...
 
+  control-plane:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: run the committed-lock workflow
+        run: ./test/e2e/control-plane.sh
+
   windows-install:
     runs-on: windows-latest
     steps:

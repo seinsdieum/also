@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 (2026-11-08)
+
+This release makes the committed lockfile the root of trust and tightens the
+release gate.
+
+### Added
+
+- `also audit --ci` now requires a git-tracked `also.lock` and compares every
+  lock entry with the local state. New findings: `lock-missing`,
+  `lock-untracked`, `lock-invalid`, `lock-not-installed`,
+  `lock-version-mismatch`, `lock-digest-mismatch`,
+  `lock-namespace-mismatch`, `lock-digest-missing`, `lock-config-mismatch` and
+  `lock-extra`. `~/.also/state.json` is treated as the local cache.
+- `make release-check` runs formatting, vet, the full suite, the race detector,
+  `go mod verify` and the committed-lock E2E.
+- `test/e2e/control-plane.sh` is part of CI: it reproduces a lock, audits it,
+  emits an SBOM, and proves that policy denial and drift fail the gate.
+- `docs/RELEASING.md` documents the release checklist, the 24-hour observation
+  window for feature releases and hotfix rules.
+- Bug and feature issue templates.
+
+### Changed
+
+- Semantic versions now use `github.com/Masterminds/semver/v3`; the custom range
+  parser is gone. The public behavior is unchanged, with one range syntax and
+  strict rejection of malformed operators.
+- The release workflow runs the same gate as CI: `gofmt`, `go vet`,
+  `go mod verify` and `go test -race`, not only `go test`.
+
+### Removed
+
+- The `--no-policy` bypass on `install` and `upgrade`. A policy change is a
+  reviewed file change; CI and local commands enforce the same file.
+
 ## 1.1.0 (2026-11-08)
 
 This release turns `also` from an installer into a control plane: it can now

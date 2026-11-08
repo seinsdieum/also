@@ -44,14 +44,28 @@ type AuditPackage struct {
 }
 
 type AuditSummary struct {
-	Packages    int `json:"packages"`
-	Files       int `json:"files"`
-	Missing     int `json:"missing"`
-	Modified    int `json:"modified"`
-	Shared      int `json:"shared"`
-	Executables int `json:"executables"`
-	Findings    int `json:"findings"`
-	Failures    int `json:"failures"`
+	Packages     int `json:"packages"`
+	Files        int `json:"files"`
+	Missing      int `json:"missing"`
+	Modified     int `json:"modified"`
+	Shared       int `json:"shared"`
+	Executables  int `json:"executables"`
+	LockEntries  int `json:"lock_entries"`
+	LockVerified int `json:"lock_verified"`
+	Findings     int `json:"findings"`
+	Failures     int `json:"failures"`
+}
+
+// AuditLock describes the project lockfile as seen by audit. The lockfile is
+// the committed root of trust; state is only the local cache of what was
+// written on this machine.
+type AuditLock struct {
+	File     string `json:"file"`
+	Exists   bool   `json:"exists"`
+	InGit    bool   `json:"in_git,omitempty"`
+	Tracked  bool   `json:"tracked,omitempty"`
+	Entries  int    `json:"entries"`
+	Verified int    `json:"verified"`
 }
 
 type AuditReport struct {
@@ -62,11 +76,14 @@ type AuditReport struct {
 	Packages    []AuditPackage `json:"packages"`
 	Findings    []AuditFinding `json:"findings"`
 	Summary     AuditSummary   `json:"summary"`
+	Lock        *AuditLock     `json:"lock,omitempty"`
 	PolicyFile  string         `json:"policy_file,omitempty"`
 }
 
 // Audit builds the report for one project (or every tracked install with all).
-func Audit(st *State, project string, all bool) (*AuditReport, error) {
+// requireLock makes a missing, untracked or unverifiable lockfile a failure;
+// "audit --ci" sets it.
+func Audit(st *State, project string, all, requireLock bool) (*AuditReport, error) {
 	if st == nil {
 		return nil, fmt.Errorf("no install state")
 	}
@@ -75,6 +92,39 @@ func Audit(st *State, project string, all bool) (*AuditReport, error) {
 		return nil, err
 	}
 	report := &AuditReport{Schema: SchemaAudit, Project: abs, All: all, GeneratedAt: time.Now().UTC()}
+	lock, lockExists, lockInGit, lockTracked, err := loadAuditLock(abs)
+	if err != nil {
+		return nil, err
+	}
+	report.Lock = &AuditLock{
+		File: LockfilePath(abs), Exists: lockExists, InGit: lockInGit,
+		Tracked: lockTracked, Entries: len(lock.Packages),
+	}
+	if !lockExists {
+		severity := "warn"
+		if requireLock {
+			severity = "fail"
+		}
+		report.Findings = append(report.Findings, AuditFinding{
+			Severity: severity, Code: "lock-missing",
+			Detail: "also.lock is the committed source of truth; run also install to create it and commit it",
+		})
+	} else if lockInGit && !lockTracked {
+		severity := "warn"
+		if requireLock {
+			severity = "fail"
+		}
+		report.Findings = append(report.Findings, AuditFinding{
+			Severity: severity, Code: "lock-untracked",
+			Detail: "also.lock exists but is not tracked by git; commit it so CI and other machines share the pins",
+		})
+	}
+	type lockKey struct{ pkg, harness string }
+	locked := map[lockKey]LockEntry{}
+	for _, entry := range lock.Packages {
+		locked[lockKey{entry.Package, entry.Harness}] = entry
+	}
+	projectInstalls := map[lockKey]*Install{}
 	policies := map[string]*Policy{}
 	for idx := range st.Installs {
 		in := &st.Installs[idx]
@@ -88,6 +138,9 @@ func Audit(st *State, project string, all bool) (*AuditReport, error) {
 			Label: in.Label, Harness: in.Harness, SourceHarness: in.SourceHarness,
 			Project: in.Project, Parts: in.Parts, InstalledAt: in.InstalledAt,
 			Files: len(in.Files), Executables: in.Executables,
+		}
+		if filepath.Clean(in.Project) == filepath.Clean(abs) {
+			projectInstalls[lockKey{in.Package, in.Harness}] = in
 		}
 		add := func(severity, code, path, detail string) {
 			report.Findings = append(report.Findings, AuditFinding{
@@ -173,6 +226,67 @@ func Audit(st *State, project string, all bool) (*AuditReport, error) {
 		}
 		report.Packages = append(report.Packages, ap)
 	}
+	if lockExists {
+		addLockFinding := func(severity, code, pkg, harness, detail string) {
+			report.Findings = append(report.Findings, AuditFinding{
+				Severity: severity, Code: code, Package: pkg, Harness: harness, Detail: detail,
+			})
+		}
+		for key, entry := range locked {
+			if err := entry.CheckEntry(); err != nil {
+				addLockFinding("fail", "lock-invalid", entry.Package, entry.Harness, err.Error())
+				continue
+			}
+			in := projectInstalls[key]
+			if in == nil {
+				addLockFinding("fail", "lock-not-installed", entry.Package, entry.Harness,
+					"lockfile pins this package but it is not installed in this directory; run: also install --frozen")
+				continue
+			}
+			matches := true
+			if in.Version != entry.Version {
+				matches = false
+				addLockFinding("fail", "lock-version-mismatch", entry.Package, entry.Harness,
+					"installed "+in.Version+" but also.lock pins "+entry.Version)
+			}
+			if entry.Digest == "" {
+				severity := "warn"
+				if requireLock {
+					severity = "fail"
+				}
+				matches = false
+				addLockFinding(severity, "lock-digest-missing", entry.Package, entry.Harness,
+					"also.lock has no full digest; reinstall to record it")
+			} else if in.Digest != entry.Digest {
+				matches = false
+				addLockFinding("fail", "lock-digest-mismatch", entry.Package, entry.Harness,
+					"installed digest "+in.Digest+" but also.lock pins "+entry.Digest)
+			}
+			if in.Set != entry.Namespace {
+				matches = false
+				addLockFinding("fail", "lock-namespace-mismatch", entry.Package, entry.Harness,
+					"installed from "+in.Set+" but also.lock pins "+entry.Namespace)
+			}
+			if !sameStringSet(in.Parts, entry.Parts) || in.WithConfig != entry.WithConfig {
+				addLockFinding("warn", "lock-config-mismatch", entry.Package, entry.Harness,
+					"installed parts or config selection differ from also.lock")
+			}
+			if matches {
+				report.Lock.Verified++
+			}
+		}
+		for key, in := range projectInstalls {
+			if _, ok := locked[key]; ok {
+				continue
+			}
+			severity := "warn"
+			if requireLock {
+				severity = "fail"
+			}
+			addLockFinding(severity, "lock-extra", in.Package, in.Harness,
+				"installed but not pinned in also.lock; run also install to record it")
+		}
+	}
 	sort.Slice(report.Packages, func(i, j int) bool {
 		a, b := report.Packages[i], report.Packages[j]
 		if a.Project != b.Project {
@@ -203,8 +317,36 @@ func Audit(st *State, project string, all bool) (*AuditReport, error) {
 	return report, nil
 }
 
+// loadAuditLock reports whether the lock exists and whether git tracks it.
+// A project outside git still has a lock; it simply cannot be "tracked".
+func loadAuditLock(project string) (*Lockfile, bool, bool, bool, error) {
+	path := LockfilePath(project)
+	exists := false
+	if _, err := os.Stat(path); err == nil {
+		exists = true
+	} else if !os.IsNotExist(err) {
+		return nil, false, false, false, err
+	}
+	lock, err := LoadLock(project)
+	if err != nil {
+		return nil, false, false, false, err
+	}
+	inGit, tracked := false, false
+	if _, err := GitProjectRoot(project); err == nil {
+		inGit = true
+		if _, err := runGit(project, "ls-files", "--error-unmatch", "--", LockFile); err == nil {
+			tracked = true
+		}
+	}
+	return lock, exists, inGit, tracked, nil
+}
+
 func (r *AuditReport) Summarize() {
 	r.Summary = AuditSummary{}
+	if r.Lock != nil {
+		r.Summary.LockEntries = r.Lock.Entries
+		r.Summary.LockVerified = r.Lock.Verified
+	}
 	for _, p := range r.Packages {
 		r.Summary.Packages++
 		r.Summary.Files += p.Files
@@ -230,6 +372,25 @@ func (r *AuditReport) Components() []SBOMComponent {
 		})
 	}
 	return out
+}
+
+func sameStringSet(a, b []string) bool {
+	as, bs := map[string]bool{}, map[string]bool{}
+	for _, s := range a {
+		as[s] = true
+	}
+	for _, s := range b {
+		bs[s] = true
+	}
+	if len(as) != len(bs) {
+		return false
+	}
+	for s := range as {
+		if !bs[s] {
+			return false
+		}
+	}
+	return true
 }
 
 func executableKinds(execs []Executable) []string {
