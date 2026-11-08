@@ -225,10 +225,11 @@ or digest differs, when an install is missing from the lock, and when an
 installed file, managed instruction block or managed config file is tracked by
 git (`infra-tracked`, `block-tracked`, `config-tracked`), or when a tracked file
 sits under a harness component directory without being owned by an install, or
-was managed by a previous install and is no longer owned (`stale-infra`).
-Those findings make the artifact-free rule a CI invariant instead of a
-`.gitignore` convention. This includes a stale root `.mcp.json` left behind by
-a modified reshape.
+was managed by a previous install and is no longer owned, or is a config file
+for a harness that is not installed (`stale-infra`). Those findings make the
+artifact-free rule a CI invariant instead of a `.gitignore` convention. This
+includes a stale root `.mcp.json` left behind by a modified reshape or a failed
+uninstall.
 `--strict` exits 1 on any warning or failure; shared identical files, blocks
 and config entries are informational and do not fail it. `drift` prints only
 the differences.

@@ -115,7 +115,7 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 		}
 		return nil, set, fmt.Errorf("package %s has no components installable for %s", pkg.Meta.Name, req.Harness)
 	}
-	if err := ApplyConfigOrigins(project, plan.Edits, plan.Block); err != nil {
+	if err := ApplyConfigOrigins(st, project, plan.Edits, plan.Block); err != nil {
 		return nil, set, err
 	}
 	if err := ApplyPlan(st, plan, opts); err != nil {
@@ -558,7 +558,7 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			failed = true
 			continue
 		}
-		if err := ApplyConfigOrigins(in.Project, plan.Edits, plan.Block); err != nil {
+		if err := ApplyConfigOrigins(st, in.Project, plan.Edits, plan.Block); err != nil {
 			res.Err = err
 			out = append(out, res)
 			failed = true
@@ -591,7 +591,7 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 				backOpts.OldHarness = target.ID
 				backPlan, berr := BuildPlan(st, a.repo, a.pkg, a.version, a.in.Harness, a.in.Scope, a.in.Project, backOpts)
 				if berr == nil && planHasChanges(backPlan) {
-					if cerr := ApplyConfigOrigins(a.in.Project, backPlan.Edits, backPlan.Block); cerr == nil {
+					if cerr := ApplyConfigOrigins(st, a.in.Project, backPlan.Edits, backPlan.Block); cerr == nil {
 						if aerr := ApplyPlan(st, backPlan, backOpts); aerr == nil {
 							_ = MergeConfigOrigins(a.in.Project, backPlan.Edits, backPlan.Block)
 						}

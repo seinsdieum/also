@@ -9,7 +9,12 @@
   `.mcp.json` left after a modified reshape.
 - A forced reinstall after a manually recreated old-harness config starts a
   new ownership epoch: the current user value becomes the base, so the next
-  uninstall restores it instead of deleting it.
+  uninstall restores it instead of deleting it. Deleting the key or file is
+  also a new epoch (absence is preserved), not a reason to resurrect the old
+  package value.
+- `stale-infra` also catches a tracked config file for a harness that is not
+  installed, even after uninstall/origin cleanup, and no longer duplicates the
+  finding for a file a current install owns.
 
 ## 1.4.1 (2026-11-08)
 

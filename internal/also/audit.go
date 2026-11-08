@@ -209,6 +209,19 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 			bases = append(bases, in.Project)
 		}
 	}
+	installedByBase := map[string]map[string]bool{}
+	for _, base := range bases {
+		installedByBase[base] = map[string]bool{}
+	}
+	for idx := range st.Installs {
+		in := &st.Installs[idx]
+		for _, base := range bases {
+			rel, err := filepath.Rel(base, in.Project)
+			if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+				installedByBase[base][in.Harness] = true
+			}
+		}
+	}
 	originSets := map[string]map[string]bool{}
 	originFiles := func(project string) map[string]bool {
 		if set, ok := originSets[project]; ok {
@@ -239,8 +252,28 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		seen[key] = true
 		out = append(out, AuditFinding{Severity: severity, Code: code, Path: path, Detail: detail})
 	}
+	managed := func(path string) bool {
+		key := PathKey(path)
+		for idx := range st.Installs {
+			in := &st.Installs[idx]
+			for _, f := range in.Files {
+				if PathKey(f.Path) == key {
+					return true
+				}
+			}
+			if in.Block != nil && PathKey(in.Block.File) == key {
+				return true
+			}
+			for _, e := range in.Edits {
+				if PathKey(e.File) == key {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for path := range tracked {
-		if len(st.ownersOf(path)) > 0 {
+		if managed(path) {
 			continue
 		}
 		rel, err := filepath.Rel(root, path)
@@ -248,11 +281,24 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 			continue
 		}
 		for _, base := range bases {
-			if baseRel, berr := filepath.Rel(base, path); berr == nil &&
-				baseRel != ".." && !strings.HasPrefix(baseRel, ".."+string(filepath.Separator)) {
-				if originFiles(base)[filepath.ToSlash(baseRel)] {
-					add("stale-infra", path, "tracked file was managed by a previous install and is no longer owned; remove it or run also exclude infra")
-					break
+			baseRel, berr := filepath.Rel(base, path)
+			if berr != nil || baseRel == ".." || strings.HasPrefix(baseRel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			relSlash := filepath.ToSlash(baseRel)
+			if originFiles(base)[relSlash] {
+				add("stale-infra", path, "tracked file was managed by a previous install and is no longer owned; remove it or run also exclude infra")
+				break
+			}
+			for _, h := range Harnesses() {
+				if installedByBase[base][h.ID] {
+					continue
+				}
+				for _, cfg := range []string{h.Project.MCP, h.Project.Settings, h.Project.HooksJSON} {
+					if cfg != "" && relSlash == filepath.ToSlash(cfg) {
+						add("stale-infra", path, "tracked config belongs to a harness that is not installed; remove it or run also exclude infra")
+						break
+					}
 				}
 			}
 		}

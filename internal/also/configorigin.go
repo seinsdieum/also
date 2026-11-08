@@ -106,7 +106,25 @@ func PrepareKnownConfigOrigins(st *State, project string) {
 // ApplyConfigOrigins restores the original base and block provenance onto a
 // plan before ApplyPlan, which is what makes frozen replay after state loss
 // reversible.
-func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) error {
+func configPathOwned(st *State, project, file string, path []string) bool {
+	if st == nil {
+		return false
+	}
+	rel := relProjectFile(project, file)
+	if rel == "" {
+		return false
+	}
+	for idx := range st.Installs {
+		for _, e := range st.Installs[idx].Edits {
+			if e.Kind == "json-set" && relProjectFile(project, e.File) == rel && stringSliceEqual(e.Path, path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ApplyConfigOrigins(st *State, project string, edits []ConfigEdit, block *BlockEdit) error {
 	if project == "" {
 		return nil
 	}
@@ -136,16 +154,28 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 			continue
 		}
 		origin := &f.Entries[idx]
-		if cur, exists := currentJSONValue(e.File, e.Path); exists {
-			matchesManaged := jsonEqual(cur, origin.Managed)
-			matchesBase := origin.BaseSet && !origin.Absent && jsonEqual(cur, origin.Value)
-			if !matchesManaged && !matchesBase {
-				// A new ownership epoch: the file was recreated or edited
-				// while no install owned it. That value becomes the base.
-				origin.BaseSet = true
-				origin.Absent = false
-				origin.Value = append(json.RawMessage{}, cur...)
-				changed = true
+		if !configPathOwned(st, project, e.File, e.Path) {
+			cur, exists, fileOK := currentJSONState(e.File, e.Path)
+			if fileOK {
+				switch {
+				case exists:
+					matchesManaged := jsonEqual(cur, origin.Managed)
+					matchesBase := origin.BaseSet && !origin.Absent && jsonEqual(cur, origin.Value)
+					if !matchesManaged && !matchesBase {
+						// A new ownership epoch: the file was recreated or
+						// edited while no install owned it.
+						origin.BaseSet = true
+						origin.Absent = false
+						origin.Value = append(json.RawMessage{}, cur...)
+						changed = true
+					}
+				case !(origin.BaseSet && origin.Absent):
+					// The user deleted the key; absence is the new base.
+					origin.BaseSet = true
+					origin.Absent = true
+					origin.Value = nil
+					changed = true
+				}
 			}
 		}
 		e.BaseSet = true
@@ -167,16 +197,20 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 	return nil
 }
 
-func currentJSONValue(file string, path []string) (json.RawMessage, bool) {
+func currentJSONState(file string, path []string) (json.RawMessage, bool, bool) {
 	data, err := os.ReadFile(file)
 	if err != nil {
-		return nil, false
+		if os.IsNotExist(err) {
+			return nil, false, true
+		}
+		return nil, false, false
 	}
 	doc, err := ParseJSONC(data)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
-	return doc.RawAt(path...)
+	raw, ok := doc.RawAt(path...)
+	return raw, ok, true
 }
 
 // CleanupConfigOrigins drops origin entries for paths and files that no

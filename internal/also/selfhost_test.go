@@ -291,6 +291,95 @@ func TestAuditFindsStaleOtherHarnessConfig(t *testing.T) {
 	t.Fatalf("stale other-harness config was not reported: %+v", report.Findings)
 }
 
+func TestAuditDoesNotFlagUserOwnedConfig(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, ".opencode", "skills", "s", "SKILL.md"), "---\nname: s\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"mine":true}`)
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", "opencode.json"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" && strings.HasSuffix(f.Path, "opencode.json") {
+			t.Fatalf("user-owned config was flagged: %+v", report.Findings)
+		}
+	}
+}
+
+func TestAuditFindsStaleConfigAfterUninstall(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	claude := filepath.Join(tmp, "claude")
+	writeFile(t, filepath.Join(claude, "CLAUDE.md"), "rules\n")
+	writeFile(t, filepath.Join(claude, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo"}}}`)
+	if _, err := repo.Push(claude, PushOptions{Name: "c", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	oc := filepath.Join(tmp, "oc")
+	writeFile(t, filepath.Join(oc, ".opencode", "skills", "s", "SKILL.md"), "---\nname: s\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(oc, PushOptions{Name: "o", Harness: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "claude", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "o", Harness: "opencode", Project: project}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo","args":["user"]}}}`)
+	st, _ := LoadState()
+	var claudeIn *Install
+	for _, in := range st.InstallsOf("c") {
+		claudeIn = in
+	}
+	if _, err := Uninstall(st, claudeIn, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".mcp.json")); err != nil {
+		t.Fatalf("setup should leave the modified config: %v", err)
+	}
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", ".mcp.json"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ = LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" && strings.HasSuffix(f.Path, ".mcp.json") {
+			return
+		}
+	}
+	t.Fatalf("stale config after uninstall was not reported: %+v", report.Findings)
+}
+
 func TestAuditFindsStaleOtherHarnessDirectory(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -653,6 +742,51 @@ func TestUserEditAfterStateLossNeedsForce(t *testing.T) {
 	}
 	if !strings.Contains(string(mustReadTestFile(t, filepath.Join(project, "opencode.json"))), "mine") {
 		t.Fatal("the user edit was lost")
+	}
+}
+
+func TestReinstallAfterManualDeletionKeepsAbsence(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	var target *Install
+	for _, in := range st.InstallsOf("p") {
+		if in.Harness == "opencode" {
+			target = in
+		}
+	}
+	if target == nil {
+		t.Fatal("opencode install missing")
+	}
+	if _, err := Uninstall(st, target, false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.RawAt("default_agent"); ok {
+		t.Fatalf("uninstall resurrected a deleted key: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
 	}
 }
 
