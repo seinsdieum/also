@@ -84,6 +84,9 @@ Advanced or plumbing commands remain callable but are hidden from `--help`:
 - The policy chain stops at a real git root, not at a directory that merely
   contains an empty `.git`. `audit --json` reports the policy file that was
   actually loaded.
+- A namespace clone whose remote `HEAD` points at an unpushed branch now
+  checks out the real package branch, so `audit --verify` sees the packages
+  instead of an empty worktree.
 - `audit` fails closed on an unreadable tracked harness config, accepts a UTF-8
   BOM like the harnesses do, uses the last duplicate JSON key like standard
   parsers, and compares config/instruction names case-insensitively so a
