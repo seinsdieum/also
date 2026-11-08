@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -91,7 +92,7 @@ func PolicyFiles(project string) []string {
 		if _, statErr := os.Stat(path); statErr == nil {
 			out = append(out, path)
 		}
-		if _, statErr := os.Stat(filepath.Join(cur, ".git")); statErr == nil {
+		if _, statErr := os.Stat(filepath.Join(cur, ".git")); statErr == nil && isGitRoot(cur) {
 			break
 		}
 		parent := filepath.Dir(cur)
@@ -100,6 +101,20 @@ func PolicyFiles(project string) []string {
 		}
 	}
 	return out
+}
+
+// isGitRoot confirms that dir is a real repository root, not merely a
+// directory that happens to contain an empty .git entry.
+func isGitRoot(dir string) bool {
+	out, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return false
+	}
+	abs, err := AbsPath(dir)
+	if err != nil {
+		return false
+	}
+	return PathKey(strings.TrimSpace(out)) == PathKey(abs)
 }
 
 // PolicyPath is the nearest policy file, used for display and signing.

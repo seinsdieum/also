@@ -688,7 +688,8 @@ func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error
 		}
 		for i := range st.Installs {
 			in := &st.Installs[i]
-			if in.Package != r.Install.Package || in.Harness != r.Install.Harness {
+			if in.Package != r.Install.Package || in.Harness != r.Install.Harness ||
+				in.Set != r.Install.Set || in.Scope != r.Install.Scope {
 				continue
 			}
 			if also.PathKey(in.Project) != also.PathKey(project) {

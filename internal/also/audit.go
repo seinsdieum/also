@@ -235,18 +235,39 @@ func configHasExecutable(path string) bool {
 	nonEmpty := func(raw []byte) bool {
 		return !jsonEqual(raw, []byte("{}")) && !jsonEqual(raw, []byte("[]")) && string(raw) != "null"
 	}
-	// Decide from the most specific MCP path only. A parent {"mcp":{"servers":{}}}
-	// must not look executable just because the parent object exists.
+	// Check every specific MCP spelling. An empty mcp.servers must not hide a
+	// non-empty mcpServers or mcp_servers sibling, and the parent mcp object is
+	// only a fallback when no specific key exists.
+	foundSpecific := false
 	for _, path := range [][]string{{"mcp", "servers"}, {"mcpServers"}, {"mcp_servers"}} {
 		if raw, ok := doc.RawAt(path...); ok {
+			foundSpecific = true
+			if nonEmpty(raw) {
+				return true
+			}
+		}
+	}
+	if !foundSpecific {
+		if raw, ok := doc.RawAt("mcp"); ok {
 			return nonEmpty(raw)
 		}
 	}
-	if raw, ok := doc.RawAt("mcp"); ok {
-		return nonEmpty(raw)
-	}
 	for _, path := range [][]string{{"hooks"}, {"plugins"}, {"commands"}} {
 		if raw, ok := doc.RawAt(path...); ok && nonEmpty(raw) {
+			return true
+		}
+	}
+	return false
+}
+
+func underHarnessRoot(path, root string, roots map[string]bool) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if roots[parts[i]] {
 			return true
 		}
 	}
@@ -267,10 +288,16 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	}
 	roots := harnessRootNames()
 	instructions := instructionNames()
-	configNames := map[string]bool{}
+	specificConfig := map[string]bool{}
+	genericConfig := map[string]bool{}
 	for _, h := range Harnesses() {
 		for cfg := range harnessConfigPaths(h) {
-			configNames[filepath.Base(cfg)] = true
+			base := filepath.Base(cfg)
+			if base == ".mcp.json" || strings.HasPrefix(base, "opencode.") {
+				specificConfig[base] = true
+			} else {
+				genericConfig[base] = true
+			}
 		}
 	}
 	var out []AuditFinding
@@ -311,7 +338,10 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		if configNames[filepath.Base(path)] && configHasExecutable(path) {
+		base := filepath.Base(path)
+		if specificConfig[base] && configHasExecutable(path) {
+			add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
+		} else if genericConfig[base] && configHasExecutable(path) && underHarnessRoot(path, root, roots) {
 			add("stale-infra", path, "tracked harness config defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -476,7 +506,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 				policies[in.Project] = p
 			}
 			if p != nil {
-				report.PolicyFile = filepath.Join(in.Project, PolicyFile)
+				report.PolicyFile = PolicyPath(in.Project)
 				status, ok := policyStatus[in.Project]
 				if !ok {
 					var verr error

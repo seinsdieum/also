@@ -75,3 +75,12 @@ Advanced or plumbing commands remain callable but are hidden from `--help`:
   crashed lock after 10 minutes instead of blocking for 30.
 - `push --allow-empty` works on a truly empty source, and empty collections in
   JSON output are `[]`, not `null`.
+- A multi-namespace upgrade refreshes only the namespace/harness/scope that
+  actually advanced, so a sibling install keeps its own constraint.
+- `audit` checks every MCP spelling; an empty `mcp.servers` no longer hides a
+  non-empty `mcpServers` or `mcp_servers` block. Generic config names such as
+  `settings.json` are flagged only under a harness directory, so a product's
+  own `web/settings.json` is not mistaken for infrastructure.
+- The policy chain stops at a real git root, not at a directory that merely
+  contains an empty `.git`. `audit --json` reports the policy file that was
+  actually loaded.

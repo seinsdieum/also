@@ -307,10 +307,11 @@ func TestAuditDoesNotFlagUserOwnedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(project, "opencode.json"), `{"mine":true,"mcp":{"servers":{}}}`)
+	writeFile(t, filepath.Join(project, "web", "settings.json"), `{"hooks":{"predeploy":"npm run build"}}`)
 	if out, err := runGit(project, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	if out, err := runGit(project, "add", "-f", "opencode.json"); err != nil {
+	if out, err := runGit(project, "add", "-f", "opencode.json", "web/settings.json"); err != nil {
 		t.Fatalf("git add: %v %s", err, out)
 	}
 	st, _ := LoadState()
@@ -319,7 +320,7 @@ func TestAuditDoesNotFlagUserOwnedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range report.Findings {
-		if f.Code == "stale-infra" && strings.HasSuffix(f.Path, "opencode.json") {
+		if f.Code == "stale-infra" && (strings.HasSuffix(f.Path, "opencode.json") || strings.HasSuffix(f.Path, "web/settings.json")) {
 			t.Fatalf("user-owned config was flagged: %+v", report.Findings)
 		}
 	}
@@ -441,9 +442,10 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 	}
 	// A tracked OpenCode config is executable surface even though OpenCode is
 	// not the installed harness. The .jsonc spelling must be covered too.
-	for _, name := range []string{".mcp.json", "opencode.jsonc"} {
-		writeFile(t, filepath.Join(project, name), `{"mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
-	}
+	writeFile(t, filepath.Join(project, ".mcp.json"), `{"mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
+	// An empty mcp.servers must not hide a non-empty mcpServers sibling.
+	writeFile(t, filepath.Join(project, "opencode.jsonc"), `{"mcp":{"servers":{}},"mcpServers":{"x":{"command":"/bin/echo"}}}`)
+	writeFile(t, filepath.Join(project, ".claude", "settings.json"), `{"hooks":{"PreToolUse":[{"command":"/bin/echo"}]}}`)
 	nested := filepath.Join(project, "sub")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -452,7 +454,7 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 	if out, err := runGit(project, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc", "sub/.mcp.json"); err != nil {
+	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc", ".claude/settings.json", "sub/.mcp.json"); err != nil {
 		t.Fatalf("git add: %v %s", err, out)
 	}
 	st, _ := LoadState()
@@ -466,7 +468,7 @@ func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
 			paths[filepath.ToSlash(f.Path)] = true
 		}
 	}
-	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/sub/.mcp.json"} {
+	for _, suffix := range []string{"/.mcp.json", "/opencode.jsonc", "/.claude/settings.json", "/sub/.mcp.json"} {
 		found := false
 		for path := range paths {
 			if strings.HasSuffix(path, suffix) {
@@ -1303,6 +1305,10 @@ func TestRootPolicyProtectsNestedProject(t *testing.T) {
 	writeFile(t, filepath.Join(root, "also.policy.yml"), "schema: also.policy/v1\npackages:\n  deny: [p]\n")
 	// A permissive nested policy must not disable the root deny.
 	writeFile(t, filepath.Join(project, "also.policy.yml"), "schema: also.policy/v1\n")
+	// An empty .git directory is not a repository boundary.
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "claude", Project: project}, "", ""); err == nil {
 		t.Fatal("nested project ignored the root policy")
 	}
