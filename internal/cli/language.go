@@ -155,8 +155,11 @@ func runIgnore(args []string, add bool) error {
 			return err
 		}
 	}
+	existing, _ := also.IgnoreBlockEntries(dir, spec.Kind)
+	effectiveAdd := add
 	var entries []string
 	if add {
+		var added []string
 		if spec.Kind == also.IgnoreInfra {
 			harnesses := spec.Harnesses
 			if len(harnesses) == 0 {
@@ -165,13 +168,31 @@ func runIgnore(args []string, add bool) error {
 					return err
 				}
 			}
-			entries = also.InfraIgnoreEntries(harnesses)
+			added = also.InfraIgnoreEntries(harnesses)
 		} else {
-			entries = also.AlsoIgnoreEntries()
+			added = also.AlsoIgnoreEntries()
+		}
+		// A scoped exclude merges with the other harnesses in the shared
+		// block; it must never drop a still-installed harness's entries.
+		entries = also.UniqueStrings(append(existing, added...))
+	} else if spec.Kind == also.IgnoreInfra && len(spec.Harnesses) > 0 {
+		remove := map[string]bool{}
+		for _, e := range also.InfraIgnoreEntries(spec.Harnesses) {
+			remove[e] = true
+		}
+		for _, e := range existing {
+			if !remove[e] {
+				entries = append(entries, e)
+			}
+		}
+		if len(entries) == 0 {
+			effectiveAdd = false
+		} else {
+			effectiveAdd = true
 		}
 	}
 	return withLock(func() error {
-		changed, err := also.UpdateGitIgnore(dir, spec.Kind, add, entries)
+		changed, err := also.UpdateGitIgnore(dir, spec.Kind, effectiveAdd, entries)
 		if err != nil {
 			return err
 		}

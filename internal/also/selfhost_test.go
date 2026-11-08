@@ -205,6 +205,84 @@ func TestAuditFindsStaleHarnessFiles(t *testing.T) {
 	t.Fatalf("stale harness file was not reported: %+v", report.Findings)
 }
 
+func TestAuditFindsStaleFilesWithEmptyLock(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".opencode", "skills", "local", "SKILL.md"), "local\n")
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", ".opencode/skills/local/SKILL.md"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveLock(project, &Lockfile{}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" {
+			return
+		}
+	}
+	t.Fatalf("stale file with an empty lock was not reported: %+v", report.Findings)
+}
+
+func TestAuditFindsStaleNestedProject(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(tmp, "mono")
+	project := filepath.Join(root, "sub")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runGit(root, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".opencode", "skills", "local", "SKILL.md"), "local\n")
+	if out, err := runGit(root, "add", "-f", "sub/.opencode/skills/local/SKILL.md"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" {
+			return
+		}
+	}
+	t.Fatalf("nested stale harness file was not reported: %+v", report.Findings)
+}
+
 func TestAuditFindsConstraintMismatch(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -438,6 +516,44 @@ func TestIdenticalFilesAreAdoptedAfterStateLoss(t *testing.T) {
 	}
 	if _, err := Uninstall(st, &st.Installs[0], false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReshapePreflightLeavesNothingHalfMigrated(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	for _, name := range []string{"a1", "a2"} {
+		bundle := filepath.Join(tmp, name)
+		writeFile(t, filepath.Join(bundle, ".opencode", "agents", name+".md"), "---\ndescription: d\nmode: primary\n---\nbody\n")
+		if _, err := repo.Push(bundle, PushOptions{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a1", "a2"} {
+		if _, _, err := InstallPackage(cfg, InstallRequest{Package: name, Harness: "opencode", Project: project}, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A pre-existing target file for the second package makes the preflight
+	// fail; the first package must not be migrated.
+	writeFile(t, filepath.Join(project, ".claude", "agents", "a2.md"), "conflict\n")
+	st, _ := LoadState()
+	results, err := Reshape(cfg, st, "claude", project, false, nil, false)
+	if err == nil {
+		t.Fatalf("expected a preflight failure: %+v", results)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "agents", "a1.md")); !os.IsNotExist(err) {
+		t.Fatalf("reshape applied a1 before failing a2: %v", err)
+	}
+	st, _ = LoadState()
+	for _, in := range st.Installs {
+		if in.Project != "" && in.Harness == "claude" {
+			t.Fatalf("state was mutated by a failed preflight: %+v", in)
+		}
 	}
 }
 

@@ -162,6 +162,16 @@ func harnessComponentDirs(h *Harness) []string {
 			dirs = append(dirs, c.ProjectDir)
 		}
 	}
+	for _, d := range append(append([]string{}, dirs...), h.ExtraBase) {
+		d = strings.TrimSuffix(filepath.ToSlash(d), "/")
+		if d == "" || d == "." {
+			continue
+		}
+		if i := strings.IndexByte(d, '/'); i > 0 {
+			d = d[:i]
+		}
+		dirs = append(dirs, d)
+	}
 	return dirs
 }
 
@@ -177,41 +187,64 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	if requireLock {
 		severity = "fail"
 	}
-	var out []AuditFinding
-	for path := range tracked {
-		rel, err := filepath.Rel(root, path)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	var installs []*Install
+	for idx := range st.Installs {
+		in := &st.Installs[idx]
+		if in.Project == "" || in.Harness == "" {
 			continue
 		}
-		rel = filepath.ToSlash(rel)
+		rel, err := filepath.Rel(root, in.Project)
+		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+			installs = append(installs, in)
+		}
+	}
+	if len(installs) == 0 {
+		// An empty lock can still leave a harness layout behind after
+		// uninstall; use the detected layout as a fallback.
+		if id, err := DetectHarness(root); err == nil {
+			installs = append(installs, &Install{Project: root, Harness: id})
+		}
+	}
+	var out []AuditFinding
+	seen := map[string]bool{}
+	add := func(code, path, harness, detail string) {
+		key := code + "\x00" + path
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, AuditFinding{Severity: severity, Code: code, Harness: harness, Path: path, Detail: detail})
+	}
+	for path := range tracked {
 		if len(st.ownersOf(path)) > 0 {
 			continue
 		}
-		for _, h := range Harnesses() {
+		for _, in := range installs {
+			h, ok := ResolveHarness(in.Harness)
+			if !ok {
+				continue
+			}
+			rel, err := filepath.Rel(in.Project, path)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			rel = filepath.ToSlash(rel)
 			for _, dir := range harnessComponentDirs(h) {
 				dir = strings.TrimSuffix(filepath.ToSlash(dir), "/")
 				if dir == "" || dir == "." {
 					continue
 				}
 				if rel == dir || strings.HasPrefix(rel, dir+"/") {
-					out = append(out, AuditFinding{
-						Severity: severity, Code: "stale-infra", Harness: h.ID, Path: path,
-						Detail: "tracked file is under a harness component directory but is not owned by an install; remove it or run also exclude infra",
-					})
-					goto nextPath
+					add("stale-infra", path, h.ID, "tracked file is under a harness component directory but is not owned by an install; remove it or run also exclude infra")
+					break
 				}
 			}
 			if rel == filepath.ToSlash(h.Project.Instr) {
 				if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
-					out = append(out, AuditFinding{
-						Severity: severity, Code: "block-tracked", Harness: h.ID, Path: path,
-						Detail: "managed instruction block is tracked but not owned by an install; remove the block or untrack the file",
-					})
-					goto nextPath
+					add("block-tracked", path, h.ID, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file")
 				}
 			}
 		}
-	nextPath:
 	}
 	return out
 }
@@ -390,6 +423,11 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 		}
 		report.Packages = append(report.Packages, ap)
 	}
+	if lockExists {
+		if _, ok := trackedCache[abs]; !ok {
+			trackedCache[abs] = gitTrackedPaths(abs)
+		}
+	}
 	for root, tracked := range trackedCache {
 		report.Findings = append(report.Findings, staleInfraFindings(st, root, tracked, requireLock)...)
 	}
@@ -466,6 +504,21 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 				"installed but not pinned in also.lock; run also install to record it")
 		}
 	}
+	// A path can be reported by both the install loop and the stale scan.
+	seenFindings := map[string]bool{}
+	deduped := report.Findings[:0]
+	for _, f := range report.Findings {
+		key := f.Code + "\x00" + f.Path
+		if f.Path == "" {
+			key += "\x00" + f.Package + "\x00" + f.Harness + "\x00" + f.Detail
+		}
+		if seenFindings[key] {
+			continue
+		}
+		seenFindings[key] = true
+		deduped = append(deduped, f)
+	}
+	report.Findings = deduped
 	sort.Slice(report.Packages, func(i, j int) bool {
 		a, b := report.Packages[i], report.Packages[j]
 		if a.Project != b.Project {

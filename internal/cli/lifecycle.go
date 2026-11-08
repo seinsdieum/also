@@ -276,6 +276,37 @@ func configWithLockNamespace(cfg *also.Config, name, remote string) *also.Config
 	return &cp
 }
 
+// checkLockConflicts catches two entries that would write the same config
+// path or destination differently. The apply loop mutates state between
+// entries, so this must be checked before the first write.
+func checkLockConflicts(plans []*also.Plan, force bool) error {
+	if force {
+		return nil
+	}
+	edits := map[string]string{}
+	files := map[string]string{}
+	for _, p := range plans {
+		for _, e := range p.Edits {
+			if e.Kind == "json-append" {
+				continue
+			}
+			key := e.File + "\x00" + strings.Join(e.Path, ".")
+			value := string(e.Value) + "\x00" + e.Block + "\x00" + e.Marker
+			if prev, ok := edits[key]; ok && prev != value {
+				return fmt.Errorf("also.lock entries configure %s (%s) differently; use --force or remove one", e.File, strings.Join(e.Path, "."))
+			}
+			edits[key] = value
+		}
+		for _, f := range p.NewFiles {
+			if prev, ok := files[f.Dest]; ok && prev != string(f.Data) {
+				return fmt.Errorf("also.lock entries write %s differently; use --force or remove one", f.Dest)
+			}
+			files[f.Dest] = string(f.Data)
+		}
+	}
+	return nil
+}
+
 func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool) error {
 	project, err := installProject(dir)
 	if err != nil {
@@ -300,6 +331,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		if err != nil {
 			return err
 		}
+		var plans []*also.Plan
 		for _, entry := range lock.Packages {
 			if err := entry.CheckEntry(); err != nil {
 				return err
@@ -339,6 +371,10 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 			if err := also.CheckPolicyExecutables(policy, plan.Install.Executables); err != nil {
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
 			}
+			plans = append(plans, plan)
+		}
+		if err := checkLockConflicts(plans, force); err != nil {
+			return err
 		}
 		out := make([]installOutput, 0, len(lock.Packages))
 		for _, entry := range lock.Packages {
@@ -744,8 +780,9 @@ func newReshapeCmd() *cobra.Command {
 	c := newCmd("reshape <harness> [package...]", "Re-materialize installed packages for another harness")
 	c.Long = `Transforms installed packages in this project into the layout of another
 harness, keeping the installed version, and updates also.lock so CI can replay
-the new harness. Files are transactional. Use --all only when you really mean
-every project on this machine.`
+the new harness. All packages are preflighted before the first write; each
+package is applied transactionally. Use --all only when you really mean every
+project on this machine.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: also reshape <harness> [package...]")
@@ -765,10 +802,20 @@ every project on this machine.`
 				return err
 			}
 		}
-		if !all {
-			if err := preflightIgnoreUpdate(proj); err != nil {
+		if all {
+			pre, err := also.LoadState()
+			if err != nil {
 				return err
 			}
+			for _, in := range pre.Installs {
+				if in.Project != "" {
+					if err := preflightIgnoreUpdate(in.Project); err != nil {
+						return err
+					}
+				}
+			}
+		} else if err := preflightIgnoreUpdate(proj); err != nil {
+			return err
 		}
 		st, err := also.LoadState()
 		if err != nil {
@@ -797,7 +844,7 @@ every project on this machine.`
 				for _, r := range results {
 					item := reshapeOutput{
 						Package: r.Install.Package, From: r.Install.Harness,
-						To: r.To, Status: r.Status,
+						To: r.To, Status: r.Status, Warnings: unique(r.Warnings),
 					}
 					if r.Err != nil {
 						item.Status = "error"
@@ -827,6 +874,14 @@ every project on this machine.`
 			if err := w.Flush(); err != nil {
 				return err
 			}
+			for _, r := range results {
+				if len(r.Warnings) > 0 {
+					fmt.Printf("  %s warnings:\n", r.Install.Package)
+					for _, warning := range unique(r.Warnings) {
+						fmt.Printf("    - %s\n", warning)
+					}
+				}
+			}
 			if failed > 0 {
 				return fmt.Errorf("%d reshape(s) failed", failed)
 			}
@@ -841,11 +896,12 @@ every project on this machine.`
 }
 
 type reshapeOutput struct {
-	Package string `json:"package"`
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Status  string `json:"status"`
-	Error   string `json:"error,omitempty"`
+	Package  string   `json:"package"`
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	Status   string   `json:"status"`
+	Warnings []string `json:"warnings,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 func newTreeCmd() *cobra.Command {

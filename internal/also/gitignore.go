@@ -162,6 +162,36 @@ func UpdateGitIgnoreAt(path string, kind IgnoreKind, add bool, entries []string)
 	return true, atomicWrite(path, []byte(next), mode)
 }
 
+// IgnoreBlockEntries reads the entries of the managed block, so a scoped
+// exclude can merge with other harnesses instead of replacing them.
+func IgnoreBlockEntries(project string, kind IgnoreKind) ([]string, error) {
+	root, err := GitProjectRoot(project)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	content := string(data)
+	start, end, ok := findIgnoreBlock(content, kind)
+	if !ok {
+		return nil, nil
+	}
+	var out []string
+	for _, line := range strings.Split(content[start:end], "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "# also:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return UniqueStrings(out), nil
+}
+
 func findIgnoreBlock(content string, kind IgnoreKind) (start, end int, ok bool) {
 	begin, finish := ignoreBegin(kind), ignoreEnd(kind)
 	bi := strings.Index(content, begin)

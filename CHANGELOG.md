@@ -57,10 +57,14 @@ ownership and harness migration.
   the new harness, unions every harness installed under that root, and removes
   the old harness's files and config edits before writing the new layout.
 - `audit` reports `stale-infra` for tracked files under a harness component
-  directory that no install owns.
-- `install --frozen` preflights destination conflicts and policy executables
-  before writing the first entry.
-- `reshape` refuses a symlinked `.gitignore` before mutating the project.
+  directory (including the harness root) that no install owns, for nested
+  projects and for an empty lock after uninstall.
+- `install --frozen` preflights destination conflicts, cross-entry config
+  conflicts and policy executables before writing the first entry.
+- `reshape` preflights every package before applying any, and checks every
+  project before `--all`; it refuses a symlinked `.gitignore` before mutating.
+- Scoped `exclude infra for <harness>` merges with the shared block instead of
+  replacing it; scoped `include` removes only that harness.
 - `reshape` does not fail after mutation in a checkout without `.git`.
 - OpenCode wildcard/pattern deny rules remove the affected Claude tool instead
   of silently keeping full access.

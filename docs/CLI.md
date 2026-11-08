@@ -262,6 +262,12 @@ also exclude|include infra [for <harness>] [in <dir>]
 also exclude|include you
 ```
 
+`exclude infra for <harness>` merges that harness's paths into the existing
+managed block; it never removes another harness that is still installed.
+`include infra for <harness>` removes only that harness's entries, while
+`include infra` without `for` removes the whole block. The block belongs to the
+git root, so a monorepo keeps one union for all projects under it.
+
 `doctor` and `verify` never change data. They exit non-zero on a failed check.
 `repair` deletes the internal cache clone for a namespace and fetches it again;
 user bundles and installed files are untouched.

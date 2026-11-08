@@ -468,10 +468,11 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 }
 
 type ReshapeResult struct {
-	Install Install
-	To      string
-	Status  string
-	Err     error
+	Install  Install
+	To       string
+	Status   string
+	Warnings []string
+	Err      error
 }
 
 // Reshape moves installed packages to another harness. It is project-scoped by
@@ -504,6 +505,8 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 	}
 	repos := map[string]*SetRepo{}
 	var out []ReshapeResult
+	var steps []reshapeStep
+	failed := false
 	for _, in := range installs {
 		res := ReshapeResult{Install: in, To: target.ID}
 		if in.Harness == target.ID {
@@ -515,12 +518,14 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
+			failed = true
 			continue
 		}
 		pkg, err := repo.LoadPackage(in.Package, in.Version)
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
+			failed = true
 			continue
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
@@ -529,14 +534,27 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		if err != nil {
 			res.Err = err
 			out = append(out, res)
+			failed = true
 			continue
 		}
 		if !planHasChanges(plan) {
 			res.Err = fmt.Errorf("package has no installable components for %s; kept the previous install", target.Display)
 			out = append(out, res)
+			failed = true
 			continue
 		}
-		if err := ApplyPlan(st, plan, opts); err != nil {
+		res.Warnings = plan.Warnings
+		steps = append(steps, reshapeStep{in: in, plan: plan, opts: opts})
+	}
+	if failed {
+		return out, fmt.Errorf("reshape preflight failed; no packages were changed")
+	}
+	if err := reshapePlansConflict(steps, force); err != nil {
+		return out, err
+	}
+	for _, s := range steps {
+		res := ReshapeResult{Install: s.in, To: target.ID, Warnings: s.plan.Warnings}
+		if err := ApplyPlan(st, s.plan, s.opts); err != nil {
 			res.Err = err
 			out = append(out, res)
 			continue
@@ -545,6 +563,40 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		out = append(out, res)
 	}
 	return out, nil
+}
+
+type reshapeStep struct {
+	in   Install
+	plan *Plan
+	opts InstallOptions
+}
+
+func reshapePlansConflict(steps []reshapeStep, force bool) error {
+	if force {
+		return nil
+	}
+	edits := map[string]string{}
+	files := map[string]string{}
+	for _, s := range steps {
+		for _, e := range s.plan.Edits {
+			if e.Kind == "json-append" {
+				continue
+			}
+			key := e.File + "\x00" + strings.Join(e.Path, ".")
+			value := string(e.Value) + "\x00" + e.Block + "\x00" + e.Marker
+			if prev, ok := edits[key]; ok && prev != value {
+				return fmt.Errorf("reshape entries configure %s (%s) differently; use --force or reshape one package", e.File, strings.Join(e.Path, "."))
+			}
+			edits[key] = value
+		}
+		for _, f := range s.plan.NewFiles {
+			if prev, ok := files[f.Dest]; ok && prev != string(f.Data) {
+				return fmt.Errorf("reshape entries write %s differently; use --force or reshape one package", f.Dest)
+			}
+			files[f.Dest] = string(f.Data)
+		}
+	}
+	return nil
 }
 
 type TreeFile struct {
