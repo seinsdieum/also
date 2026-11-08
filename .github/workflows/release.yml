@@ -66,18 +66,22 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: build syft
+        run: |
+          git clone --depth 1 --branch v1.18.0 https://github.com/anchore/syft "${RUNNER_TEMP}/syft-src"
+          (cd "${RUNNER_TEMP}/syft-src" && go build -o "${RUNNER_TEMP}/syft" ./cmd/syft)
       - name: SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: dist
-          format: spdx-json
-          syft-version: v1.18.0
-          output-file: ${{ runner.temp }}/also.spdx.json
-          upload-release-assets: false
+        run: |
+          "${RUNNER_TEMP}/syft" dir:dist -o spdx-json > "${RUNNER_TEMP}/also.spdx.json"
       - name: add SBOM to the release
         run: cp "${RUNNER_TEMP}/also.spdx.json" dist/also.spdx.json
       - name: checksums
