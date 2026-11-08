@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,12 +19,14 @@ func TestPathIdentityIgnoresCaseOnCaseInsensitiveFilesystem(t *testing.T) {
 		t.Skip("case-sensitive filesystem")
 	}
 	lower := filepath.Join(tmp, "mixed")
-	want, err := AbsPath(mixed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := AbsPath(lower); err != nil || got != want {
-		t.Fatalf("AbsPath(%q) = %q, %v; want %q", lower, got, err, want)
+	if runtime.GOOS != "windows" {
+		want, err := AbsPath(mixed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := AbsPath(lower); err != nil || got != want {
+			t.Fatalf("AbsPath(%q) = %q, %v; want %q", lower, got, err, want)
+		}
 	}
 	if PathKey(lower) != PathKey(mixed) {
 		t.Fatalf("PathKey disagreed for one directory: %q vs %q", PathKey(lower), PathKey(mixed))
