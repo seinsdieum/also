@@ -230,7 +230,7 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | `upgrade` | array of package, harness, old, new, status, error |
 | `reshape` | array of package, from, to, status, error |
 | `uninstall` | array of namespace, package, version, harness, warnings |
-| `audit` | schema, project, packages, findings, summary, policy_file |
+| `audit` | schema, project, packages, findings, summary, lock, policy_file |
 | `drift` | schema, project, findings, summary |
 | `policy` | file, exists, namespaces, packages, executables, limits |
 | `search` | query, results with namespace, package, version, description |

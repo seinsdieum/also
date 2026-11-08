@@ -82,8 +82,9 @@ is not.
 
 ### Audit report (`also.audit/v1`)
 
-`also audit --json` prints an inventory with `packages`, `findings`, `summary`
-and optional `policy_file`. Findings have a severity (`fail` or `warn`) and a
+`also audit --json` prints an inventory with `packages`, `findings`, `summary`,
+`lock` (file, exists, tracked, entries, verified) and optional `policy_file`.
+Findings have a severity (`fail` or `warn`) and a
 stable code such as `file-missing`, `file-modified`, `block-missing`,
 `block-modified`, `config-missing`, `config-modified`, `shared-file`,
 `shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
