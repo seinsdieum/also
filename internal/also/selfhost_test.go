@@ -424,6 +424,50 @@ func TestAuditFindsStaleConfigAfterUninstall(t *testing.T) {
 	t.Fatalf("stale config after uninstall was not reported: %+v", report.Findings)
 }
 
+func TestAuditFindsTrackedExecutableConfig(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "CLAUDE.md"), "rules\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "c", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "claude", Project: project}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A tracked OpenCode config is executable surface even though OpenCode is
+	// not the installed harness. The .jsonc spelling must be covered too.
+	for _, name := range []string{".mcp.json", "opencode.jsonc"} {
+		writeFile(t, filepath.Join(project, name), `{"mcp":{"servers":{"x":{"type":"local","command":["/bin/echo","x"]}}}}`)
+	}
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", ".mcp.json", "opencode.jsonc"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]bool{}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" {
+			codes[filepath.Base(f.Path)] = true
+		}
+	}
+	for _, name := range []string{".mcp.json", "opencode.jsonc"} {
+		if !codes[name] {
+			t.Fatalf("tracked executable config %s was not reported: %+v", name, report.Findings)
+		}
+	}
+}
+
 func TestAuditFindsStaleOtherHarnessDirectory(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -687,6 +731,17 @@ func TestPushRefusesPackageWithoutComponents(t *testing.T) {
 	}
 	if _, err := repo.Push(bundle, PushOptions{Name: "empty", Harness: "opencode", AllowEmpty: true}); err != nil {
 		t.Fatalf("allow-empty should publish: %v", err)
+	}
+	// A truly empty source (no files at all) must honor the same flag.
+	trulyEmpty := filepath.Join(tmp, "truly-empty")
+	if err := os.MkdirAll(trulyEmpty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Push(trulyEmpty, PushOptions{Name: "empty2", Harness: "opencode"}); err == nil {
+		t.Fatal("an empty source must be refused by default")
+	}
+	if _, err := repo.Push(trulyEmpty, PushOptions{Name: "empty2", Harness: "opencode", AllowEmpty: true}); err != nil {
+		t.Fatalf("allow-empty should publish an empty source: %v", err)
 	}
 }
 
@@ -1217,6 +1272,69 @@ func TestReshapeKeepsSemver(t *testing.T) {
 	}
 }
 
+func TestRootPolicyProtectsNestedProject(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "CLAUDE.md"), "rules\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(tmp, "mono")
+	project := filepath.Join(root, "product")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runGit(root, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	writeFile(t, filepath.Join(root, "also.policy.yml"), "schema: also.policy/v1\npackages:\n  deny: [p]\n")
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "claude", Project: project}, "", ""); err == nil {
+		t.Fatal("nested project ignored the root policy")
+	}
+	if _, err := os.Stat(filepath.Join(project, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("denied install wrote files: %v", err)
+	}
+}
+
+func TestReshapeEnforcesPolicy(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "also.policy.yml"), "schema: also.policy/v1\npackages:\n  deny: [p]\n")
+	st, _ := LoadState()
+	results, err := Reshape(cfg, st, "claude", project, false, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	for _, r := range results {
+		if r.Err != nil {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("reshape ignored a denying policy: %+v", results)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".opencode", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("failed reshape removed the opencode install: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("failed reshape wrote the target harness: %v", err)
+	}
+}
+
 func TestReshapeRollsBackAppliedPackagesOnWriteFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod-based write failure is not reliable on Windows")
@@ -1308,6 +1426,56 @@ func TestReshapeRemovesOldConfigEdits(t *testing.T) {
 	origins, _ := loadConfigOrigins(project)
 	if len(origins.Entries) != 0 || len(origins.Blocks) != 0 || len(origins.Files) != 0 {
 		t.Fatalf("origins survived the last uninstall: %+v", origins)
+	}
+}
+
+func TestUpgradePolicyIsAtomic(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	makePkg := func(name, body string) {
+		bundle := filepath.Join(tmp, name)
+		writeFile(t, filepath.Join(bundle, "CLAUDE.md"), body)
+		if _, err := repo.Push(bundle, PushOptions{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	makePkg("keep", "keep v1\n")
+	makePkg("deny", "deny v1\n")
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"keep", "deny"} {
+		if _, _, err := InstallPackage(cfg, InstallRequest{Package: name, Harness: "claude", Project: project}, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	makePkg("keep", "keep v2\n")
+	makePkg("deny", "deny v2\n")
+	writeFile(t, filepath.Join(project, "also.policy.yml"), "schema: also.policy/v1\npackages:\n  deny: [deny]\n")
+	st, _ := LoadState()
+	before := map[string]string{}
+	for _, in := range st.InstallsOf("") {
+		before[in.Package] = in.Version
+	}
+	results, err := UpgradeInstalls(cfg, st, nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	for _, r := range results {
+		if r.Err != nil {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("policy denial was not reported: %+v", results)
+	}
+	st, _ = LoadState()
+	for _, name := range []string{"keep", "deny"} {
+		if got := st.InstallsOf(name)[0].Version; got != before[name] {
+			t.Fatalf("%s was upgraded despite a failed preflight: %s -> %s", name, before[name], got)
+		}
 	}
 }
 

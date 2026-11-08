@@ -113,7 +113,7 @@ func (c *Config) ResolveSet(name string) (string, NamespaceConfig, error) {
 		if len(c.Namespaces) == 0 {
 			return "", NamespaceConfig{}, fmt.Errorf("no namespace configured; add one with: also connect <name> <git-url>")
 		}
-		return "", NamespaceConfig{}, fmt.Errorf("no active namespace; run: also use <namespace> (configured: %v)", c.NamespaceNames())
+		return "", NamespaceConfig{}, fmt.Errorf("no active namespace; run: also connect <namespace> (configured: %v)", c.NamespaceNames())
 	}
 	s, ok := c.Namespaces[name]
 	if !ok {

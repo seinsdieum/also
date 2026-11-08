@@ -160,6 +160,8 @@ mkdir -p "$WORK/home-ci"
 	cd "$C"
 	"$ALSO" install --frozen >/dev/null
 	"$ALSO" audit --ci --strict >/dev/null
+	"$ALSO" audit --verify >/dev/null
+	"$ALSO" list --tree >/dev/null
 	# A real major upgrade and harness transition on a lock-only machine.
 	V0=$(python3 -c 'import json;print(json.load(open("also.lock"))["packages"][0]["version"])')
 	"$ALSO" upgrade --major >/dev/null

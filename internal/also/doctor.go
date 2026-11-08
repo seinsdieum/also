@@ -53,7 +53,7 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 		if dirty, status, err := gitDirty(dir); err != nil {
 			add("namespace "+name, "fail", err.Error())
 		} else if dirty {
-			add("namespace "+name, "warn", "cached clone is dirty (run: also repair "+name+"):\n"+status)
+			add("namespace "+name, "warn", "cached clone is dirty (run: also doctor --fix):\n"+status)
 		} else {
 			add("namespace "+name, "ok", ns.Remote)
 		}
@@ -82,7 +82,7 @@ func Doctor(cfg *Config, st *State, refresh bool) []HealthCheck {
 		label := fmt.Sprintf("%s/%s (%s)", in.Set, in.Package, in.Harness)
 		if in.Project != "" {
 			if _, err := os.Stat(in.Project); os.IsNotExist(err) {
-				add("install "+label, "warn", "project directory is gone; run: also prune")
+				add("install "+label, "warn", "project directory is gone; it will be pruned by the next doctor run")
 				continue
 			}
 		}
@@ -135,7 +135,7 @@ func NamespaceNeedsRepair(name string, ns NamespaceConfig) bool {
 
 // Verify checks namespace contents, version tags and state references.
 func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck {
-	var out []HealthCheck
+	out := []HealthCheck{}
 	add := func(name, status, detail string) {
 		out = append(out, HealthCheck{Name: name, Status: status, Detail: detail})
 	}
@@ -163,7 +163,7 @@ func Verify(cfg *Config, st *State, setName string, refresh bool) []HealthCheck 
 		if dirty, status, err := gitDirty(repo.Dir); err != nil {
 			add("namespace "+name, "fail", err.Error())
 		} else if dirty {
-			add("namespace "+name, "warn", "cached clone is dirty (run: also repair "+name+"):\n"+status)
+			add("namespace "+name, "warn", "cached clone is dirty (run: also doctor --fix):\n"+status)
 		}
 		pkgs, err := repo.Packages()
 		if err != nil {

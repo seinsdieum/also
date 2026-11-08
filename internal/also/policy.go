@@ -61,7 +61,31 @@ type PolicyLimits struct {
 
 // LoadPolicy reads project/also.policy.yml. A missing file is not an error.
 func LoadPolicy(project string) (*Policy, error) {
-	return LoadPolicyFile(filepath.Join(project, PolicyFile))
+	return LoadPolicyFile(PolicyPath(project))
+}
+
+// PolicyPath returns the nearest also.policy.yml, from the project up to the
+// git root. A monorepo root policy therefore protects every nested project;
+// a nested project can still carry its own stricter policy.
+func PolicyPath(project string) string {
+	abs, err := AbsPath(project)
+	if err != nil {
+		return filepath.Join(project, PolicyFile)
+	}
+	for cur := abs; ; cur = filepath.Dir(cur) {
+		path := filepath.Join(cur, PolicyFile)
+		if _, statErr := os.Stat(path); statErr == nil {
+			return path
+		}
+		if _, statErr := os.Stat(filepath.Join(cur, ".git")); statErr == nil {
+			break
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+	}
+	return filepath.Join(abs, PolicyFile)
 }
 
 // LoadPolicyFile parses a policy file. A missing file is not an error; any

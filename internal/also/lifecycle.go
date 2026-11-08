@@ -232,13 +232,23 @@ func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []str
 
 func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, major bool) ([]UpgradeResult, error) {
 	repos := map[string]*SetRepo{}
-	var out []UpgradeResult
-	for _, in := range installs {
+	type pending struct {
+		idx        int
+		in         Install
+		repo       *SetRepo
+		latest     VersionInfo
+		constraint string
+	}
+	var todo []pending
+	out := make([]UpgradeResult, len(installs))
+	// Preflight every package before writing anything. A policy denial or
+	// resolution error on package N must not leave packages 1..N-1 upgraded.
+	for i, in := range installs {
 		res := UpgradeResult{Install: in, Old: in.Version}
+		out[i] = res
 		repo, err := upgradeRepo(cfg, &in, repos)
 		if err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		latest, err := repo.Latest(in.Package)
@@ -251,87 +261,94 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, m
 		if constraint != "" && !major {
 			latest, err = repo.ResolveVersion(in.Package, constraint)
 		} else if !major {
-			// Without an explicit constraint, stay inside the installed major.
-			// A breaking release needs "also upgrade --major".
 			if sem, ok := repo.HighestSemverForVersion(in.Package, in.Version); ok {
 				latest, err = repo.ResolveVersion(in.Package, "^"+sem.String())
 			}
 		}
 		if err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
-		res.Constraint = constraint
+		out[i].Constraint = constraint
 		if latestSem, ok := HighestSemverString(latest.Semver); ok {
 			if constraint == "" {
-				res.Constraint = "^" + latestSem.String()
+				out[i].Constraint = "^" + latestSem.String()
 			} else if rng, ok := ParseSemverRange(constraint); !ok || !rng.Match(latestSem) {
-				// A major (or any out-of-range) move must not leave an old
-				// ^1.x pin behind, or the next ordinary upgrade would move
-				// content backwards.
-				res.Constraint = "^" + latestSem.String()
+				out[i].Constraint = "^" + latestSem.String()
 			}
 			if installedSem, ok := repo.HighestSemverForVersion(in.Package, in.Version); ok &&
 				CompareSemver(latestSem, installedSem) < 0 {
-				res.Err = fmt.Errorf("refusing to downgrade %s from %s to %s; run also upgrade --major to choose a newer major", in.Package, installedSem, latestSem)
-				out = append(out, res)
+				out[i].Err = fmt.Errorf("refusing to downgrade %s from %s to %s; run also upgrade --major to choose a newer major", in.Package, installedSem, latestSem)
 				continue
 			}
 		}
-		res.New = latest.Version
+		out[i].New = latest.Version
 		if latest.Version == in.Version {
-			res.Status = "up to date"
-			out = append(out, res)
+			out[i].Status = "up to date"
 			continue
 		}
 		if check {
-			res.Status = "update available"
-			out = append(out, res)
+			out[i].Status = "update available"
 			continue
 		}
 		pkg, err := repo.LoadPackage(in.Package, latest.Version)
 		if err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		policy, err := LoadVerifiedPolicy(in.Project)
 		if err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		if err := checkPolicyPackage(policy, in.Set, pkg); err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude}
 		PrepareKnownConfigOrigins(st, in.Project)
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		if err := checkPolicyExecutables(policy, plan.Install.Executables); err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[i].Err = err
 			continue
 		}
 		if !planHasChanges(plan) {
-			res.Err = fmt.Errorf("version %s has no installable components for %s; kept the previous install", latest.Version, in.Harness)
-			out = append(out, res)
+			out[i].Err = fmt.Errorf("version %s has no installable components for %s; kept the previous install", latest.Version, in.Harness)
+			continue
+		}
+		todo = append(todo, pending{idx: i, in: in, repo: repo, latest: latest, constraint: out[i].Constraint})
+	}
+	for i := range out {
+		if out[i].Err != nil {
+			// Nothing is applied when any package fails preflight: a corporate
+			// upgrade must not half-succeed because one package is denied.
+			return out, nil
+		}
+	}
+	for _, p := range todo {
+		if out[p.idx].Err != nil {
+			continue
+		}
+		pkg, err := p.repo.LoadPackage(p.in.Package, p.latest.Version)
+		if err != nil {
+			out[p.idx].Err = err
+			continue
+		}
+		opts := InstallOptions{Force: force, WithConfig: p.in.WithConfig, Parts: p.in.Parts, Exclude: p.in.Exclude}
+		plan, err := BuildPlan(st, p.repo, pkg, p.latest, p.in.Harness, p.in.Scope, p.in.Project, opts)
+		if err != nil {
+			out[p.idx].Err = err
 			continue
 		}
 		if err := ApplyPlan(st, plan, opts); err != nil {
-			res.Err = err
-			out = append(out, res)
+			out[p.idx].Err = err
 			continue
 		}
-		res.Status = "upgraded"
-		out = append(out, res)
+		out[p.idx].Status = "upgraded"
 	}
 	return out, nil
 }
@@ -539,6 +556,19 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			failed = true
 			continue
 		}
+		policy, err := LoadVerifiedPolicy(in.Project)
+		if err != nil {
+			res.Err = err
+			out = append(out, res)
+			failed = true
+			continue
+		}
+		if err := checkPolicyPackage(policy, in.Set, pkg); err != nil {
+			res.Err = err
+			out = append(out, res)
+			failed = true
+			continue
+		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
 		if in.Semver != "" {
 			version.Semver = []string{in.Semver}
@@ -547,6 +577,12 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 		PrepareKnownConfigOrigins(st, in.Project)
 		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
 		if err != nil {
+			res.Err = err
+			out = append(out, res)
+			failed = true
+			continue
+		}
+		if err := checkPolicyExecutables(policy, plan.Install.Executables); err != nil {
 			res.Err = err
 			out = append(out, res)
 			failed = true
@@ -690,7 +726,7 @@ type TreeInstall struct {
 }
 
 func BuildTree(st *State) []TreeInstall {
-	var out []TreeInstall
+	out := []TreeInstall{}
 	for _, in := range st.Installs {
 		ti := TreeInstall{Install: in}
 		for _, f := range in.Files {

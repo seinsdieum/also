@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSemverAliasesResolveRanges(t *testing.T) {
@@ -500,4 +501,21 @@ func TestPolicyBlocksInstall(t *testing.T) {
 	}, "", ""); err != nil {
 		t.Fatalf("permissive policy should allow the install: %v", err)
 	}
+}
+
+func TestAcquireLockWaitsForARelease(t *testing.T) {
+	t.Setenv("ALSO_HOME", t.TempDir())
+	first, err := AcquireLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		first.Release()
+	}()
+	second, err := AcquireLock()
+	if err != nil {
+		t.Fatalf("second process did not wait for the lock: %v", err)
+	}
+	second.Release()
 }

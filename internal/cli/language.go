@@ -193,17 +193,30 @@ func runIgnore(args []string, add bool) error {
 	})
 }
 
-func printHarnesses() error {
+func printHarnesses(jsonOut bool) error {
 	list := also.Harnesses()
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
-	w := newTabWriter()
-	fmt.Fprintf(w, "HARNESS\tNAME\tALIASES\tORIGIN\n")
+	type harnessRow struct {
+		ID      string   `json:"id"`
+		Name    string   `json:"name"`
+		Aliases []string `json:"aliases,omitempty"`
+		Origin  string   `json:"origin"`
+	}
+	rows := make([]harnessRow, 0, len(list))
 	for _, h := range list {
 		origin := "built-in"
 		if also.IsExternalAdapter(h.ID) {
 			origin = "community"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", h.ID, h.Display, orDash(strings.Join(h.Aliases, ", ")), origin)
+		rows = append(rows, harnessRow{ID: h.ID, Name: h.Display, Aliases: h.Aliases, Origin: origin})
+	}
+	if jsonOut {
+		return printJSON(rows)
+	}
+	w := newTabWriter()
+	fmt.Fprintf(w, "HARNESS\tNAME\tALIASES\tORIGIN\n")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", row.ID, row.Name, orDash(strings.Join(row.Aliases, ", ")), row.Origin)
 	}
 	return w.Flush()
 }

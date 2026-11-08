@@ -41,7 +41,7 @@ Modes:
 			if len(args) > 0 {
 				return fmt.Errorf("also list --harnesses takes no query")
 			}
-			return printHarnesses()
+			return printHarnesses(jsonOut)
 		}
 		if tree {
 			if len(args) > 0 {

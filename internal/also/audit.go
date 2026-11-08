@@ -184,6 +184,70 @@ func instructionNames() map[string]bool {
 	return out
 }
 
+// harnessConfigPaths lists every native config file an adapter can read. The
+// audit must use the adapter's full config list, not only the primary path:
+// OpenCode, for example, accepts both opencode.json and opencode.jsonc.
+func harnessConfigPaths(h *Harness) map[string]bool {
+	out := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSuffix(filepath.ToSlash(p), "/")
+		if p == "" || p == "." || filepath.IsAbs(p) {
+			return
+		}
+		out[p] = true
+	}
+	add(h.Project.MCP)
+	add(h.Project.Settings)
+	add(h.Project.HooksJSON)
+	for _, c := range h.MCP.Configs {
+		add(c)
+	}
+	for _, c := range h.Settings.Configs {
+		add(c)
+	}
+	for _, c := range h.Hooks.Configs {
+		add(c)
+	}
+	return out
+}
+
+// configHasExecutable reports whether a tracked config file defines an
+// executable surface: an MCP server, hook, plugin or command. A user-owned
+// config with only cosmetic settings is not infrastructure and stays quiet.
+func configHasExecutable(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(filepath.Ext(path), ".toml") {
+		body := string(data)
+		for _, key := range []string{"mcp_servers", "[hooks", "[[hooks", "plugins"} {
+			if strings.Contains(body, key) {
+				return true
+			}
+		}
+		return false
+	}
+	doc, err := ParseJSONC(data)
+	if err != nil {
+		return false
+	}
+	for _, path := range [][]string{
+		{"mcp", "servers"}, {"mcpServers"}, {"mcp_servers"}, {"mcp"},
+		{"hooks"}, {"plugins"}, {"commands"},
+	} {
+		raw, ok := doc.RawAt(path...)
+		if !ok {
+			continue
+		}
+		if jsonEqual(raw, []byte("{}")) || jsonEqual(raw, []byte("[]")) || string(raw) == "null" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // staleInfraFindings catches tracked files under a harness component
 // directory that no current install owns. They are leftovers from a previous
 // harness or a manual copy, and the artifact-free contract says they must not
@@ -208,40 +272,6 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
 			bases = append(bases, in.Project)
 		}
-	}
-	installedByBase := map[string]map[string]bool{}
-	for _, base := range bases {
-		installedByBase[base] = map[string]bool{}
-	}
-	for idx := range st.Installs {
-		in := &st.Installs[idx]
-		for _, base := range bases {
-			// A harness config at the root belongs to an install in that
-			// exact project, not to a same-harness install in a subdirectory.
-			if PathKey(in.Project) == PathKey(base) {
-				installedByBase[base][in.Harness] = true
-			}
-		}
-	}
-	originSets := map[string]map[string]bool{}
-	originFiles := func(project string) map[string]bool {
-		if set, ok := originSets[project]; ok {
-			return set
-		}
-		set := map[string]bool{}
-		if f, err := loadConfigOrigins(project); err == nil {
-			for _, e := range f.Entries {
-				set[e.File] = true
-			}
-			for rel := range f.Blocks {
-				set[rel] = true
-			}
-			for rel := range f.Files {
-				set[rel] = true
-			}
-		}
-		originSets[project] = set
-		return set
 	}
 	var out []AuditFinding
 	seen := map[string]bool{}
@@ -287,20 +317,14 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 				continue
 			}
 			relSlash := filepath.ToSlash(baseRel)
-			if originFiles(base)[relSlash] {
-				add("stale-infra", path, "tracked file was managed by a previous install and is no longer owned; remove it or run also exclude infra")
-				break
-			}
 			for _, h := range Harnesses() {
-				if installedByBase[base][h.ID] {
+				if !harnessConfigPaths(h)[relSlash] {
 					continue
 				}
-				for _, cfg := range []string{h.Project.MCP, h.Project.Settings, h.Project.HooksJSON} {
-					if cfg != "" && relSlash == filepath.ToSlash(cfg) {
-						add("stale-infra", path, "tracked config belongs to a harness that is not installed; remove it or run also exclude infra")
-						break
-					}
+				if configHasExecutable(path) {
+					add("stale-infra", path, "tracked config for "+h.ID+" defines executable components but is not owned by an install; remove it or untrack it (git rm --cached)")
 				}
+				break
 			}
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -309,13 +333,13 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		// infrastructure, not product code.
 		for i := 0; i+1 < len(parts); i++ {
 			if roots[parts[i]] {
-				add("stale-infra", path, "tracked file is under a harness directory but is not owned by an install; remove it or run also exclude infra")
+				add("stale-infra", path, "tracked file is under a harness directory but is not owned by an install; remove it or untrack it (git rm --cached)")
 				break
 			}
 		}
 		if instructions[filepath.Base(path)] {
 			if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
-				add("block-tracked", path, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file")
+				add("block-tracked", path, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file (git rm --cached)")
 			}
 		}
 	}
@@ -330,7 +354,8 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 	if err != nil {
 		return nil, err
 	}
-	report := &AuditReport{Schema: SchemaAudit, Project: abs, All: all, GeneratedAt: time.Now().UTC()}
+	report := &AuditReport{Schema: SchemaAudit, Project: abs, All: all, GeneratedAt: time.Now().UTC(),
+		Packages: []AuditPackage{}, Findings: []AuditFinding{}}
 	lock, lockExists, lockInGit, lockTracked, err := loadAuditLock(abs)
 	if err != nil {
 		return nil, err

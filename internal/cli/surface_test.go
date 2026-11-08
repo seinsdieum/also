@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,29 @@ func TestRootSurfaceIsThirteenCommands(t *testing.T) {
 				t.Fatalf("%q should be folded into another command", removed)
 			}
 		}
+	}
+}
+
+func TestFoldedJSONShapesUseArrays(t *testing.T) {
+	setupHome(t)
+	out, err := runCLICapture(t, "list", "--harnesses", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var harnesses []any
+	if err := json.Unmarshal([]byte(out), &harnesses); err != nil {
+		t.Fatalf("list --harnesses --json is not JSON: %v\n%s", err, out)
+	}
+	if len(harnesses) == 0 {
+		t.Fatal("list --harnesses --json returned no adapters")
+	}
+	out, err = runCLICapture(t, "list", "--tree", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree []any
+	if err := json.Unmarshal([]byte(out), &tree); err != nil {
+		t.Fatalf("empty tree is not a JSON array: %v\n%s", err, out)
 	}
 }
 

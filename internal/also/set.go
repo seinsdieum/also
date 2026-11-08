@@ -481,6 +481,7 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	}
 	snap, warnings, err := ReadSnapshot(bundleDir, SnapshotOptions{
 		AllowSecrets: opts.AllowSecrets, AllowLarge: opts.AllowLarge, GitIgnore: true,
+		AllowEmpty: opts.AllowEmpty,
 	})
 	if err != nil {
 		return nil, err

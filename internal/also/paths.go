@@ -65,16 +65,20 @@ func EnsureHome() error {
 	return nil
 }
 
-// Lock serializes mutating also processes across terminals.
-//
-// shortcut: a stale lock is reclaimed with rename, so a process that held the
-// lock for over 30 minutes can race a fresh lock during Release; upgrade to
-// flock/LockFileEx if that window ever matters.
+// Lock serializes mutating also processes across terminals. A second process
+// waits briefly for the lock instead of failing immediately, so parallel
+// projects on one machine do not lose work. A crashed process is reclaimed
+// after ten minutes.
 type Lock struct {
 	path  string
 	file  *os.File
 	token string
 }
+
+const (
+	lockWait     = 30 * time.Second
+	lockStaleAge = 10 * time.Minute
+)
 
 func lockToken() string {
 	return ShortHash([]byte(fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())), 16)
@@ -85,6 +89,7 @@ func AcquireLock() (*Lock, error) {
 		return nil, err
 	}
 	path := LockPath()
+	deadline := time.Now().Add(lockWait)
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 		if err == nil {
@@ -106,19 +111,23 @@ func AcquireLock() (*Lock, error) {
 			}
 			return nil, fmt.Errorf("stat lock: %w", statErr)
 		}
-		if time.Since(info.ModTime()) <= 30*time.Minute {
+		if time.Since(info.ModTime()) > lockStaleAge {
+			// Only the process that renames the stale lock away may delete it,
+			// so a second process can never delete a freshly created lock.
+			stale := path + ".stale." + lockToken()
+			if err := os.Rename(path, stale); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("reclaim stale lock: %w", err)
+			}
+			_ = os.Remove(stale)
+			continue
+		}
+		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("another also process is running (lock: %s)", path)
 		}
-		// Only the process that renames the stale lock away may delete it, so
-		// a second process can never delete a freshly created lock.
-		stale := path + ".stale." + lockToken()
-		if err := os.Rename(path, stale); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("reclaim stale lock: %w", err)
-		}
-		_ = os.Remove(stale)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

@@ -314,6 +314,28 @@ func checkLockConflicts(plans []*also.Plan, force bool) error {
 	return nil
 }
 
+// addStateNamespaces lets a lock-only checkout verify or list without a
+// separate `also setup`: the install state and the lock already record the
+// remote for each namespace.
+func addStateNamespaces(cfg *also.Config, st *also.State, project string) *also.Config {
+	if cfg == nil {
+		cfg = &also.Config{Schema: also.SchemaConfig, Namespaces: map[string]also.NamespaceConfig{}}
+	}
+	if st != nil {
+		for _, in := range st.Installs {
+			cfg = configWithLockNamespace(cfg, in.Set, in.SetRemote)
+		}
+	}
+	if project != "" {
+		if lock, err := also.LoadLock(project); err == nil {
+			for _, e := range lock.Packages {
+				cfg = configWithLockNamespace(cfg, e.Namespace, e.Remote)
+			}
+		}
+	}
+	return cfg
+}
+
 func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGitignore bool) error {
 	project, err := installProject(dir)
 	if err != nil {
@@ -632,7 +654,7 @@ func newUpgradeCmd() *cobra.Command {
 				return err
 			}
 			if failed > 0 {
-				return fmt.Errorf("%d upgrade(s) failed; nothing was rolled back for successful ones", failed)
+				return fmt.Errorf("%d upgrade(s) failed; nothing was upgraded", failed)
 			}
 			return nil
 		})

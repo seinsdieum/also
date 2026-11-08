@@ -128,8 +128,10 @@ references. `--policy` prints the effective `also.policy.yml` and its signature
 status. Choose one mode at a time.
 
 A modified file is a warning, because the edit may be intentional. A missing
-file, managed instruction block or configuration entry is a failure. `--ci`
-exits 1 on a failure and requires a git-tracked `also.lock` when the project is
+file, managed instruction block or configuration entry is a failure. `--drift`
+and `--verify` exit 1 on any failure without needing `--ci`. The full report
+exits 1 on a failure only with `--ci`, which also requires a git-tracked
+`also.lock` when the project is
 inside git; state in `$HOME` is only a cache. It also fails when the lock pins a
 package that is not installed, when the installed version or digest differs,
 when an install is missing from the lock, when an installed file, managed block

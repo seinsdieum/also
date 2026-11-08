@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -48,9 +47,10 @@ Three focused modes use the same command:
   --verify   namespace contents, version tags and install references
   --policy   the effective also.policy.yml and its signature status
 
-Exit code is 0 unless --ci is set and the report contains a failure. A
-modified user file is a warning; a missing file, block or config entry is a
-failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
+The default report exits 0 unless --ci is set and the report contains a
+failure. --drift and --verify are focused gates and exit 1 on any failure
+without requiring --ci. A modified user file is a warning; a missing file,
+block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return fmt.Errorf("usage: also audit [--all] [--json] [--ci] [--strict] [--drift|--verify|--policy] [--sbom <path>]")
@@ -78,7 +78,7 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 					return err
 				}
 				if status == nil {
-					return fmt.Errorf("no policy at %s", filepath.Join(project, also.PolicyFile))
+					return fmt.Errorf("no policy at %s", also.PolicyPath(project))
 				}
 				if !status.Valid {
 					return fmt.Errorf("policy verification failed")
@@ -95,6 +95,7 @@ failure. --sbom writes a CycloneDX 1.5 JSON SBOM for the inventory.`
 			if err != nil {
 				return err
 			}
+			cfg = addStateNamespaces(cfg, st, project)
 			checks := also.Verify(cfg, st, namespace, refresh)
 			if err := printChecks(checks, jsonOut); err != nil {
 				return err
@@ -276,7 +277,7 @@ func printPolicy(project string, jsonOut bool) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(project, also.PolicyFile)
+	path := also.PolicyPath(project)
 	if p == nil {
 		if jsonOut {
 			return printJSON(map[string]any{"file": path, "exists": false})
@@ -380,7 +381,7 @@ func searchPackages(setFlag, from string, refresh, jsonOut bool, query string) e
 	if len(names) == 0 {
 		return fmt.Errorf("no namespace configured; add one with: also connect <name> <git-url>")
 	}
-	var hits []searchHit
+	hits := []searchHit{}
 	for _, name := range names {
 		sc := cfg.Namespaces[name]
 		repo, err := also.OpenSet(name, sc, refresh)

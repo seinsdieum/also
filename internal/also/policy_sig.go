@@ -131,7 +131,7 @@ func LoadPolicyPrivateKey(path string) (ed25519.PrivateKey, error) {
 // SignPolicy adds or replaces one signature over the exact committed policy
 // bytes. The signer must be listed in governance.approvers.
 func SignPolicy(project, privatePath string) (*PolicySignature, error) {
-	return SignPolicyFile(filepath.Join(project, PolicyFile), privatePath)
+	return SignPolicyFile(PolicyPath(project), privatePath)
 }
 
 func SignPolicyFile(policyPath, privatePath string) (*PolicySignature, error) {
@@ -194,7 +194,7 @@ func (p *Policy) ApproverFor(publicKey string) *PolicyApprover {
 
 // VerifyPolicy verifies the project policy against the trusted key set.
 func VerifyPolicy(project string) (*PolicyVerification, error) {
-	return VerifyPolicyFile(filepath.Join(project, PolicyFile))
+	return VerifyPolicyFile(PolicyPath(project))
 }
 
 func VerifyPolicyFile(policyPath string) (*PolicyVerification, error) {
@@ -313,7 +313,7 @@ func LoadVerifiedPolicy(project string) (*Policy, error) {
 		if status != nil && status.Error != "" {
 			msg = status.Error
 		}
-		return nil, fmt.Errorf("policy %s: %s", filepath.Join(project, PolicyFile), msg)
+		return nil, fmt.Errorf("policy %s: %s", PolicyPath(project), msg)
 	}
 	if status != nil && status.Signed && !status.Valid {
 		return nil, fmt.Errorf("policy %s: %s", status.File, status.Error)

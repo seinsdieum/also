@@ -39,6 +39,8 @@ type SnapshotOptions struct {
 	// GitIgnore drops files that git would not track, so publishing a project
 	// directory never includes its ignored build output or local secrets.
 	GitIgnore bool
+	// AllowEmpty lets a deliberately metadata-only package through.
+	AllowEmpty bool
 }
 
 type PackageMeta struct {
@@ -197,7 +199,7 @@ func ReadSnapshot(root string, opts SnapshotOptions) (*Snapshot, []string, error
 		return nil, warnings, fmt.Errorf("refusing to encode files larger than 8 MiB (use --allow-large if this is intentional):\n  %s",
 			strings.Join(large, "\n  "))
 	}
-	if len(snap.Files) == 0 {
+	if len(snap.Files) == 0 && !opts.AllowEmpty {
 		return nil, warnings, fmt.Errorf("nothing to encode in %s", root)
 	}
 	return snap, warnings, nil
