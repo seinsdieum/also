@@ -612,6 +612,44 @@ func TestUserEditAfterStateLossNeedsForce(t *testing.T) {
 	}
 }
 
+func TestReshapeCleansOldFileProvenance(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	for _, name := range []string{"first", "second"} {
+		bundle := filepath.Join(tmp, name)
+		openCodeBundle(t, bundle, "dev-"+name)
+		if _, err := repo.Push(bundle, PushOptions{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "first", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	// The user recreates the old harness files by hand.
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "\n")
+	writeFile(t, filepath.Join(project, "opencode.json"), "{}\n")
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "second", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("second")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "opencode.json"} {
+		if _, err := os.Stat(filepath.Join(project, name)); err != nil {
+			t.Fatalf("a stale origin deleted user file %s: %v", name, err)
+		}
+	}
+}
+
 func TestReshapeStateLossRemovesNewHarnessFiles(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -883,6 +921,31 @@ func TestReshapeRoundTripKeepsUserConfig(t *testing.T) {
 	}
 	if raw, ok := doc.RawAt("default_agent"); !ok || string(raw) != `"user-agent"` {
 		t.Fatalf("round-trip lost the user value: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	}
+}
+
+func TestReshapeKeepsSemver(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, ".opencode", "skills", "s", "SKILL.md"), "---\nname: s\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p", Semver: "1.2.3"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Reshape(cfg, st, "claude", project, false, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState()
+	if got := st.InstallsOf("p")[0].Semver; got != "1.2.3" {
+		t.Fatalf("reshape lost semver: %q", got)
 	}
 }
 

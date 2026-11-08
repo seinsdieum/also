@@ -222,6 +222,56 @@ func CleanupConfigOrigins(project string, st *State) error {
 	return saveConfigOrigins(project, f)
 }
 
+// CleanupConfigFileOrigins drops created-file/block provenance that no current
+// install owns, while keeping config base entries for a later harness switch
+// back. A successful reshape must not leave the old harness's provenance
+// claiming files a user recreated by hand.
+func CleanupConfigFileOrigins(project string, st *State) error {
+	if project == "" || st == nil {
+		return nil
+	}
+	f, err := loadConfigOrigins(project)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for rel := range f.Files {
+		owned := false
+		for idx := range st.Installs {
+			for _, e := range st.Installs[idx].Edits {
+				if relProjectFile(project, e.File) == rel {
+					owned = true
+					break
+				}
+			}
+			if owned {
+				break
+			}
+		}
+		if !owned {
+			delete(f.Files, rel)
+			changed = true
+		}
+	}
+	for rel := range f.Blocks {
+		owned := false
+		for idx := range st.Installs {
+			if b := st.Installs[idx].Block; b != nil && relProjectFile(project, b.File) == rel {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			delete(f.Blocks, rel)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return saveConfigOrigins(project, f)
+}
+
 // MergeConfigOrigins records the first observed base for each managed path and
 // whether also created the instruction file.
 func MergeConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) error {

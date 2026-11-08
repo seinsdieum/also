@@ -540,6 +540,9 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			continue
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
+		if in.Semver != "" {
+			version.Semver = []string{in.Semver}
+		}
 		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude, OldHarness: in.Harness}
 		PrepareKnownConfigOrigins(st, in.Project)
 		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
@@ -622,8 +625,18 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			return out, err
 		}
 		res.Status = "reshaped"
+		res.Warnings = s.plan.Warnings
 		out = append(out, res)
 		applied = append(applied, s)
+	}
+	seenProject := map[string]bool{}
+	for _, s := range steps {
+		key := PathKey(s.in.Project)
+		if key == "" || seenProject[key] {
+			continue
+		}
+		seenProject[key] = true
+		_ = CleanupConfigFileOrigins(s.in.Project, st)
 	}
 	return out, nil
 }

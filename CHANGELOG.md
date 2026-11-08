@@ -19,6 +19,10 @@
 - Config origins are fully cleaned when the last owner is removed, including
   after a successful or failed reshape; reshape preflight reports the exact
   per-package error instead of a generic message.
+- A successful reshape drops old-harness created-file/block provenance while
+  keeping config bases for a switch back, so a later manual AGENTS.md or
+  opencode.json is not deleted. Reshape keeps the semantic alias and prints
+  warnings produced during apply.
 - `reshape` rolls back packages it already moved when a later apply fails, so
   the state, lock and files do not end in a mixed harness. An
   OpenCode→Claude→OpenCode round trip no longer needs `--force` when the
