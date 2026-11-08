@@ -48,6 +48,43 @@ func TestScopedIgnoreMergesAndRemovesOnlyThatHarness(t *testing.T) {
 	}
 }
 
+func TestScopedIncludeKeepsSharedInstructionEntry(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("ALSO_HOME", filepath.Join(dir, "also"))
+	project, _ := also.AbsPath(dir)
+	st := &also.State{Schema: also.SchemaState, Installs: []also.Install{
+		{Harness: "opencode", Project: project},
+		{Harness: "codex", Project: project},
+	}}
+	if err := also.SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIgnore([]string{"infra", "for", "opencode", "in", dir}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIgnore([]string{"infra", "for", "codex", "in", dir}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIgnore([]string{"infra", "for", "opencode", "in", dir}, false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := also.IgnoreBlockEntries(dir, also.IgnoreInfra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(entries, "\n")
+	if !strings.Contains(joined, "AGENTS.md") {
+		t.Fatalf("shared AGENTS.md entry was removed while codex remains: %v", entries)
+	}
+	if strings.Contains(joined, ".opencode/") || strings.Contains(joined, "opencode.json") {
+		t.Fatalf("opencode-specific entries were not removed: %v", entries)
+	}
+}
+
 func TestHarnessesForProjectPrefersLayoutOverDefault(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {

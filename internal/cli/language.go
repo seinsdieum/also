@@ -180,8 +180,28 @@ func runIgnore(args []string, add bool) error {
 		for _, e := range also.InfraIgnoreEntries(spec.Harnesses) {
 			remove[e] = true
 		}
+		// Keep entries that a still-installed harness also needs. AGENTS.md
+		// is shared by OpenCode and Codex, for example.
+		keep := map[string]bool{}
+		if installed, herr := harnessesForProject(dir); herr == nil {
+			var remaining []string
+			removing := map[string]bool{}
+			for _, h := range spec.Harnesses {
+				if hh, ok := also.ResolveHarness(h); ok {
+					removing[hh.ID] = true
+				}
+			}
+			for _, h := range installed {
+				if !removing[strings.ToLower(h)] {
+					remaining = append(remaining, h)
+				}
+			}
+			for _, e := range also.InfraIgnoreEntries(remaining) {
+				keep[e] = true
+			}
+		}
 		for _, e := range existing {
-			if !remove[e] {
+			if !remove[e] || keep[e] {
 				entries = append(entries, e)
 			}
 		}

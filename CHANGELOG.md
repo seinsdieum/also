@@ -56,15 +56,17 @@ ownership and harness migration.
 - `reshape` updates the managed infra `.gitignore` block at the git root for
   the new harness, unions every harness installed under that root, and removes
   the old harness's files and config edits before writing the new layout.
-- `audit` reports `stale-infra` for tracked files under a harness component
-  directory (including the harness root) that no install owns, for nested
-  projects and for an empty lock after uninstall.
+- `audit` reports `stale-infra` for tracked files under any registered harness
+  directory (including another harness than the one currently installed),
+  nested projects, harness-root files and an empty lock after uninstall.
 - `install --frozen` preflights destination conflicts, cross-entry config
-  conflicts and policy executables before writing the first entry.
+  conflicts and policy executables before writing the first entry, and rolls
+  back entries it applied if a later write fails.
 - `reshape` preflights every package before applying any, and checks every
   project before `--all`; it refuses a symlinked `.gitignore` before mutating.
 - Scoped `exclude infra for <harness>` merges with the shared block instead of
-  replacing it; scoped `include` removes only that harness.
+  replacing it; scoped `include` removes only entries no remaining harness
+  needs, so a shared `AGENTS.md` stays ignored for Codex.
 - `reshape` does not fail after mutation in a checkout without `.git`.
 - OpenCode wildcard/pattern deny rules remove the affected Claude tool instead
   of silently keeping full access.

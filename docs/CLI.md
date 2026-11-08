@@ -116,7 +116,9 @@ parts, exclusions and whether configuration was installed. Commit it.
   the resolved content version has a semantic alias. `--latest` opts out.
 - `also install --frozen` requires an entry and fails if anything would resolve
   differently. If the namespace is not configured, the remote recorded in the
-  lock is used, so CI needs no separate `also setup`.
+  lock is used, so CI needs no separate `also setup`. Two entries that write the
+  same config key or file differently are rejected before the first write;
+  `--force` overwrites local files but does not make a contradictory lock valid.
 - `also install --update` ignores the pins for one command and writes the new
   result to the lock.
 - `also upgrade` respects the recorded constraint. Unconstrained installs stay
@@ -264,9 +266,10 @@ also exclude|include you
 
 `exclude infra for <harness>` merges that harness's paths into the existing
 managed block; it never removes another harness that is still installed.
-`include infra for <harness>` removes only that harness's entries, while
-`include infra` without `for` removes the whole block. The block belongs to the
-git root, so a monorepo keeps one union for all projects under it.
+`include infra for <harness>` removes only entries that no remaining installed
+harness still needs (a shared `AGENTS.md` stays for Codex), while `include infra`
+without `for` removes the whole block. The block belongs to the git root, so a
+monorepo keeps one union for all projects under it.
 
 `doctor` and `verify` never change data. They exit non-zero on a failed check.
 `repair` deletes the internal cache clone for a namespace and fetches it again;

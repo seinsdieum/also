@@ -18,7 +18,7 @@ func TestCheckLockConflicts(t *testing.T) {
 	if err := checkLockConflicts([]*also.Plan{plan(`"a"`), plan(`"a"`)}, false); err != nil {
 		t.Fatalf("identical values should pass: %v", err)
 	}
-	if err := checkLockConflicts([]*also.Plan{plan(`"a"`), plan(`"b"`)}, true); err != nil {
-		t.Fatalf("--force should allow the explicit overwrite: %v", err)
+	if err := checkLockConflicts([]*also.Plan{plan(`"a"`), plan(`"b"`)}, true); err == nil {
+		t.Fatal("--force must not hide contradictory lock entries")
 	}
 }

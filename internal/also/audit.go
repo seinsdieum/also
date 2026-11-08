@@ -146,33 +146,42 @@ func trackedInfraFindings(in *Install, tracked map[string]bool, requireLock bool
 	return out
 }
 
-func harnessComponentDirs(h *Harness) []string {
-	var dirs []string
-	p := h.Project
-	dirs = append(dirs, p.Skills, p.Commands, p.Agents, p.Plugins, p.Hooks)
-	for _, d := range h.ExtraDirs {
-		if h.ExtraBase != "" {
-			dirs = append(dirs, filepath.Join(h.ExtraBase, d))
-		} else {
-			dirs = append(dirs, d)
+func harnessRootNames() map[string]bool {
+	roots := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSuffix(filepath.ToSlash(p), "/")
+		if p == "" || p == "." {
+			return
+		}
+		if i := strings.IndexByte(p, '/'); i > 0 {
+			p = p[:i]
+		}
+		if p != "" && p != "." {
+			roots[p] = true
 		}
 	}
-	for _, c := range h.Components {
-		if c.ProjectDir != "" {
-			dirs = append(dirs, c.ProjectDir)
+	for _, h := range Harnesses() {
+		add(h.ExtraBase)
+		add(h.Project.Skills)
+		add(h.Project.Commands)
+		add(h.Project.Agents)
+		add(h.Project.Plugins)
+		add(h.Project.Hooks)
+		for _, c := range h.Components {
+			add(c.ProjectDir)
 		}
 	}
-	for _, d := range append(append([]string{}, dirs...), h.ExtraBase) {
-		d = strings.TrimSuffix(filepath.ToSlash(d), "/")
-		if d == "" || d == "." {
-			continue
+	return roots
+}
+
+func instructionNames() map[string]bool {
+	out := map[string]bool{}
+	for _, h := range Harnesses() {
+		if base := filepath.Base(h.Project.Instr); base != "" && base != "." {
+			out[base] = true
 		}
-		if i := strings.IndexByte(d, '/'); i > 0 {
-			d = d[:i]
-		}
-		dirs = append(dirs, d)
 	}
-	return dirs
+	return out
 }
 
 // staleInfraFindings catches tracked files under a harness component
@@ -187,62 +196,39 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	if requireLock {
 		severity = "fail"
 	}
-	var installs []*Install
-	for idx := range st.Installs {
-		in := &st.Installs[idx]
-		if in.Project == "" || in.Harness == "" {
-			continue
-		}
-		rel, err := filepath.Rel(root, in.Project)
-		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
-			installs = append(installs, in)
-		}
-	}
-	if len(installs) == 0 {
-		// An empty lock can still leave a harness layout behind after
-		// uninstall; use the detected layout as a fallback.
-		if id, err := DetectHarness(root); err == nil {
-			installs = append(installs, &Install{Project: root, Harness: id})
-		}
-	}
+	roots := harnessRootNames()
+	instructions := instructionNames()
 	var out []AuditFinding
 	seen := map[string]bool{}
-	add := func(code, path, harness, detail string) {
+	add := func(code, path, detail string) {
 		key := code + "\x00" + path
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		out = append(out, AuditFinding{Severity: severity, Code: code, Harness: harness, Path: path, Detail: detail})
+		out = append(out, AuditFinding{Severity: severity, Code: code, Path: path, Detail: detail})
 	}
 	for path := range tracked {
 		if len(st.ownersOf(path)) > 0 {
 			continue
 		}
-		for _, in := range installs {
-			h, ok := ResolveHarness(in.Harness)
-			if !ok {
-				continue
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		// Any tracked file below a known harness root (including a nested
+		// project or another harness than the one currently installed) is
+		// infrastructure, not product code.
+		for i := 0; i+1 < len(parts); i++ {
+			if roots[parts[i]] {
+				add("stale-infra", path, "tracked file is under a harness directory but is not owned by an install; remove it or run also exclude infra")
+				break
 			}
-			rel, err := filepath.Rel(in.Project, path)
-			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				continue
-			}
-			rel = filepath.ToSlash(rel)
-			for _, dir := range harnessComponentDirs(h) {
-				dir = strings.TrimSuffix(filepath.ToSlash(dir), "/")
-				if dir == "" || dir == "." {
-					continue
-				}
-				if rel == dir || strings.HasPrefix(rel, dir+"/") {
-					add("stale-infra", path, h.ID, "tracked file is under a harness component directory but is not owned by an install; remove it or run also exclude infra")
-					break
-				}
-			}
-			if rel == filepath.ToSlash(h.Project.Instr) {
-				if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
-					add("block-tracked", path, h.ID, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file")
-				}
+		}
+		if instructions[filepath.Base(path)] {
+			if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
+				add("block-tracked", path, "managed instruction block is tracked but not owned by an install; remove the block or untrack the file")
 			}
 		}
 	}

@@ -247,6 +247,41 @@ func TestAuditFindsStaleFilesWithEmptyLock(t *testing.T) {
 	t.Fatalf("stale file with an empty lock was not reported: %+v", report.Findings)
 }
 
+func TestAuditFindsStaleOtherHarnessDirectory(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "CLAUDE.md"), "rules\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "claude", Project: project}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".opencode", "notes.txt"), "stale\n")
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", ".opencode/notes.txt"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" {
+			return
+		}
+	}
+	t.Fatalf("stale other-harness directory was not reported: %+v", report.Findings)
+}
+
 func TestAuditFindsStaleNestedProject(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)

@@ -280,9 +280,7 @@ func configWithLockNamespace(cfg *also.Config, name, remote string) *also.Config
 // path or destination differently. The apply loop mutates state between
 // entries, so this must be checked before the first write.
 func checkLockConflicts(plans []*also.Plan, force bool) error {
-	if force {
-		return nil
-	}
+	_ = force
 	edits := map[string]string{}
 	files := map[string]string{}
 	for _, p := range plans {
@@ -376,6 +374,26 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		if err := checkLockConflicts(plans, force); err != nil {
 			return err
 		}
+		beforeState, _ := also.LoadState()
+		before := map[string]bool{}
+		for _, in := range beforeState.Installs {
+			before[in.ID] = true
+		}
+		var applied []string
+		rollback := func() {
+			if len(applied) == 0 {
+				return
+			}
+			st, lerr := also.LoadState()
+			if lerr != nil {
+				return
+			}
+			for _, id := range applied {
+				if in := st.FindByID(id); in != nil {
+					_, _ = also.Uninstall(st, in, true)
+				}
+			}
+		}
 		out := make([]installOutput, 0, len(lock.Packages))
 		for _, entry := range lock.Packages {
 			if err := entry.CheckEntry(); err != nil {
@@ -391,7 +409,11 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 				WithConfig: entry.WithConfig, Offline: offline, ExpectedDigest: entry.Digest,
 			}, entry.Namespace, "")
 			if err != nil {
+				rollback()
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
+			if !before[plan.Install.ID] {
+				applied = append(applied, plan.Install.ID)
 			}
 			out = append(out, planOutput(plan))
 		}
