@@ -114,10 +114,11 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 	if err != nil {
 		return err
 	}
-	index := map[string]ConfigOrigin{}
-	for _, e := range f.Entries {
-		index[originKey(e.File, e.Path)] = e
+	index := map[string]int{}
+	for i := range f.Entries {
+		index[originKey(f.Entries[i].File, f.Entries[i].Path)] = i
 	}
+	changed := false
 	for i := range edits {
 		e := &edits[i]
 		rel := relProjectFile(project, e.File)
@@ -130,9 +131,22 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 		if e.Kind != "json-set" {
 			continue
 		}
-		origin, ok := index[originKey(rel, e.Path)]
+		idx, ok := index[originKey(rel, e.Path)]
 		if !ok {
 			continue
+		}
+		origin := &f.Entries[idx]
+		if cur, exists := currentJSONValue(e.File, e.Path); exists {
+			matchesManaged := jsonEqual(cur, origin.Managed)
+			matchesBase := origin.BaseSet && !origin.Absent && jsonEqual(cur, origin.Value)
+			if !matchesManaged && !matchesBase {
+				// A new ownership epoch: the file was recreated or edited
+				// while no install owned it. That value becomes the base.
+				origin.BaseSet = true
+				origin.Absent = false
+				origin.Value = append(json.RawMessage{}, cur...)
+				changed = true
+			}
 		}
 		e.BaseSet = true
 		if origin.Absent {
@@ -147,7 +161,22 @@ func ApplyConfigOrigins(project string, edits []ConfigEdit, block *BlockEdit) er
 			block.CreatedFile = created
 		}
 	}
+	if changed {
+		return saveConfigOrigins(project, f)
+	}
 	return nil
+}
+
+func currentJSONValue(file string, path []string) (json.RawMessage, bool) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, false
+	}
+	doc, err := ParseJSONC(data)
+	if err != nil {
+		return nil, false
+	}
+	return doc.RawAt(path...)
 }
 
 // CleanupConfigOrigins drops origin entries for paths and files that no

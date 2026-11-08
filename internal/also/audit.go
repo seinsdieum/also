@@ -198,6 +198,37 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	}
 	roots := harnessRootNames()
 	instructions := instructionNames()
+	bases := []string{root}
+	for idx := range st.Installs {
+		in := &st.Installs[idx]
+		if in.Project == "" {
+			continue
+		}
+		rel, err := filepath.Rel(root, in.Project)
+		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+			bases = append(bases, in.Project)
+		}
+	}
+	originSets := map[string]map[string]bool{}
+	originFiles := func(project string) map[string]bool {
+		if set, ok := originSets[project]; ok {
+			return set
+		}
+		set := map[string]bool{}
+		if f, err := loadConfigOrigins(project); err == nil {
+			for _, e := range f.Entries {
+				set[e.File] = true
+			}
+			for rel := range f.Blocks {
+				set[rel] = true
+			}
+			for rel := range f.Files {
+				set[rel] = true
+			}
+		}
+		originSets[project] = set
+		return set
+	}
 	var out []AuditFinding
 	seen := map[string]bool{}
 	add := func(code, path, detail string) {
@@ -215,6 +246,15 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 		rel, err := filepath.Rel(root, path)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
+		}
+		for _, base := range bases {
+			if baseRel, berr := filepath.Rel(base, path); berr == nil &&
+				baseRel != ".." && !strings.HasPrefix(baseRel, ".."+string(filepath.Separator)) {
+				if originFiles(base)[filepath.ToSlash(baseRel)] {
+					add("stale-infra", path, "tracked file was managed by a previous install and is no longer owned; remove it or run also exclude infra")
+					break
+				}
+			}
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
 		// Any tracked file below a known harness root (including a nested

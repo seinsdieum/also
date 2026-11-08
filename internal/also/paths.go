@@ -12,7 +12,7 @@ import (
 
 const (
 	// Version is the CLI and package-encoder version.
-	Version = "1.4.1"
+	Version = "1.4.2"
 
 	SchemaConfig  = "also.config/v2"
 	SchemaState   = "also.state/v1"

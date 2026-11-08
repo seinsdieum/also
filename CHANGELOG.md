@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.2 (2026-11-08)
+
+### Fixed
+
+- `audit` reports `stale-infra` for a tracked config file that a previous
+  install managed but no current install owns, including a stale root
+  `.mcp.json` left after a modified reshape.
+- A forced reinstall after a manually recreated old-harness config starts a
+  new ownership epoch: the current user value becomes the base, so the next
+  uninstall restores it instead of deleting it.
+
 ## 1.4.1 (2026-11-08)
 
 ### Fixed
