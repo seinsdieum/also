@@ -20,10 +20,7 @@ func auditProject(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if root, _, ferr := also.FindInfra(cwd); ferr == nil {
-		return root, nil
-	}
-	return also.AbsPath(cwd)
+	return also.FindProjectRoot(cwd)
 }
 
 func newAuditCmd() *cobra.Command {
@@ -183,7 +180,11 @@ func printAudit(report *also.AuditReport) {
 		return
 	}
 	w := newTabWriter()
-	fmt.Fprintf(w, "PACKAGE\tVERSION\tHARNESS\tSOURCE\tFILES\tDRIFT\tEXEC\n")
+	if report.All {
+		fmt.Fprintf(w, "PROJECT\tPACKAGE\tVERSION\tHARNESS\tSOURCE\tFILES\tDRIFT\tEXEC\n")
+	} else {
+		fmt.Fprintf(w, "PACKAGE\tVERSION\tHARNESS\tSOURCE\tFILES\tDRIFT\tEXEC\n")
+	}
 	for _, p := range report.Packages {
 		drift := "-"
 		switch {
@@ -191,6 +192,15 @@ func printAudit(report *also.AuditReport) {
 			drift = fmt.Sprintf("missing:%d", p.Missing)
 		case p.Modified > 0:
 			drift = fmt.Sprintf("modified:%d", p.Modified)
+		}
+		if report.All {
+			project := p.Project
+			if project == "" {
+				project = "(global)"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\n",
+				project, p.Package, short(p.Version), p.Harness, p.SourceHarness, p.Files, drift, len(p.Executables))
+			continue
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\n",
 			p.Package, short(p.Version), p.Harness, orDash(p.SourceHarness), p.Files, drift, len(p.Executables))

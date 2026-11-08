@@ -156,6 +156,89 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 	return data, []string{fmt.Sprintf("agent %s: no converter from %s to %s; copied verbatim", filename, fromFormat, toFormat)}, nil
 }
 
+func isClaudeModel(m string) bool {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return true
+	}
+	switch strings.ToLower(m) {
+	case "sonnet", "opus", "haiku", "inherit":
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(m), "claude-")
+}
+
+func isOpenCodeModel(m string) bool {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return true
+	}
+	parts := strings.Split(m, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
+
+func permissionDenies(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(s), "deny")
+}
+
+func toolSet(v any) map[string]bool {
+	out := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if c, ok := canonicalTool(name); ok {
+			out[c] = true
+		} else {
+			out[name] = true
+		}
+	}
+	switch x := v.(type) {
+	case string:
+		for _, part := range strings.FieldsFunc(x, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' }) {
+			add(part)
+		}
+	case []any:
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				add(s)
+			}
+		}
+	case []string:
+		for _, s := range x {
+			add(s)
+		}
+	case map[string]any:
+		for k, raw := range x {
+			if on, _ := raw.(bool); on {
+				add(k)
+			}
+		}
+	}
+	return out
+}
+
+func claudeToolsString(set map[string]bool) string {
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func dropTools(set map[string]bool, names ...string) {
+	for _, name := range names {
+		if c, ok := canonicalTool(name); ok {
+			delete(set, c)
+		} else {
+			delete(set, name)
+		}
+	}
+}
+
 func dropAgentFields(fm map[string]any, warnings []string, to, filename string, keys ...string) []string {
 	for _, k := range keys {
 		if _, exists := fm[k]; exists {
@@ -198,8 +281,45 @@ func agentToOpenCode(data []byte, fromFormat, _, filename string) ([]byte, []str
 	} else if _, ok := fm["mode"]; !ok {
 		fm["mode"] = "subagent"
 	}
+	if m, ok := fm["model"].(string); ok && m != "" && !isOpenCodeModel(m) {
+		warnings = append(warnings, fmt.Sprintf("agent %s: model %q is not an OpenCode provider/model id and was dropped; set an OpenCode-native model in the package", filename, m))
+		delete(fm, "model")
+	}
+	tools := map[string]any{}
+	if m, ok := fm["tools"].(map[string]any); ok {
+		for k, v := range m {
+			tools[k] = v
+		}
+	}
+	disableTool := func(name string) {
+		if c, ok := canonicalTool(name); ok {
+			tools[strings.ToLower(c)] = false
+		} else {
+			tools[strings.ToLower(name)] = false
+		}
+	}
+	if mode, ok := fm["permissionMode"].(string); ok {
+		switch strings.ToLower(strings.TrimSpace(mode)) {
+		case "plan":
+			disableTool("Edit")
+			disableTool("Write")
+			disableTool("NotebookEdit")
+			warnings = append(warnings, fmt.Sprintf("agent %s: permissionMode=plan was mapped to disabled edit tools", filename))
+		}
+		delete(fm, "permissionMode")
+	}
+	if v, ok := fm["disallowedTools"]; ok {
+		names, _ := toStringList(v)
+		for _, name := range names {
+			disableTool(name)
+		}
+		delete(fm, "disallowedTools")
+	}
+	if len(tools) > 0 {
+		fm["tools"] = tools
+	}
 	warnings = dropAgentFields(fm, warnings, AgentOpenCode, filename,
-		"name", "permissionMode", "approvalMode", "maxTurns", "disallowedTools", "mcpServers", "hooks")
+		"name", "approvalMode", "maxTurns", "mcpServers", "hooks")
 	out, err := renderFrontmatter(fm, body)
 	return out, warnings, err
 }
@@ -241,6 +361,58 @@ func agentToClaude(data []byte, _, _, filename string) ([]byte, []string, error)
 			}
 			fm["tools"] = strings.Join(names, ", ")
 		}
+	}
+	if m, ok := fm["model"].(string); ok && m != "" && !isClaudeModel(m) {
+		warnings = append(warnings, fmt.Sprintf("agent %s: model %q is not a Claude model and was dropped; set a Claude-native model in the package", filename, m))
+		delete(fm, "model")
+	}
+	hasTools := fm["tools"] != nil
+	tools := toolSet(fm["tools"])
+	if perm, ok := fm["permission"].(map[string]any); ok {
+		// Claude has no per-tool permission map. A deny becomes a tool
+		// allowlist entry removal, which preserves the role's guardrail.
+		denied := false
+		if permissionDenies(perm["edit"]) {
+			dropTools(tools, "Edit", "Write", "NotebookEdit")
+			denied = true
+		}
+		if permissionDenies(perm["bash"]) {
+			dropTools(tools, "Bash")
+			denied = true
+		}
+		if permissionDenies(perm["webfetch"]) {
+			dropTools(tools, "WebFetch")
+			denied = true
+		}
+		if permissionDenies(perm["websearch"]) {
+			dropTools(tools, "WebSearch")
+			denied = true
+		}
+		if denied && !hasTools {
+			tools = toolSet(nil)
+			for _, name := range toolNames {
+				tools[name] = true
+			}
+			for key, raw := range perm {
+				if permissionDenies(raw) {
+					switch key {
+					case "edit":
+						dropTools(tools, "Edit", "Write", "NotebookEdit")
+					case "bash":
+						dropTools(tools, "Bash")
+					case "webfetch":
+						dropTools(tools, "WebFetch")
+					case "websearch":
+						dropTools(tools, "WebSearch")
+					}
+				}
+			}
+		}
+		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permission map is not supported by Claude; deny rules were mapped to tools and the map was dropped", filename))
+		delete(fm, "permission")
+	}
+	if hasTools || tools != nil && len(tools) > 0 {
+		fm["tools"] = claudeToolsString(tools)
 	}
 	warnings = dropAgentFields(fm, warnings, AgentClaude, filename,
 		"mode", "permissions", "hidden", "steps", "temperature", "top_p", "request", "disabled", "subtask")

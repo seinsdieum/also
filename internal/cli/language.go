@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -212,8 +211,9 @@ func printHarnesses() error {
 }
 
 // harnessesForProject prefers what is installed in this project, then the
-// configured default, then layout detection. This keeps "exclude infra" from
-// ignoring unrelated harness files.
+// layout actually present, then the configured default. A machine-wide default
+// is not evidence about this project: an OpenCode project must not receive
+// Claude ignore entries just because Claude is the default harness.
 func harnessesForProject(dir string) ([]string, error) {
 	root, err := also.GitProjectRoot(dir)
 	if err != nil {
@@ -226,10 +226,14 @@ func harnessesForProject(dir string) ([]string, error) {
 			if in.Project == "" {
 				continue
 			}
-			p := filepath.Clean(in.Project)
-			if p == root || p == abs {
+			if also.PathKey(in.Project) == also.PathKey(root) || also.PathKey(in.Project) == also.PathKey(abs) {
 				seen[in.Harness] = true
 			}
+		}
+	}
+	if len(seen) == 0 {
+		if id, err := also.DetectHarness(root); err == nil {
+			seen[id] = true
 		}
 	}
 	if len(seen) == 0 {
@@ -237,11 +241,6 @@ func harnessesForProject(dir string) ([]string, error) {
 			if h, ok := also.ResolveHarness(cfg.DefaultHarness); ok {
 				seen[h.ID] = true
 			}
-		}
-	}
-	if len(seen) == 0 {
-		if id, err := also.DetectHarness(root); err == nil {
-			seen[id] = true
 		}
 	}
 	if len(seen) == 0 {

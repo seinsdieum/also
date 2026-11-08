@@ -57,9 +57,12 @@ executable component kinds, package size and literal secrets. The policy is
 enforced before an install or upgrade writes anything. `also audit --ci` exits 1
 on a missing file, block or config entry, on a lock/state mismatch, on an
 untracked or missing `also.lock`, on an unsigned or invalid policy signature,
-on a missing role or approval, and on a policy violation; `--strict` also fails
-on user edits. There is no policy bypass flag; changing the policy is a
-reviewed, signed file change.
+on a missing role or approval, on a policy violation, and on installed
+infrastructure that is tracked by git; `--strict` also fails on user edits.
+There is no policy bypass flag; changing the policy is a reviewed, signed file
+change. The artifact-free check (`infra-tracked`, `block-tracked`,
+`config-tracked`) is deliberate: infra in the product history would make the
+lock and the policy review meaningless.
 
 Policy signatures are detached Ed25519 signatures over the exact bytes of
 `also.policy.yml`, stored in `also.policy.sig`. The trusted public keys live

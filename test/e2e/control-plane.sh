@@ -63,9 +63,11 @@ printf 'other rules\n' > CLAUDE.md
 mkdir -p "$WORK/app"
 cd "$WORK/app"
 write_policy
-"$WORK/bin/also" install 'demo@^1.0' for claude >/dev/null
 git init -q .
-git add also.lock also.policy.yml also.policy.sig CLAUDE.md
+"$WORK/bin/also" install 'demo@^1.0' for claude >/dev/null
+"$WORK/bin/also" exclude infra for claude >/dev/null
+"$WORK/bin/also" exclude you >/dev/null
+git add .gitignore also.lock also.policy.yml also.policy.sig
 git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 
 "$WORK/bin/also" policy verify --ci >/dev/null
@@ -92,10 +94,10 @@ git -c user.name=ci -c user.email=ci@example.invalid commit -qm removed
 
 # A second checkout must reproduce the lock exactly.
 mkdir -p "$WORK/app2"
-cp also.lock also.policy.yml also.policy.sig "$WORK/app2/"
+cp also.lock also.policy.yml also.policy.sig .gitignore "$WORK/app2/"
 cd "$WORK/app2"
 git init -q .
-git add also.lock also.policy.yml also.policy.sig
+git add .gitignore also.lock also.policy.yml also.policy.sig
 git -c user.name=ci -c user.email=ci@example.invalid commit -qm fixture
 "$WORK/bin/also" install --frozen >/dev/null
 "$WORK/bin/also" audit --ci >/dev/null

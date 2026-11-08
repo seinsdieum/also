@@ -447,6 +447,9 @@ type PushOptions struct {
 	DryRun       bool
 	// AllFiles allows files outside the source harness layout into the package.
 	AllFiles bool
+	// AllowEmpty publishes a package with no installable components. The
+	// default protects against a .gitignore that silently hides the layout.
+	AllowEmpty bool
 	// Semver tags this push as an exact semantic version. Bump derives the next
 	// one from the highest existing alias instead.
 	Semver string
@@ -506,6 +509,9 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if len(classified.Other) > 0 && !opts.AllFiles {
 		return nil, fmt.Errorf("refusing to publish files outside the %s layout (use --all-files if this is intentional):\n  %s",
 			h.ID, strings.Join(classified.Other, "\n  "))
+	}
+	if classified.Empty() && !opts.AllowEmpty {
+		return nil, fmt.Errorf("package %s has no installable components for %s; check that .gitignore does not hide the layout, or pass --allow-empty for a metadata-only package", opts.Name, h.ID)
 	}
 	servers, mcpWarnings, err := ExtractBundleMCP(h, snap.Files, h.BundleRoots(bundleDir))
 	if err != nil {

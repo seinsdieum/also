@@ -61,10 +61,12 @@ governance:
     Set-Content -Path also.policy.yml -Value $Policy
     Invoke-Also policy sign --key $Key
     Invoke-Also policy verify --ci
-    Invoke-Also install "demo@^1.0" for claude
-
     Invoke-Git init -q .
-    Invoke-Git add also.lock also.policy.yml also.policy.sig CLAUDE.md
+    Invoke-Also install "demo@^1.0" for claude
+    Invoke-Also exclude infra for claude
+    Invoke-Also exclude you
+
+    Invoke-Git add .gitignore also.lock also.policy.yml also.policy.sig
     Invoke-Git "-c" "user.name=ci" "-c" "user.email=ci@example.invalid" commit -qm fixture
     Invoke-Also audit --ci
     Invoke-Also audit --sbom (Join-Path $Work "sbom.json")
@@ -74,10 +76,10 @@ governance:
 
     $App2 = Join-Path $Work "app2"
     New-Item -ItemType Directory -Path $App2 | Out-Null
-    Copy-Item also.lock, also.policy.yml, also.policy.sig -Destination $App2
+    Copy-Item also.lock, also.policy.yml, also.policy.sig, .gitignore -Destination $App2
     Set-Location $App2
     Invoke-Git init -q .
-    Invoke-Git add also.lock also.policy.yml also.policy.sig
+    Invoke-Git add .gitignore also.lock also.policy.yml also.policy.sig
     Invoke-Git "-c" "user.name=ci" "-c" "user.email=ci@example.invalid" commit -qm fixture
     Invoke-Also install --frozen
     Invoke-Also audit --ci

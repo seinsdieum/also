@@ -32,6 +32,8 @@ type InstallRequest struct {
 	Scope          string
 	Project        string
 	Parts          []string
+	Exclude        []string
+	OnlyParts      bool
 	Force          bool
 	WithConfig     bool
 	Offline        bool
@@ -92,7 +94,8 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 	if err != nil {
 		return nil, set, err
 	}
-	opts := InstallOptions{Force: req.Force, WithConfig: req.WithConfig, Parts: req.Parts}
+	opts := InstallOptions{Force: req.Force, WithConfig: req.WithConfig, Parts: req.Parts,
+		Exclude: req.Exclude, OnlyParts: req.OnlyParts}
 	plan, err := BuildPlan(st, set, pkg, version, req.Harness, scope, project, opts)
 	if err != nil {
 		return nil, set, err
@@ -115,6 +118,11 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 		return nil, set, err
 	}
 	return plan, set, nil
+}
+
+// CheckPolicyPackage is the exported preflight form used by frozen replay.
+func CheckPolicyPackage(p *Policy, namespace string, pkg *Package) error {
+	return checkPolicyPackage(p, namespace, pkg)
 }
 
 func checkPolicyPackage(p *Policy, namespace string, pkg *Package) error {
@@ -165,18 +173,18 @@ type UpgradeResult struct {
 	Err     error
 }
 
-func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool) ([]UpgradeResult, error) {
+func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool, major ...bool) ([]UpgradeResult, error) {
 	installs := filterInstalls(st.InstallsOf(""), pkgs)
 	if len(installs) == 0 {
 		return nil, fmt.Errorf("no matching installs")
 	}
-	return upgradeInstalls(cfg, st, installs, force, check)
+	return upgradeInstalls(cfg, st, installs, force, check, len(major) > 0 && major[0])
 }
 
 // UpgradeInstallsInProject upgrades only the packages installed in one
 // directory, which is what the "also upgrade" command targets. Legacy global
 // installs are reported, not rewritten: their files live in the home dir.
-func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal bool) ([]UpgradeResult, error) {
+func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []string, force, check, includeGlobal bool, major ...bool) ([]UpgradeResult, error) {
 	abs, err := AbsPath(project)
 	if err != nil {
 		return nil, err
@@ -193,21 +201,21 @@ func UpgradeInstallsInProject(cfg *Config, st *State, project string, pkgs []str
 			}
 			continue
 		}
-		if filepath.Clean(in.Project) == filepath.Clean(abs) {
+		if PathKey(in.Project) == PathKey(abs) {
 			installs = append(installs, in)
 		}
 	}
 	if len(installs) == 0 && len(legacy) == 0 {
 		return nil, fmt.Errorf("no packages installed in %s; run: also install <package> for <harness>", abs)
 	}
-	results, err := upgradeInstalls(cfg, st, installs, force, check)
+	results, err := upgradeInstalls(cfg, st, installs, force, check, len(major) > 0 && major[0])
 	if err != nil {
 		return nil, err
 	}
 	return append(results, legacy...), nil
 }
 
-func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bool) ([]UpgradeResult, error) {
+func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, major bool) ([]UpgradeResult, error) {
 	repos := map[string]*SetRepo{}
 	var out []UpgradeResult
 	for _, in := range installs {
@@ -219,9 +227,19 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bo
 			continue
 		}
 		latest, err := repo.Latest(in.Package)
+		constraint := ""
 		if lock, lerr := LoadLock(in.Project); lerr == nil {
-			if entry := lock.Find(in.Package, in.Harness); entry != nil && entry.Constraint != "" {
-				latest, err = repo.ResolveVersion(in.Package, entry.Constraint)
+			if entry := lock.FindIn(in.Set, in.Package, in.Harness); entry != nil {
+				constraint = entry.Constraint
+			}
+		}
+		if constraint != "" && !major {
+			latest, err = repo.ResolveVersion(in.Package, constraint)
+		} else if !major {
+			// Without an explicit constraint, stay inside the installed major.
+			// A breaking release needs "also upgrade --major".
+			if sem, ok := repo.HighestSemverForVersion(in.Package, in.Version); ok {
+				latest, err = repo.ResolveVersion(in.Package, "^"+sem.String())
 			}
 		}
 		if err != nil {
@@ -257,7 +275,7 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check bo
 			out = append(out, res)
 			continue
 		}
-		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts}
+		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude}
 		plan, err := BuildPlan(st, repo, pkg, latest, in.Harness, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err
@@ -368,11 +386,10 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 		return nil, err
 	}
 	for _, e := range in.Edits {
-		if st.sharedConfigEdit(e, in.ID) {
+		if st.otherConfigEdit(in, e.File, e.Path) != nil {
 			warnings = append(warnings, fmt.Sprintf("left shared config entry in %s (%s)", e.File, strings.Join(e.Path, ".")))
-			continue
 		}
-		ok, warn, err := removeConfigEdit(t, e)
+		ok, warn, err := removeConfigEdit(t, st, in, e)
 		if err != nil {
 			return rollback(err)
 		}
@@ -384,6 +401,13 @@ func Uninstall(st *State, in *Install, force bool) ([]string, error) {
 	if in.Block != nil && !sharedBlock {
 		if err := removeBlockTx(t, in.Block, force); err != nil {
 			return rollback(err)
+		}
+		if data, err := os.ReadFile(in.Block.File); err == nil && strings.TrimSpace(string(data)) == "" &&
+			!st.fileHasOtherBlock(in, in.Block.File) && !st.fileHasOtherConfigEdits(in, in.Block.File) &&
+			st.fileCreatedByAlso(in.Block.File) {
+			if err := t.remove(in.Block.File); err != nil {
+				return rollback(err)
+			}
 		}
 	} else if sharedBlock {
 		warnings = append(warnings, "left shared instructions block in "+in.Block.File)
@@ -420,14 +444,33 @@ type ReshapeResult struct {
 	Err     error
 }
 
-func Reshape(cfg *Config, st *State, to string, pkgs []string, force bool) ([]ReshapeResult, error) {
+// Reshape moves installed packages to another harness. It is project-scoped by
+// default: --all is the explicit way to rewrite every project on the machine.
+func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string, force bool) ([]ReshapeResult, error) {
 	target, ok := ResolveHarness(to)
 	if !ok {
 		return nil, fmt.Errorf("unknown harness %q; available: %v", to, HarnessIDs())
 	}
 	installs := filterInstalls(st.InstallsOf(""), pkgs)
+	if !all {
+		if project == "" {
+			return nil, fmt.Errorf("reshape needs a project; use --dir or --all")
+		}
+		want := PathKey(project)
+		var scoped []Install
+		for _, in := range installs {
+			if in.Scope == "global" || PathKey(in.Project) != want {
+				continue
+			}
+			scoped = append(scoped, in)
+		}
+		installs = scoped
+	}
 	if len(installs) == 0 {
-		return nil, fmt.Errorf("no matching installs")
+		if all {
+			return nil, fmt.Errorf("no matching installs")
+		}
+		return nil, fmt.Errorf("no matching installs in %s; use --all to reshape every project", project)
 	}
 	repos := map[string]*SetRepo{}
 	var out []ReshapeResult
@@ -451,7 +494,7 @@ func Reshape(cfg *Config, st *State, to string, pkgs []string, force bool) ([]Re
 			continue
 		}
 		version := VersionInfo{Version: in.Version, Label: in.Label}
-		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, OldHarness: in.Harness}
+		opts := InstallOptions{Force: force, WithConfig: in.WithConfig, Parts: in.Parts, Exclude: in.Exclude, OldHarness: in.Harness}
 		plan, err := BuildPlan(st, repo, pkg, version, target.ID, in.Scope, in.Project, opts)
 		if err != nil {
 			res.Err = err

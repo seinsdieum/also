@@ -24,6 +24,9 @@ func newInstallCmd() *cobra.Command {
 		jsonOut  bool
 		frozen   bool
 		update   bool
+		except   []string
+		only     bool
+		latest   bool
 	)
 	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
@@ -47,6 +50,8 @@ into native config with reversible bookkeeping.`
 		if err != nil {
 			return err
 		}
+		spec.Exclude = splitSelectors(except)
+		spec.OnlyParts = only
 		requestedHarness := harness
 		if spec.HarnessRequested {
 			if requestedHarness != "" && !strings.EqualFold(requestedHarness, spec.Harness) {
@@ -84,9 +89,19 @@ into native config with reversible bookkeeping.`
 		if err != nil {
 			return err
 		}
-		entry := lock.Find(spec.Ref.Package, harnessID)
-		if entry != nil && installSet != "" && installSet != entry.Namespace {
-			entry = nil
+		var entry *also.LockEntry
+		if installSet != "" {
+			entry = lock.FindIn(installSet, spec.Ref.Package, harnessID)
+		} else {
+			entry = lock.Find(spec.Ref.Package, harnessID)
+			if entry != nil {
+				for i := range lock.Packages {
+					other := &lock.Packages[i]
+					if other.Package == spec.Ref.Package && other.Harness == harnessID && other.Namespace != entry.Namespace {
+						return fmt.Errorf("package %q is pinned in more than one namespace; pass from <namespace>", spec.Ref.Package)
+					}
+				}
+			}
 		}
 		if frozen && entry == nil {
 			return fmt.Errorf("no lockfile entry for %s in %s; run without --frozen to resolve it", spec.Ref.Package, proj)
@@ -115,15 +130,21 @@ into native config with reversible bookkeeping.`
 				} else if !update {
 					spec.Ref.Version = entry.Version
 				}
-				if len(spec.Parts) == 0 {
+				if len(spec.Parts) == 0 && !spec.OnlyParts {
 					spec.Parts = entry.Parts
+				}
+				if len(spec.Exclude) == 0 && !spec.OnlyParts {
+					spec.Exclude = entry.Exclude
 				}
 			}
 			if installSet == "" && from == "" {
 				installSet = entry.Namespace
+				cfg = configWithLockNamespace(cfg, entry.Namespace, entry.Remote)
 				if _, ok := cfg.Namespaces[entry.Namespace]; !ok {
 					return fmt.Errorf("lockfile namespace %q is not configured; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
 				}
+			} else if frozen {
+				cfg = configWithLockNamespace(cfg, entry.Namespace, entry.Remote)
 			}
 		}
 		expectedDigest := ""
@@ -131,9 +152,10 @@ into native config with reversible bookkeeping.`
 			expectedDigest = entry.Digest
 		}
 		return withLock(func() error {
-			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
+			plan, setRepo, err := also.InstallPackage(cfg, also.InstallRequest{
 				Package: spec.Ref.spec(), Harness: harnessID, Scope: "project", Project: proj,
-				Parts: spec.Parts, Force: force, WithConfig: !noConfig, Offline: offline,
+				Parts: spec.Parts, Exclude: spec.Exclude, OnlyParts: spec.OnlyParts,
+				Force: force, WithConfig: !noConfig, Offline: offline,
 				ExpectedDigest: expectedDigest,
 			}, installSet, from)
 			if err != nil {
@@ -144,7 +166,21 @@ into native config with reversible bookkeeping.`
 					return err
 				}
 			} else {
-				lock.Upsert(also.LockEntryFromInstall(&plan.Install, constraint))
+				lockConstraint := constraint
+				if lockConstraint == "" && entry != nil {
+					lockConstraint = entry.Constraint
+				}
+				if lockConstraint == "" && !latest {
+					if sem, ok := setRepo.HighestSemverForVersion(plan.Install.Package, plan.Install.Version); ok {
+						lockConstraint = "^" + sem.String()
+					}
+				}
+				// Reload under the lock so a concurrent install in this project
+				// does not lose its entry.
+				if current, lerr := also.LoadLock(proj); lerr == nil {
+					lock = current
+				}
+				lock.Upsert(also.LockEntryFromInstall(&plan.Install, lockConstraint))
 				if err := also.SaveLock(proj, lock); err != nil {
 					return err
 				}
@@ -166,7 +202,22 @@ into native config with reversible bookkeeping.`
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&frozen, "frozen", false, "install exactly what also.lock pins; fail on any difference")
 	c.Flags().BoolVar(&update, "update", false, "ignore the lock pins and resolve the newest version")
+	c.Flags().StringArrayVar(&except, "except", nil, "exclude a kind or name, e.g. --except instructions (repeatable)")
+	c.Flags().BoolVar(&only, "only", false, "replace the existing part selection instead of adding to it")
+	c.Flags().BoolVar(&latest, "latest", false, "do not pin the resolved semantic version to ^major.minor.patch")
 	return c
+}
+
+func splitSelectors(in []string) []string {
+	var out []string
+	for _, item := range in {
+		for _, part := range strings.Split(item, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return also.UniqueStrings(out)
 }
 
 type configChange struct {
@@ -185,6 +236,7 @@ type installOutput struct {
 	Root          string         `json:"root"`
 	Namespace     string         `json:"namespace"`
 	Parts         []string       `json:"parts,omitempty"`
+	Exclude       []string       `json:"exclude,omitempty"`
 	Files         int            `json:"files"`
 	Instructions  string         `json:"instructions,omitempty"`
 	ConfigChanges []configChange `json:"config_changes,omitempty"`
@@ -197,7 +249,7 @@ func planOutput(plan *also.Plan) installOutput {
 	out := installOutput{
 		Package: in.Package, Version: in.Version, Label: in.Label,
 		Harness: in.Harness, Project: in.Project, Root: in.Root,
-		Namespace: in.Set, Parts: in.Parts, Files: len(plan.NewFiles),
+		Namespace: in.Set, Parts: in.Parts, Exclude: in.Exclude, Files: len(plan.NewFiles),
 		Warnings: unique(plan.Warnings), Skipped: unique(plan.Skipped),
 	}
 	if plan.Block != nil {
@@ -211,6 +263,24 @@ func planOutput(plan *also.Plan) installOutput {
 
 // installFromLock replays every entry in also.lock. It is the CI path:
 // one command, no package argument, no resolution.
+// configWithLockNamespace lets a fresh machine (or CI) replay a lock without
+// a separate `also setup`: the lock already records the remote.
+func configWithLockNamespace(cfg *also.Config, name, remote string) *also.Config {
+	if cfg == nil || name == "" || remote == "" {
+		return cfg
+	}
+	if _, ok := cfg.Namespaces[name]; ok {
+		return cfg
+	}
+	cp := *cfg
+	cp.Namespaces = make(map[string]also.NamespaceConfig, len(cfg.Namespaces)+1)
+	for k, v := range cfg.Namespaces {
+		cp.Namespaces[k] = v
+	}
+	cp.Namespaces[name] = also.NamespaceConfig{Remote: remote}
+	return &cp
+}
+
 func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool) error {
 	project, err := installProject(dir)
 	if err != nil {
@@ -224,17 +294,56 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 		return fmt.Errorf("also.lock is missing or empty in %s; run also install <package> first", project)
 	}
 	return withLock(func() error {
+		lock, err = also.LoadLock(project)
+		if err != nil {
+			return err
+		}
+		// Preflight every entry before writing anything. A missing version,
+		// digest mismatch or policy denial in entry N must not leave entries
+		// 1..N-1 installed.
+		policy, err := also.LoadVerifiedPolicy(project)
+		if err != nil {
+			return err
+		}
+		for _, entry := range lock.Packages {
+			if err := entry.CheckEntry(); err != nil {
+				return err
+			}
+			entryCfg := configWithLockNamespace(cfg, entry.Namespace, entry.Remote)
+			if _, ok := entryCfg.Namespaces[entry.Namespace]; !ok {
+				return fmt.Errorf("lockfile namespace %q is not configured and the lock has no remote", entry.Namespace)
+			}
+			set, err := also.ResolveSetForInstall(entryCfg, entry.Namespace, "", offline)
+			if err != nil {
+				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
+			version, err := set.ResolveVersion(entry.Package, entry.Version)
+			if err != nil {
+				return fmt.Errorf("%s/%s@%s: %w", entry.Namespace, entry.Package, entry.Version, err)
+			}
+			pkg, err := set.LoadPackage(entry.Package, version.Version)
+			if err != nil {
+				return fmt.Errorf("%s/%s@%s: %w", entry.Namespace, entry.Package, entry.Version, err)
+			}
+			if entry.Digest != "" && pkg.Meta.Digest != entry.Digest {
+				return fmt.Errorf("%s/%s: package digest %s does not match the lockfile digest %s", entry.Namespace, entry.Package, pkg.Meta.Digest, entry.Digest)
+			}
+			if err := also.CheckPolicyPackage(policy, entry.Namespace, pkg); err != nil {
+				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
+		}
 		out := make([]installOutput, 0, len(lock.Packages))
 		for _, entry := range lock.Packages {
 			if err := entry.CheckEntry(); err != nil {
 				return err
 			}
-			if _, ok := cfg.Namespaces[entry.Namespace]; !ok {
-				return fmt.Errorf("lockfile namespace %q is not configured; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
+			entryCfg := configWithLockNamespace(cfg, entry.Namespace, entry.Remote)
+			if _, ok := entryCfg.Namespaces[entry.Namespace]; !ok {
+				return fmt.Errorf("lockfile namespace %q is not configured and the lock has no remote; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
 			}
-			plan, _, err := also.InstallPackage(cfg, also.InstallRequest{
+			plan, _, err := also.InstallPackage(entryCfg, also.InstallRequest{
 				Package: entry.Package + "@" + entry.Version, Harness: entry.Harness,
-				Scope: "project", Project: project, Parts: entry.Parts, Force: force,
+				Scope: "project", Project: project, Parts: entry.Parts, Exclude: entry.Exclude, Force: force,
 				WithConfig: entry.WithConfig, Offline: offline, ExpectedDigest: entry.Digest,
 			}, entry.Namespace, "")
 			if err != nil {
@@ -261,10 +370,7 @@ func installProject(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if root, _, ferr := also.FindInfra(cwd); ferr == nil {
-		return root, nil
-	}
-	return also.AbsPath(cwd)
+	return also.FindProjectRoot(cwd)
 }
 
 func resolveHarnessWord(cfg *also.Config, requested string, sawFor bool) (string, error) {
@@ -322,6 +428,7 @@ func newUpgradeCmd() *cobra.Command {
 		force        bool
 		jsonOut      bool
 		legacyGlobal bool
+		major        bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
 	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
@@ -330,17 +437,12 @@ func newUpgradeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
-		cwd, err := os.Getwd()
+		cwd, err := installProject("")
 		if err != nil {
 			return err
 		}
 		var infra *also.Infra
-		if root, in, ferr := also.FindInfra(cwd); ferr == nil {
-			cwd = root
+		if _, in, ferr := also.FindInfra(cwd); ferr == nil {
 			infra = in
 		}
 		pkgs := args
@@ -348,7 +450,11 @@ func newUpgradeCmd() *cobra.Command {
 			pkgs = []string{infra.Name}
 		}
 		return withLock(func() error {
-			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal)
+			st, err := also.LoadState()
+			if err != nil {
+				return err
+			}
+			results, err := also.UpgradeInstallsInProject(cfg, st, cwd, pkgs, force, check, legacyGlobal, major)
 			if err != nil {
 				return err
 			}
@@ -402,6 +508,7 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().BoolVar(&check, "check", false, "only report available updates")
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
+	c.Flags().BoolVar(&major, "major", false, "allow an upgrade to a new major version")
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "report old global installs")
 	_ = c.Flags().MarkHidden("legacy-global")
 	return c
@@ -427,11 +534,11 @@ func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error
 			if in.Package != r.Install.Package || in.Harness != r.Install.Harness {
 				continue
 			}
-			if filepath.Clean(in.Project) != filepath.Clean(project) {
+			if also.PathKey(in.Project) != also.PathKey(project) {
 				continue
 			}
 			constraint := ""
-			if old := lock.Find(in.Package, in.Harness); old != nil {
+			if old := lock.FindIn(in.Set, in.Package, in.Harness); old != nil {
 				constraint = old.Constraint
 			}
 			lock.Upsert(also.LockEntryFromInstall(in, constraint))
@@ -442,6 +549,52 @@ func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error
 		return nil
 	}
 	return also.SaveLock(project, lock)
+}
+
+// refreshLockAfterReshape records the harness change. Without this, a
+// reshaped project audits as lock-extra/lock-not-installed and CI replays the
+// old harness.
+func refreshLockAfterReshape(results []also.ReshapeResult) error {
+	st, err := also.LoadState()
+	if err != nil {
+		return err
+	}
+	for _, r := range results {
+		if r.Err != nil || r.Status != "reshaped" || r.Install.Project == "" {
+			continue
+		}
+		project := r.Install.Project
+		if _, err := os.Stat(also.LockfilePath(project)); os.IsNotExist(err) {
+			continue
+		}
+		lock, err := also.LoadLock(project)
+		if err != nil {
+			return err
+		}
+		var next *also.Install
+		for i := range st.Installs {
+			in := &st.Installs[i]
+			if in.Package == r.Install.Package && in.Harness == r.To &&
+				also.PathKey(in.Project) == also.PathKey(project) &&
+				in.Set == r.Install.Set && in.Scope == r.Install.Scope {
+				next = in
+				break
+			}
+		}
+		if next == nil {
+			continue
+		}
+		constraint := ""
+		if old := lock.FindIn(r.Install.Set, r.Install.Package, r.Install.Harness); old != nil {
+			constraint = old.Constraint
+			lock.RemoveIn(r.Install.Set, r.Install.Package, r.Install.Harness)
+		}
+		lock.Upsert(also.LockEntryFromInstall(next, constraint))
+		if err := also.SaveLock(project, lock); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type upgradeOutput struct {
@@ -457,11 +610,14 @@ func newReshapeCmd() *cobra.Command {
 	var (
 		force   bool
 		jsonOut bool
+		project string
+		all     bool
 	)
 	c := newCmd("reshape <harness> [package...]", "Re-materialize installed packages for another harness")
-	c.Long = `Transforms installed packages into the layout of another harness, keeping the
-installed version. Files are transactional: on failure the previous harness
-layout is restored.`
+	c.Long = `Transforms installed packages in this project into the layout of another
+harness, keeping the installed version, and updates also.lock so CI can replay
+the new harness. Files are transactional. Use --all only when you really mean
+every project on this machine.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: also reshape <harness> [package...]")
@@ -474,13 +630,29 @@ layout is restored.`
 		if err != nil {
 			return err
 		}
+		proj := ""
+		if !all {
+			proj, err = installProject(project)
+			if err != nil {
+				return err
+			}
+		}
 		st, err := also.LoadState()
 		if err != nil {
 			return err
 		}
 		return withLock(func() error {
-			results, err := also.Reshape(cfg, st, target.ID, args[1:], force)
+			// Reload under the lock so a concurrent command cannot move state
+			// between the read and the reshape.
+			st, err = also.LoadState()
 			if err != nil {
+				return err
+			}
+			results, err := also.Reshape(cfg, st, target.ID, proj, all, args[1:], force)
+			if err != nil {
+				return err
+			}
+			if err := refreshLockAfterReshape(results); err != nil {
 				return err
 			}
 			failed := 0
@@ -525,6 +697,8 @@ layout is restored.`
 			return nil
 		})
 	}
+	c.Flags().StringVarP(&project, "dir", "p", "", "project to reshape (default: nearest also.lock/git root)")
+	c.Flags().BoolVar(&all, "all", false, "reshape every project on this machine")
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
@@ -641,6 +815,7 @@ func newUninstallCmd() *cobra.Command {
 		force        bool
 		all          bool
 		harness      string
+		namespace    string
 		project      string
 		jsonOut      bool
 		legacyGlobal bool
@@ -660,61 +835,61 @@ func newUninstallCmd() *cobra.Command {
 			}
 			harness = forHarness
 		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
 		proj := project
 		if proj == "" {
-			proj, err = os.Getwd()
+			proj, err = installProject("")
 			if err != nil {
 				return err
-			}
-			if root, _, ferr := also.FindInfra(proj); ferr == nil {
-				proj = root
 			}
 		}
 		absProj, err := also.AbsPath(proj)
 		if err != nil {
 			return err
 		}
-		var matches []*also.Install
-		for _, in := range st.InstallsOf(args[0]) {
-			if legacyGlobal {
-				if in.Scope != "global" {
-					continue
-				}
-			} else {
-				if in.Scope == "global" || in.Project != absProj {
-					continue
-				}
-			}
-			if harness != "" {
-				h, ok := also.ResolveHarness(harness)
-				if !ok || in.Harness != h.ID {
-					continue
-				}
-			}
-			matches = append(matches, in)
-		}
-		if len(matches) == 0 {
-			if legacyGlobal {
-				return fmt.Errorf("package %q has no legacy global install", args[0])
-			}
-			return fmt.Errorf("package %q is not installed in %s", args[0], absProj)
-		}
-		if len(matches) > 1 && !all {
-			var lines []string
-			for _, in := range matches {
-				lines = append(lines, fmt.Sprintf("  %s (%s)", in.Harness, in.Root))
-			}
-			return fmt.Errorf("package %q is installed %d times; add --all or filter with --harness:\n%s", args[0], len(matches), strings.Join(lines, "\n"))
-		}
-		ids := make([]string, 0, len(matches))
-		for _, in := range matches {
-			ids = append(ids, in.ID)
-		}
 		return withLock(func() error {
+			st, err := also.LoadState()
+			if err != nil {
+				return err
+			}
+			var matches []*also.Install
+			for _, in := range st.InstallsOf(args[0]) {
+				if legacyGlobal {
+					if in.Scope != "global" {
+						continue
+					}
+				} else {
+					if in.Scope == "global" || also.PathKey(in.Project) != also.PathKey(absProj) {
+						continue
+					}
+				}
+				if harness != "" {
+					h, ok := also.ResolveHarness(harness)
+					if !ok || in.Harness != h.ID {
+						continue
+					}
+				}
+				if namespace != "" && in.Set != namespace {
+					continue
+				}
+				matches = append(matches, in)
+			}
+			if len(matches) == 0 {
+				if legacyGlobal {
+					return fmt.Errorf("package %q has no legacy global install", args[0])
+				}
+				return fmt.Errorf("package %q is not installed in %s", args[0], absProj)
+			}
+			if len(matches) > 1 && !all {
+				var lines []string
+				for _, in := range matches {
+					lines = append(lines, fmt.Sprintf("  %s (%s)", in.Harness, in.Root))
+				}
+				return fmt.Errorf("package %q is installed %d times; add --all or filter with --harness/--namespace:\n%s", args[0], len(matches), strings.Join(lines, "\n"))
+			}
+			ids := make([]string, 0, len(matches))
+			for _, in := range matches {
+				ids = append(ids, in.ID)
+			}
 			type uninstallOutput struct {
 				Namespace string   `json:"namespace"`
 				Package   string   `json:"package"`
@@ -752,7 +927,7 @@ func newUninstallCmd() *cobra.Command {
 				}
 				if len(lock.Packages) > 0 {
 					for _, item := range out {
-						lock.Remove(item.Package, item.Harness)
+						lock.RemoveIn(item.Namespace, item.Package, item.Harness)
 					}
 					if err := also.SaveLock(absProj, lock); err != nil {
 						return err
@@ -768,6 +943,7 @@ func newUninstallCmd() *cobra.Command {
 	c.Flags().BoolVar(&force, "force", false, "remove locally modified files too")
 	c.Flags().BoolVar(&all, "all", false, "remove every matching installation")
 	c.Flags().StringVar(&harness, "harness", "", "filter by harness")
+	c.Flags().StringVar(&namespace, "namespace", "", "filter by namespace")
 	c.Flags().StringVarP(&project, "dir", "p", "", "directory to uninstall from (default: current directory)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "remove an old global install")
@@ -788,44 +964,46 @@ missing or modified files are left for audit and drift to report.`
 		if len(args) > 0 {
 			return fmt.Errorf("usage: also prune [--dry-run] [--json]")
 		}
-		st, err := also.LoadState()
-		if err != nil {
-			return err
-		}
-		type pruneOutput struct {
-			Namespace string `json:"namespace"`
-			Package   string `json:"package"`
-			Version   string `json:"version"`
-			Harness   string `json:"harness"`
-			Project   string `json:"project"`
-		}
-		var out []pruneOutput
-		for _, in := range st.PruneMissingProjects() {
-			out = append(out, pruneOutput{
-				Namespace: in.Set, Package: in.Package, Version: in.Version,
-				Harness: in.Harness, Project: in.Project,
-			})
-		}
-		if !dryRun && len(out) > 0 {
-			if err := also.SaveState(st); err != nil {
+		return withLock(func() error {
+			st, err := also.LoadState()
+			if err != nil {
 				return err
 			}
-		}
-		if jsonOut {
-			return printJSON(map[string]any{"dry_run": dryRun, "removed": out})
-		}
-		if len(out) == 0 {
-			fmt.Println("nothing to prune")
-			return nil
-		}
-		for _, item := range out {
-			verb := "pruned"
-			if dryRun {
-				verb = "would prune"
+			type pruneOutput struct {
+				Namespace string `json:"namespace"`
+				Package   string `json:"package"`
+				Version   string `json:"version"`
+				Harness   string `json:"harness"`
+				Project   string `json:"project"`
 			}
-			fmt.Printf("%s %s/%s@%s from %s (%s)\n", verb, item.Namespace, item.Package, short(item.Version), item.Harness, item.Project)
-		}
-		return nil
+			var out []pruneOutput
+			for _, in := range st.PruneMissingProjects() {
+				out = append(out, pruneOutput{
+					Namespace: in.Set, Package: in.Package, Version: in.Version,
+					Harness: in.Harness, Project: in.Project,
+				})
+			}
+			if !dryRun && len(out) > 0 {
+				if err := also.SaveState(st); err != nil {
+					return err
+				}
+			}
+			if jsonOut {
+				return printJSON(map[string]any{"dry_run": dryRun, "removed": out})
+			}
+			if len(out) == 0 {
+				fmt.Println("nothing to prune")
+				return nil
+			}
+			for _, item := range out {
+				verb := "pruned"
+				if dryRun {
+					verb = "would prune"
+				}
+				fmt.Printf("%s %s/%s@%s from %s (%s)\n", verb, item.Namespace, item.Package, short(item.Version), item.Harness, item.Project)
+			}
+			return nil
+		})
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be removed")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")

@@ -1,6 +1,7 @@
 package also
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,6 +35,7 @@ type AuditPackage struct {
 	SourceHarness string       `json:"source_harness"`
 	Project       string       `json:"project,omitempty"`
 	Parts         []string     `json:"parts,omitempty"`
+	Exclude       []string     `json:"exclude,omitempty"`
 	InstalledAt   time.Time    `json:"installed_at"`
 	Files         int          `json:"files"`
 	Missing       int          `json:"missing"`
@@ -83,6 +85,67 @@ type AuditReport struct {
 // Audit builds the report for one project (or every tracked install with all).
 // requireLock makes a missing, untracked or unverifiable lockfile a failure;
 // "audit --ci" sets it.
+// gitTrackedPaths returns the tracked paths of one project, keyed by PathKey.
+// A project outside git has no tracked paths.
+func gitTrackedPaths(project string) map[string]bool {
+	root, err := GitProjectRoot(project)
+	if err != nil {
+		return nil
+	}
+	out, err := runGitBytes(root, "ls-files", "-z")
+	if err != nil {
+		return nil
+	}
+	tracked := map[string]bool{}
+	for _, rel := range bytes.Split(out, []byte{0}) {
+		if len(rel) == 0 {
+			continue
+		}
+		tracked[PathKey(filepath.Join(root, string(rel)))] = true
+	}
+	return tracked
+}
+
+// trackedInfraFindings reports managed files, instruction blocks and config
+// edits that ended up in git. This is the explicit guard behind
+// "also exclude infra": an installed file is infrastructure, not product code.
+func trackedInfraFindings(in *Install, tracked map[string]bool, requireLock bool) []AuditFinding {
+	if len(tracked) == 0 {
+		return nil
+	}
+	severity := "warn"
+	if requireLock {
+		severity = "fail"
+	}
+	var out []AuditFinding
+	seen := map[string]bool{}
+	add := func(code, path, detail string) {
+		key := code + "\x00" + path
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, AuditFinding{
+			Severity: severity, Code: code, Package: in.Package, Harness: in.Harness,
+			Path: path, Detail: detail,
+		})
+	}
+	for _, f := range in.Files {
+		if tracked[PathKey(f.Path)] {
+			add("infra-tracked", f.Path, "installed infrastructure file is tracked by git; run also exclude infra for "+in.Harness+" and untrack it")
+		}
+	}
+	if in.Block != nil && tracked[PathKey(in.Block.File)] {
+		add("block-tracked", in.Block.File, "managed instruction block is in a tracked file; keep the harness instructions out of the product history")
+	}
+	for _, e := range in.Edits {
+		if tracked[PathKey(e.File)] {
+			add("config-tracked", e.File, "managed config edit is in a tracked file; keep generated harness config out of the product history")
+		}
+	}
+	return out
+}
+
 func Audit(st *State, project string, all, requireLock bool) (*AuditReport, error) {
 	if st == nil {
 		return nil, fmt.Errorf("no install state")
@@ -119,29 +182,30 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 			Detail: "also.lock exists but is not tracked by git; commit it so CI and other machines share the pins",
 		})
 	}
-	type lockKey struct{ pkg, harness string }
+	type lockKey struct{ namespace, pkg, harness string }
 	locked := map[lockKey]LockEntry{}
 	for _, entry := range lock.Packages {
-		locked[lockKey{entry.Package, entry.Harness}] = entry
+		locked[lockKey{entry.Namespace, entry.Package, entry.Harness}] = entry
 	}
 	projectInstalls := map[lockKey]*Install{}
 	policies := map[string]*Policy{}
 	policyStatus := map[string]*PolicyVerification{}
+	trackedCache := map[string]map[string]bool{}
 	for idx := range st.Installs {
 		in := &st.Installs[idx]
 		if !all {
-			if in.Scope == "global" || filepath.Clean(in.Project) != filepath.Clean(abs) {
+			if in.Scope == "global" || PathKey(in.Project) != PathKey(abs) {
 				continue
 			}
 		}
 		ap := AuditPackage{
 			Package: in.Package, Namespace: in.Set, Version: in.Version, Digest: in.Digest,
 			Label: in.Label, Harness: in.Harness, SourceHarness: in.SourceHarness,
-			Project: in.Project, Parts: in.Parts, InstalledAt: in.InstalledAt,
+			Project: in.Project, Parts: in.Parts, Exclude: in.Exclude, InstalledAt: in.InstalledAt,
 			Files: len(in.Files), Executables: in.Executables,
 		}
-		if filepath.Clean(in.Project) == filepath.Clean(abs) {
-			projectInstalls[lockKey{in.Package, in.Harness}] = in
+		if PathKey(in.Project) == PathKey(abs) {
+			projectInstalls[lockKey{in.Set, in.Package, in.Harness}] = in
 		}
 		add := func(severity, code, path, detail string) {
 			report.Findings = append(report.Findings, AuditFinding{
@@ -151,6 +215,17 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 		}
 		if in.Scope == "global" {
 			add("warn", "legacy-global", "", "old global install; remove it with: also uninstall "+in.Package+" --legacy-global")
+		}
+		if in.Project != "" {
+			root, rerr := GitProjectRoot(in.Project)
+			if rerr == nil {
+				tracked, ok := trackedCache[root]
+				if !ok {
+					tracked = gitTrackedPaths(root)
+					trackedCache[root] = tracked
+				}
+				report.Findings = append(report.Findings, trackedInfraFindings(in, tracked, requireLock)...)
+			}
 		}
 		if in.Digest == "" {
 			add("warn", "digest-missing", "", "state predates recorded digests; reinstall to make the inventory verifiable")
@@ -286,7 +361,7 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 				addLockFinding("fail", "lock-namespace-mismatch", entry.Package, entry.Harness,
 					"installed from "+in.Set+" but also.lock pins "+entry.Namespace)
 			}
-			if !sameStringSet(in.Parts, entry.Parts) || in.WithConfig != entry.WithConfig {
+			if !sameStringSet(in.Parts, entry.Parts) || !sameStringSet(in.Exclude, entry.Exclude) || in.WithConfig != entry.WithConfig {
 				addLockFinding("warn", "lock-config-mismatch", entry.Package, entry.Harness,
 					"installed parts or config selection differ from also.lock")
 			}

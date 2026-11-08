@@ -26,15 +26,21 @@ type BlockEdit struct {
 
 // ConfigEdit is one reversible change in a harness config file.
 type ConfigEdit struct {
-	File        string          `json:"file"`
-	Kind        string          `json:"kind"` // json-set | json-append | toml-block
-	Path        []string        `json:"path,omitempty"`
-	Value       json.RawMessage `json:"value,omitempty"`
-	Previous    json.RawMessage `json:"previous,omitempty"`
-	HadPrev     bool            `json:"had_previous,omitempty"`
-	Marker      string          `json:"marker,omitempty"`
-	Block       string          `json:"block,omitempty"`
-	CreatedFile bool            `json:"created_file,omitempty"`
+	File     string          `json:"file"`
+	Kind     string          `json:"kind"` // json-set | json-append | toml-block
+	Path     []string        `json:"path,omitempty"`
+	Value    json.RawMessage `json:"value,omitempty"`
+	Previous json.RawMessage `json:"previous,omitempty"`
+	HadPrev  bool            `json:"had_previous,omitempty"`
+	// Base is the value before any package managed this path. It is shared by
+	// every owner, so uninstalling the last owner restores the user's value
+	// regardless of uninstall order.
+	Base    json.RawMessage `json:"base,omitempty"`
+	BaseSet bool            `json:"base_set,omitempty"`
+	Marker  string          `json:"marker,omitempty"`
+	Block   string          `json:"block,omitempty"`
+	// CreatedFile means also created the file (it did not exist before).
+	CreatedFile bool `json:"created_file,omitempty"`
 }
 
 // Executable is one installed component that can run code or start a process:
@@ -60,6 +66,7 @@ type Install struct {
 	Root          string          `json:"root"`
 	WithConfig    bool            `json:"with_config"`
 	Parts         []string        `json:"parts,omitempty"`
+	Exclude       []string        `json:"exclude,omitempty"`
 	InstalledAt   time.Time       `json:"installed_at"`
 	Files         []InstalledFile `json:"files"`
 	Block         *BlockEdit      `json:"block,omitempty"`
@@ -132,22 +139,20 @@ func (s *State) InstallsOf(pkg string) []*Install {
 
 // ownerOf returns the install that owns a file, if any.
 func (s *State) ownerOf(path string) *Install {
-	for idx := range s.Installs {
-		for _, f := range s.Installs[idx].Files {
-			if f.Path == path {
-				return &s.Installs[idx]
-			}
-		}
+	owners := s.ownersOf(path)
+	if len(owners) == 0 {
+		return nil
 	}
-	return nil
+	return owners[0]
 }
 
 // ownersOf returns every install that lists path as one of its files.
 func (s *State) ownersOf(path string) []*Install {
 	var out []*Install
+	key := PathKey(path)
 	for idx := range s.Installs {
 		for _, f := range s.Installs[idx].Files {
-			if f.Path == path {
+			if PathKey(f.Path) == key {
 				out = append(out, &s.Installs[idx])
 				break
 			}
@@ -165,6 +170,113 @@ func (s *State) sharedConfigEdit(e ConfigEdit, selfID string) bool {
 		for _, oe := range s.Installs[idx].Edits {
 			if oe.File == e.File && oe.Kind == e.Kind && oe.Marker == e.Marker &&
 				stringSliceEqual(oe.Path, e.Path) && jsonEqual(oe.Value, e.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameConfigScope(a, b *Install) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Scope != b.Scope {
+		return false
+	}
+	if a.Scope == "global" {
+		return true
+	}
+	return PathKey(a.Project) == PathKey(b.Project)
+}
+
+// otherConfigEdit returns another install that owns the same config path in the
+// same project. Used by uninstall and upgrade to keep a surviving package's
+// value instead of restoring a value that belonged to a removed package.
+func (s *State) otherConfigEdit(in *Install, file string, path []string) *ConfigEdit {
+	for idx := range s.Installs {
+		other := &s.Installs[idx]
+		if other.ID == in.ID || !sameConfigScope(in, other) {
+			continue
+		}
+		for i := range other.Edits {
+			e := &other.Edits[i]
+			if e.File == file && e.Kind == "json-set" && stringSliceEqual(e.Path, path) {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+// configBase finds the original pre-also value shared by any owner of a path.
+// set=true with a nil base means the key did not exist before also. owner
+// distinguishes "another package owns this path, base absent" from "no owner
+// at all".
+func (s *State) configBase(in *Install, file string, path []string) (json.RawMessage, bool, bool) {
+	for idx := range s.Installs {
+		other := &s.Installs[idx]
+		if in != nil && other.ID == in.ID {
+			continue
+		}
+		if in != nil && !sameConfigScope(in, other) {
+			continue
+		}
+		for i := range other.Edits {
+			e := &other.Edits[i]
+			if e.File != file || e.Kind != "json-set" || !stringSliceEqual(e.Path, path) {
+				continue
+			}
+			if e.BaseSet {
+				return e.Base, true, true
+			}
+			if e.HadPrev {
+				return e.Previous, true, true
+			}
+			return nil, true, true
+		}
+	}
+	return nil, false, false
+}
+
+// fileHasOtherBlock reports whether another install keeps a block in this file.
+func (s *State) fileHasOtherBlock(in *Install, file string) bool {
+	for idx := range s.Installs {
+		other := &s.Installs[idx]
+		if other.ID == in.ID || !sameConfigScope(in, other) {
+			continue
+		}
+		if other.Block != nil && other.Block.File == file {
+			return true
+		}
+	}
+	return false
+}
+
+// fileHasOtherConfigEdits reports whether any other install manages this file.
+func (s *State) fileHasOtherConfigEdits(in *Install, file string) bool {
+	for idx := range s.Installs {
+		other := &s.Installs[idx]
+		if other.ID == in.ID || !sameConfigScope(in, other) {
+			continue
+		}
+		for _, e := range other.Edits {
+			if e.File == file {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fileCreatedByAlso reports whether also created this config/instruction file.
+func (s *State) fileCreatedByAlso(file string) bool {
+	for idx := range s.Installs {
+		if in := &s.Installs[idx]; in.Block != nil && in.Block.File == file && in.Block.CreatedFile {
+			return true
+		}
+		for _, e := range s.Installs[idx].Edits {
+			if e.File == file && e.CreatedFile {
 				return true
 			}
 		}
@@ -220,7 +332,7 @@ func (s *State) Remove(id string) {
 // InstallID is stable across upgrades of one package into one harness. The
 // harness is part of the slot so the same package can live in two harnesses.
 func InstallID(set, pkg, harness, scope, project string) string {
-	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + harness + "\x00" + scope + "\x00" + project))
+	sum := sha256.Sum256([]byte(set + "\x00" + pkg + "\x00" + harness + "\x00" + scope + "\x00" + PathKey(project)))
 	return hex.EncodeToString(sum[:8])
 }
 

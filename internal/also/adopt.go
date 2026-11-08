@@ -95,7 +95,7 @@ func addPreservedLayers(tmp, project string, targetH *Harness, write func(string
 		if in.Scope != "project" || in.Project == "" {
 			continue
 		}
-		if filepath.Clean(in.Project) != filepath.Clean(project) {
+		if PathKey(in.Project) != PathKey(project) {
 			continue
 		}
 		if in.SourceHarness == targetH.ID {

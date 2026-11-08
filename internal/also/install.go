@@ -16,6 +16,11 @@ type InstallOptions struct {
 	WithConfig bool
 	// Parts selects individual components for a partial install. Empty = all.
 	Parts []string
+	// Exclude removes kinds or named components from an otherwise complete
+	// install, for example "instructions" or "skill:review".
+	Exclude []string
+	// OnlyParts replaces the existing selection instead of adding to it.
+	OnlyParts bool
 	// OldHarness is set by reshape to reuse the install slot of another harness.
 	OldHarness string
 }
@@ -102,10 +107,6 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		project = ""
 	}
 	target := targetH.TargetPath(project)
-	render, err := RenderPackageSelection(pkg, source, target, opts.Parts)
-	if err != nil {
-		return nil, err
-	}
 	id := InstallID(set.Name, pkg.Meta.Name, targetH.ID, scope, project)
 	oldID := id
 	if opts.OldHarness != "" && opts.OldHarness != targetH.ID {
@@ -119,6 +120,36 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			old = candidate
 		}
 	}
+	if old == nil {
+		// Adopt a slot whose path was recorded before paths were canonicalized.
+		for idx := range st.Installs {
+			candidate := &st.Installs[idx]
+			if candidate.Set == set.Name && candidate.Package == pkg.Meta.Name &&
+				candidate.Harness == targetH.ID && candidate.Scope == scope &&
+				PathKey(candidate.Project) == PathKey(project) {
+				old = candidate
+				oldID = candidate.ID
+				break
+			}
+		}
+	}
+	parts, excludes := opts.Parts, opts.Exclude
+	if old != nil && !opts.OnlyParts {
+		switch {
+		case len(old.Parts) == 0:
+			// The previous install was complete (possibly with exclusions).
+			// Adding includes cannot narrow it; only exclusions can.
+			parts = nil
+			excludes = UniqueStrings(append(append([]string{}, old.Exclude...), excludes...))
+		default:
+			parts = UniqueStrings(append(append([]string{}, old.Parts...), parts...))
+			excludes = UniqueStrings(append(append([]string{}, old.Exclude...), excludes...))
+		}
+	}
+	render, err := RenderPackageSelection(pkg, source, target, parts, excludes)
+	if err != nil {
+		return nil, err
+	}
 	plan := &Plan{Target: target, Render: render}
 	if old != nil && old.ID != id {
 		plan.OldInstallID = old.ID
@@ -130,7 +161,8 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		ID: id, Set: set.Name, SetRemote: set.Cfg.Remote, Package: pkg.Meta.Name,
 		Version: version.Version, Digest: pkg.Meta.Digest, Label: version.Label,
 		SourceHarness: source.ID, Harness: targetH.ID, Scope: scope, Project: project,
-		Root: target.Root, WithConfig: opts.WithConfig, Parts: UniqueStrings(opts.Parts),
+		Root: target.Root, WithConfig: opts.WithConfig,
+		Parts: UniqueStrings(parts), Exclude: UniqueStrings(excludes),
 		InstalledAt: time.Now().UTC(),
 	}
 
@@ -144,7 +176,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			return nil, fmt.Errorf("package produces the same file twice: %s", f.Dest)
 		}
 		destSet[f.Dest] = true
-		if err := checkFileConflict(st, f.Dest, id, opts.Force); err != nil {
+		if err := checkFileConflict(st, f.Dest, opts.Force, f.Data); err != nil {
 			return nil, err
 		}
 		plan.NewFiles = append(plan.NewFiles, f)
@@ -198,10 +230,13 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 			if old != nil && old.Block != nil {
 				oldHash = old.Block.SHA
 			}
-			if oldHash == "" || blockBodyHash(oldBody) != oldHash {
-				if !opts.Force {
+			sameBody := blockBodyHash(oldBody) == blockBodyHash(body)
+			if oldHash == "" {
+				if !sameBody && !opts.Force {
 					return nil, fmt.Errorf("instructions block %q in %s was modified by you; use --force to replace it", bid, render.Instr.File)
 				}
+			} else if blockBodyHash(oldBody) != oldHash && !opts.Force {
+				return nil, fmt.Errorf("instructions block %q in %s was modified by you; use --force to replace it", bid, render.Instr.File)
 			}
 		}
 		if old != nil && old.Block != nil && old.Block.File != render.Instr.File {
@@ -266,7 +301,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				for _, ev := range events {
 					for _, group := range render.Hooks[ev] {
 						path := []string{rootKey, ev}
-						edit, added, err := planJSONAppend(file, path, group, old, opts.Force)
+						edit, added, err := planJSONAppend(st, file, path, group, old, opts.Force)
 						if err != nil {
 							return nil, err
 						}
@@ -404,7 +439,7 @@ func configPathAllowed(dest string, t Target) bool {
 	return t.Project != "" && isWithin(t.Project, dest)
 }
 
-func checkFileConflict(st *State, dest, id string, force bool) error {
+func checkFileConflict(st *State, dest string, force bool, want []byte) error {
 	fi, err := os.Lstat(dest)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -419,11 +454,17 @@ func checkFileConflict(st *State, dest, id string, force bool) error {
 	if err != nil {
 		return err
 	}
+	// A byte-identical file is safe to adopt even when this machine lost its
+	// state (backup restore, copied tree, or a committed infra tree that audit
+	// will flag). It cannot hide a different payload.
+	if bytes.Equal(data, want) {
+		return nil
+	}
 	cur := ShortHash(data, 64)
 	owner := st.ownerOf(dest)
 	if owner != nil {
 		for _, of := range owner.Files {
-			if of.Path == dest && of.SHA == cur {
+			if PathKey(of.Path) == PathKey(dest) && of.SHA == cur {
 				return nil
 			}
 		}
@@ -458,9 +499,10 @@ func checkRemove(st *State, of InstalledFile, id, oldID string, force bool) (boo
 			return false, fmt.Sprintf("%s was modified; left in place", of.Path), nil
 		}
 	}
-	owner := st.ownerOf(of.Path)
-	if owner != nil && owner.ID != id && owner.ID != oldID {
-		return false, fmt.Sprintf("%s is also owned by another install; left in place", of.Path), nil
+	for _, owner := range st.ownersOf(of.Path) {
+		if owner.ID != id && owner.ID != oldID {
+			return false, fmt.Sprintf("%s is also owned by another install; left in place", of.Path), nil
+		}
 	}
 	return true, "", nil
 }
@@ -530,8 +572,20 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 	}
 	existing, exists := doc.RawAt(path...)
 	oldEdit := findOldEdit(old, file, path)
+	base, hasBase, hasOwner := st.configBase(old, file, path)
 	if exists && oldEdit == nil && jsonEqual(existing, raw) {
-		return nil, fmt.Sprintf("%s is already configured in %s; left unchanged", strings.Join(path, "."), file), nil
+		// Two packages may want the same value. The second one still has to
+		// record ownership, otherwise uninstalling the first removes a value
+		// the second depends on.
+		e := &ConfigEdit{File: file, Kind: "json-set", Path: path, Value: raw,
+			HadPrev: true, Previous: existing,
+			CreatedFile: !fileExists(file) || st.fileCreatedByAlso(file)}
+		if hasOwner {
+			e.Base, e.BaseSet = base, true
+		} else {
+			e.Base, e.BaseSet = existing, true
+		}
+		return e, fmt.Sprintf("%s is already configured in %s; shared ownership recorded", strings.Join(path, "."), file), nil
 	}
 	if oldEdit != nil && exists && !jsonEqual(existing, oldEdit.Value) && !force {
 		return nil, "", fmt.Errorf("%s in %s was changed since it was installed; use --force to replace it", strings.Join(path, "."), file)
@@ -545,9 +599,23 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 		e.HadPrev = oldEdit.HadPrev
 		e.Previous = oldEdit.Previous
 		e.CreatedFile = oldEdit.CreatedFile
+		if oldEdit.BaseSet {
+			e.Base, e.BaseSet = oldEdit.Base, true
+		} else if oldEdit.HadPrev {
+			e.Base, e.BaseSet = oldEdit.Previous, true
+		}
 	} else if exists {
 		e.HadPrev = true
 		e.Previous = existing
+	}
+	if !e.BaseSet && hasBase {
+		e.Base, e.BaseSet = base, true
+	}
+	if !e.BaseSet && exists {
+		e.Base, e.BaseSet = existing, true
+	}
+	if !e.CreatedFile && st.fileCreatedByAlso(file) {
+		e.CreatedFile = true
 	}
 	return e, "", nil
 }
@@ -622,7 +690,7 @@ func planSettingsValue(st *State, old *Install, file string, path []string, valu
 	case []any:
 		var edits []ConfigEdit
 		for _, el := range v {
-			e, added, err := planJSONAppend(file, path, el, old, force)
+			e, added, err := planJSONAppend(st, file, path, el, old, force)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -648,7 +716,7 @@ func planSettingsValue(st *State, old *Install, file string, path []string, valu
 	}
 }
 
-func planJSONAppend(file string, path []string, value any, old *Install, force bool) (*ConfigEdit, bool, error) {
+func planJSONAppend(st *State, file string, path []string, value any, old *Install, force bool) (*ConfigEdit, bool, error) {
 	data, _, err := readConfigFile(file)
 	if err != nil {
 		return nil, false, err
@@ -683,7 +751,28 @@ func planJSONAppend(file string, path []string, value any, old *Install, force b
 						}
 					}
 				}
-				if !owned {
+				shared := false
+				if st != nil {
+					for idx := range st.Installs {
+						other := &st.Installs[idx]
+						if old != nil && other.ID == old.ID {
+							continue
+						}
+						if old != nil && !sameConfigScope(old, other) {
+							continue
+						}
+						for _, oe := range other.Edits {
+							if oe.File == file && oe.Kind == "json-append" && stringSliceEqual(oe.Path, path) && jsonEqual(oe.Value, raw) {
+								shared = true
+								break
+							}
+						}
+						if shared {
+							break
+						}
+					}
+				}
+				if !owned && !shared {
 					return nil, false, nil
 				}
 			}
@@ -849,7 +938,7 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	// 1. Remove previous config edits.
 	if old != nil {
 		for _, e := range old.Edits {
-			check, warn, err := removeConfigEdit(t, e)
+			check, warn, err := removeConfigEdit(t, st, old, e)
 			if err != nil {
 				return err
 			}
@@ -1014,6 +1103,18 @@ func applyConfigEdit(t *tx, e ConfigEdit) error {
 		if err != nil {
 			return err
 		}
+		if raw, ok := doc.RawAt(e.Path...); ok {
+			var arr []json.RawMessage
+			if json.Unmarshal(raw, &arr) == nil {
+				for _, el := range arr {
+					if jsonEqual(el, e.Value) {
+						// Another package already contributed this exact
+						// element; this edit only records shared ownership.
+						return nil
+					}
+				}
+			}
+		}
 		var v any
 		if err := json.Unmarshal(e.Value, &v); err != nil {
 			return err
@@ -1095,7 +1196,7 @@ func isEmptyJSON(data []byte) bool {
 	return empty(doc.root)
 }
 
-func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
+func removeConfigEdit(t *tx, st *State, in *Install, e ConfigEdit) (bool, string, error) {
 	data, err := os.ReadFile(e.File)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1106,6 +1207,12 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 	mode := os.FileMode(0o644)
 	if st, err := os.Stat(e.File); err == nil {
 		mode = st.Mode().Perm()
+	}
+	removeIfEmpty := func(out []byte) error {
+		if !isEmptyJSON(out) || st.fileHasOtherConfigEdits(in, e.File) || !st.fileCreatedByAlso(e.File) {
+			return t.write(e.File, out, mode)
+		}
+		return t.remove(e.File)
 	}
 	switch e.Kind {
 	case "json-set":
@@ -1120,14 +1227,42 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 		if !jsonEqual(cur, e.Value) {
 			return false, "", nil
 		}
+		// Another installed package still owns this key: keep its value
+		// instead of restoring a value that belonged to this install.
+		if other := st.otherConfigEdit(in, e.File, e.Path); other != nil {
+			if jsonEqual(cur, other.Value) {
+				return true, "", nil
+			}
+			var v any
+			if err := json.Unmarshal(other.Value, &v); err != nil {
+				return false, "", err
+			}
+			out, err := doc.Set(v, e.Path...)
+			if err != nil {
+				return false, "", err
+			}
+			return true, "", t.write(e.File, out, mode)
+		}
 		var out []byte
-		if e.HadPrev {
+		switch {
+		case e.BaseSet && len(e.Base) == 0:
+			out, _, err = doc.Remove(e.Path...)
+			if err == nil {
+				out = pruneEmptyJSONParents(out, e.Path)
+			}
+		case e.BaseSet:
+			var v any
+			if err := json.Unmarshal(e.Base, &v); err != nil {
+				return false, "", err
+			}
+			out, err = doc.Set(v, e.Path...)
+		case e.HadPrev:
 			var v any
 			if err := json.Unmarshal(e.Previous, &v); err != nil {
 				return false, "", err
 			}
 			out, err = doc.Set(v, e.Path...)
-		} else {
+		default:
 			out, _, err = doc.Remove(e.Path...)
 			if err == nil {
 				out = pruneEmptyJSONParents(out, e.Path)
@@ -1136,14 +1271,22 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 		if err != nil {
 			return false, "", err
 		}
-		if e.CreatedFile && isEmptyJSON(out) {
-			return true, "", t.remove(e.File)
-		}
-		return true, "", t.write(e.File, out, mode)
+		return true, "", removeIfEmpty(out)
 	case "json-append":
 		doc, err := ParseJSONC(data)
 		if err != nil {
 			return false, "", err
+		}
+		for idx := range st.Installs {
+			other := &st.Installs[idx]
+			if other.ID == in.ID || !sameConfigScope(in, other) {
+				continue
+			}
+			for _, oe := range other.Edits {
+				if oe.File == e.File && oe.Kind == "json-append" && stringSliceEqual(oe.Path, e.Path) && jsonEqual(oe.Value, e.Value) {
+					return true, "", nil
+				}
+			}
 		}
 		out, found, err := doc.RemoveEqual(e.Value, e.Path...)
 		if err != nil {
@@ -1152,21 +1295,29 @@ func removeConfigEdit(t *tx, e ConfigEdit) (bool, string, error) {
 		if !found {
 			return false, "", nil
 		}
-		if e.CreatedFile && isEmptyJSON(out) {
-			return true, "", t.remove(e.File)
-		}
-		return true, "", t.write(e.File, out, mode)
+		return true, "", removeIfEmpty(out)
 	case "toml-block":
 		if e.Block != "" {
 			if body, ok := tomlBlockBody(data, e.Marker); ok && strings.TrimSpace(body) != strings.TrimSpace(e.Block) {
 				return false, "", nil
 			}
 		}
+		for idx := range st.Installs {
+			other := &st.Installs[idx]
+			if other.ID == in.ID || !sameConfigScope(in, other) {
+				continue
+			}
+			for _, oe := range other.Edits {
+				if oe.File == e.File && oe.Kind == "toml-block" && oe.Marker == e.Marker {
+					return true, "", nil
+				}
+			}
+		}
 		out, found := tomlRemoveBlock(data, e.Marker)
 		if !found {
 			return false, "", nil
 		}
-		if e.CreatedFile && strings.TrimSpace(string(out)) == "" {
+		if strings.TrimSpace(string(out)) == "" && !st.fileHasOtherConfigEdits(in, e.File) && st.fileCreatedByAlso(e.File) {
 			return true, "", t.remove(e.File)
 		}
 		return true, "", t.write(e.File, out, mode)

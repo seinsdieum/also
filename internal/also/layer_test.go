@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
+func TestLayerIsAuthoritativeNativeOverride(t *testing.T) {
 	mainAgent := []byte("---\ndescription: d\nmode: subagent\n---\nbody\n")
 	originalAgent := []byte("---\nname: foo\ndescription: d\n---\nbody\n")
 	layerAgent := originalAgent
@@ -43,7 +43,9 @@ func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
 		t.Fatalf("native layer should win when unchanged:\n%s", got)
 	}
 
-	// A modified intermediate file must win over the native layer.
+	// The layer is an explicit native override: it wins even if the
+	// intermediate package file was edited, otherwise one package could not
+	// carry two deliberately different native variants.
 	modified := []byte("---\ndescription: edited\nmode: subagent\n---\nbody\n")
 	files["agents/foo.md"] = &SnapshotFile{Data: modified, Mode: 0o644}
 	pkg2 := &Package{Meta: pkg.Meta, Files: files}
@@ -57,8 +59,8 @@ func TestLayerRestoresNativeOnlyWhenUnmodified(t *testing.T) {
 			got = f.Data
 		}
 	}
-	if !strings.Contains(string(got), "edited") {
-		t.Fatalf("modified intermediate file should win:\n%s", got)
+	if string(got) != string(layerAgent) {
+		t.Fatalf("native layer must stay authoritative:\n%s", got)
 	}
 }
 

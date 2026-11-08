@@ -51,6 +51,8 @@ func parsePkgRef(tok string, _ *also.Config) (pkgRef, error) {
 type installSpec struct {
 	Ref              pkgRef
 	Parts            []string
+	Exclude          []string
+	OnlyParts        bool
 	Harness          string
 	HarnessRequested bool
 }
@@ -145,7 +147,7 @@ func parseInstallArgs(args []string, cfg *also.Config) (installSpec, error) {
 			if err != nil {
 				return out, err
 			}
-			parts, err := parsePartSelector(left)
+			parts, err := parsePartSelectors(left)
 			if err != nil {
 				return out, err
 			}
@@ -175,7 +177,7 @@ func parseInstallArgs(args []string, cfg *also.Config) (installSpec, error) {
 		if err != nil {
 			return out, err
 		}
-		parts, err := parsePartSelector(args[:i])
+		parts, err := parsePartSelectors(args[:i])
 		if err != nil {
 			return out, err
 		}
@@ -210,27 +212,38 @@ func namespaceName(name string, cfg *also.Config) (string, error) {
 	return name, nil
 }
 
-func parsePartSelector(tokens []string) ([]string, error) {
-	switch len(tokens) {
-	case 0:
-		return nil, nil
-	case 1:
-		kind, ok := also.CanonicalComponentKind(tokens[0])
-		if !ok {
-			return nil, fmt.Errorf("which kind of part is %q? try: skill, command, agent, plugin, hook, mcp, settings, instructions", tokens[0])
+// parsePartSelectors accepts several kinds and/or <name> <kind> pairs:
+// "skills agents commands" or "review skill test agent".
+func parsePartSelectors(tokens []string) ([]string, error) {
+	var out []string
+	for i := 0; i < len(tokens); {
+		if kind, ok := also.CanonicalComponentKind(tokens[i]); ok {
+			// "hook guard" means one named hook; "skills agents" means two
+			// kinds. A following kind always starts a new selector.
+			if i+1 < len(tokens) {
+				if _, nextIsKind := also.CanonicalComponentKind(tokens[i+1]); !nextIsKind {
+					out = append(out, kind+":"+tokens[i+1])
+					i += 2
+					continue
+				}
+			}
+			out = append(out, kind)
+			i++
+			continue
 		}
-		return []string{kind}, nil
-	case 2:
-		if kind, ok := also.CanonicalComponentKind(tokens[1]); ok {
-			return []string{kind + ":" + tokens[0]}, nil
+		if i+1 < len(tokens) {
+			if kind, ok := also.CanonicalComponentKind(tokens[i+1]); ok {
+				out = append(out, kind+":"+tokens[i])
+				i += 2
+				continue
+			}
 		}
-		if kind, ok := also.CanonicalComponentKind(tokens[0]); ok {
-			return []string{kind + ":" + tokens[1]}, nil
+		if i+1 >= len(tokens) {
+			return nil, fmt.Errorf("which kind of part is %q? try: skill, command, agent, plugin, hook, mcp, settings, instructions", tokens[i])
 		}
-		return nil, fmt.Errorf("unknown part kind %q; try: skill, command, agent, plugin, hook, mcp, settings", tokens[1])
-	default:
-		return nil, fmt.Errorf("a part is '<name> <kind>', for example: also install reviewer skill from code-review")
+		return nil, fmt.Errorf("unknown part kind %q; try: skill, command, agent, plugin, hook, mcp, settings", tokens[i+1])
 	}
+	return also.UniqueStrings(out), nil
 }
 
 type ignoreSpec struct {

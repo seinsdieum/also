@@ -26,6 +26,7 @@ type LockEntry struct {
 	Harness       string   `json:"harness"`
 	SourceHarness string   `json:"source_harness,omitempty"`
 	Parts         []string `json:"parts,omitempty"`
+	Exclude       []string `json:"exclude,omitempty"`
 	WithConfig    bool     `json:"with_config,omitempty"`
 }
 
@@ -87,6 +88,8 @@ func (l *Lockfile) Sort() {
 }
 
 // Find returns the entry for one package installed into one harness.
+// Find returns the first entry for a package and harness, ignoring the
+// namespace. Use FindIn when the namespace is known.
 func (l *Lockfile) Find(pkg, harness string) *LockEntry {
 	if l == nil {
 		return nil
@@ -99,9 +102,24 @@ func (l *Lockfile) Find(pkg, harness string) *LockEntry {
 	return nil
 }
 
+// FindIn includes the namespace in the identity, so the same package name from
+// two namespaces can be installed side by side.
+func (l *Lockfile) FindIn(namespace, pkg, harness string) *LockEntry {
+	if l == nil {
+		return nil
+	}
+	for i := range l.Packages {
+		e := &l.Packages[i]
+		if e.Namespace == namespace && e.Package == pkg && e.Harness == harness {
+			return e
+		}
+	}
+	return nil
+}
+
 func (l *Lockfile) Upsert(e LockEntry) {
 	for i := range l.Packages {
-		if l.Packages[i].Package == e.Package && l.Packages[i].Harness == e.Harness {
+		if l.Packages[i].Namespace == e.Namespace && l.Packages[i].Package == e.Package && l.Packages[i].Harness == e.Harness {
 			l.Packages[i] = e
 			return
 		}
@@ -120,12 +138,23 @@ func (l *Lockfile) Remove(pkg, harness string) {
 	l.Packages = out
 }
 
+func (l *Lockfile) RemoveIn(namespace, pkg, harness string) {
+	out := l.Packages[:0]
+	for _, e := range l.Packages {
+		if e.Namespace == namespace && e.Package == pkg && (harness == "" || e.Harness == harness) {
+			continue
+		}
+		out = append(out, e)
+	}
+	l.Packages = out
+}
+
 func LockEntryFromInstall(in *Install, constraint string) LockEntry {
 	return LockEntry{
 		Package: in.Package, Namespace: in.Set, Remote: in.SetRemote,
 		Version: in.Version, Digest: in.Digest, Constraint: constraint,
 		Harness: in.Harness, SourceHarness: in.SourceHarness,
-		Parts: in.Parts, WithConfig: in.WithConfig,
+		Parts: in.Parts, Exclude: in.Exclude, WithConfig: in.WithConfig,
 	}
 }
 

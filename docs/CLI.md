@@ -69,10 +69,10 @@ refused, so an unrelated working directory cannot be published by accident.
 ## Packages
 
 ```sh
-also list [--refresh] [--versions] [--json]
+also list [--refresh] [--versions] [--installs] [--json]
 also search [query] [--refresh] [--json]
 also show <package>[@version] [from <namespace>] [--json]
-also push [directory] [--semver V | --bump major|minor|patch] [--dry-run] [--all-files] [--json]
+also push [directory] [--semver V | --bump major|minor|patch] [--dry-run] [--all-files] [--allow-empty] [--json]
 also tag <package> <semver> [version] [from <namespace>] [--move]
 also adopt [directory] [for <harness>] [--name N] [--semver V | --bump kind] [--into <dir>] [--json]
 ```
@@ -83,12 +83,18 @@ and needs no path. The lookup stops at the git root (or the home directory), so
 a marker in `$HOME` cannot claim every subdirectory. Inside a git repository,
 files ignored by `.gitignore` are excluded. Before publishing, `--dry-run`
 lists every file that would be included; files outside the source harness
-layout are refused unless `--all-files` is passed. `adopt` extracts the
+layout are refused unless `--all-files` is passed. A package with no installable
+component is refused unless `--allow-empty` is passed, so a `.gitignore` that
+hides the layout cannot silently publish a broken version. `adopt` extracts the
 initialized directory's harness-native files into a portable bundle and
 publishes it straight to the namespace. Without `--into` the extracted bundle
 is temporary. `--no-push` keeps the bundle and therefore requires `--into`.
 `adopt` already publishes, so put the semantic tag on the same command
 (`also adopt --semver 1.0.0`) instead of re-pushing the directory afterwards.
+
+`also list --installs` lists every install on the machine with namespace,
+package, version, harness and project path. It is the multi-project view; the
+package table shows one location per package.
 
 `also search` reads package names and descriptions from every connected
 namespace. It is not a public catalog and sends no telemetry.
@@ -104,15 +110,19 @@ Installs accept exact versions, prefixes, labels and semantic ranges such as
 
 `also install` writes `also.lock` into the project root. It records the package,
 namespace, remote, content version, full digest, original constraint, harness,
-parts and whether configuration was installed. Commit it.
+parts, exclusions and whether configuration was installed. Commit it.
 
+- A fresh install with no explicit version records `^major.minor.patch` when
+  the resolved content version has a semantic alias. `--latest` opts out.
 - `also install --frozen` requires an entry and fails if anything would resolve
-  differently.
+  differently. If the namespace is not configured, the remote recorded in the
+  lock is used, so CI needs no separate `also setup`.
 - `also install --update` ignores the pins for one command and writes the new
   result to the lock.
-- `also upgrade` respects the recorded constraint and updates the lock after a
-  successful upgrade.
-- `also uninstall` removes its entry.
+- `also upgrade` respects the recorded constraint. Unconstrained installs stay
+  inside the installed major unless `--major` is passed.
+- `also uninstall` removes its entry; `--namespace` selects one of two installs
+  with the same package name from different namespaces.
 
 The file is local desired state, not a replacement for `~/.also/state.json`,
 which records what was actually written on this machine.
@@ -120,24 +130,36 @@ which records what was actually written on this machine.
 ## Installs
 
 ```sh
-also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--json]
+also install <package> [for <harness>] [from <namespace>] [--frozen] [--update] [--except K] [--only] [--latest] [--json]
 also install --frozen            # replay every entry in also.lock
-also install <part> <kind> from <package> [for <harness>] [from <namespace>]
-also upgrade [package...] [--check] [--json]
-also reshape <harness> [package...] [--json]
+also install <part> <kind>... from <package> [for <harness>] [from <namespace>] [--except K] [--only]
+also upgrade [package...] [--check] [--major] [--json]
+also reshape <harness> [package...] [--dir <path>|--all] [--json]
 also tree [for <harness>] [--json]
-also uninstall <package> [for <harness>] [--all] [--json]
+also uninstall <package> [for <harness>] [--namespace N] [--all] [--json]
 also prune [--dry-run] [--json]
 ```
 
-Installs always target the current directory. One package can be installed
-into several harnesses in the same directory. `also install --frozen` with no
-package argument installs every entry in `also.lock` for the recorded harness
-and parts, which is the intended CI form. `also upgrade` upgrades the packages
-installed in the current directory, not packages elsewhere. `also uninstall`
-defaults to the current directory; use `--dir <dir>` to choose another one.
-If a project directory was deleted manually, `also prune` removes its stale
-state records; it never touches existing projects with missing files.
+Installs target the nearest project root: the closest `also.lock` or
+`also.json`, otherwise the git root. Running from `internal/...` therefore does
+not create a second project inside the first. Use `--dir` to choose another
+project explicitly. One package can be installed into several harnesses in the
+same directory. `also install --frozen` with no package argument installs every
+entry in `also.lock` for the recorded harness, parts and exclusions, which is
+the intended CI form.
+
+Selection is additive by default: `also install agents from p` keeps the
+skills already installed. `--only` replaces the selection. `--except` removes a
+kind or a named component from a complete install, for example
+`also install p for opencode --except instructions --except settings` leaves a
+project-owned `AGENTS.md` and `opencode.json` untouched. `also upgrade` upgrades
+the packages installed in the current directory, not packages elsewhere;
+`--major` is required to cross a major version. `also reshape` is scoped to the
+current project, updates `also.lock`, and `--all` is the explicit machine-wide
+form. `also uninstall` defaults to the current directory; use `--dir <dir>` to
+choose another one. If a project directory was deleted manually, `also prune`
+removes its stale state records; it never touches existing projects with
+missing files.
 
 A project policy (`also.policy.yml`) is enforced before an install or upgrade
 writes anything. There is no bypass flag: to change the policy, edit the file
@@ -170,18 +192,22 @@ or untrusted signature, a missing required role and insufficient approvals.
 The `also.policy.sig` file is committed with the policy.
 
 `also audit` reports the installed packages, namespace, content version, full
-digest, harness, source harness, parts, recorded file count, missing and
-modified files, managed block state, configuration drift and every executable
-component: Model Context Protocol servers, hooks, plugins and commands. It never
-downloads a package.
+digest, harness, source harness, parts, exclusions, recorded file count, missing
+and modified files, managed block state, configuration drift and every
+executable component: Model Context Protocol servers, hooks, plugins and
+commands. It never downloads a package. With `--all` it prints the project path
+for every install.
 
 A modified file is a warning, because the edit may be intentional. A missing
 file, managed instruction block or configuration entry is a failure. `--ci`
 exits 1 on a failure and requires a git-tracked `also.lock`: state in `$HOME`
 is only a cache, so the committed lock is the source of truth. It also fails
 when the lock pins a package that is not installed, when the installed version
-or digest differs, and when an install is missing from the lock. `--strict`
-exits 1 on any finding. `drift` prints only the differences.
+or digest differs, when an install is missing from the lock, and when an
+installed file, managed instruction block or managed config file is tracked by
+git (`infra-tracked`, `block-tracked`, `config-tracked`). Those findings make
+the artifact-free rule a CI invariant instead of a `.gitignore` convention.
+`--strict` exits 1 on any finding. `drift` prints only the differences.
 
 `--sbom` writes a CycloneDX 1.5 JSON document for the inventory. It contains one
 application component per installed package with the full SHA-256 digest and
@@ -247,10 +273,11 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | Command | Shape |
 |---|---|
 | `init` | name, harness, file |
-| `install` | package, version, harness, root, namespace, files, config changes |
+| `install` | package, version, harness, root, namespace, parts, exclude, files, config changes |
 | `push` / `adopt` | package, version, digest, harness, files, warnings, namespace |
 | `upgrade` | array of package, harness, old, new, status, error |
 | `reshape` | array of package, from, to, status, error |
+| `list --installs` | array of namespace, package, version, harness, project, scope |
 | `uninstall` | array of namespace, package, version, harness, warnings |
 | `prune` | dry_run, removed array (namespace, package, version, harness, project) |
 | `audit` | schema, project, packages, findings, summary, lock, policy_file |

@@ -18,6 +18,7 @@ func newListCmd() *cobra.Command {
 		from     string
 		refresh  bool
 		versions bool
+		installs bool
 		jsonOut  bool
 	)
 	c := newCmd("list [packages|harnesses]", "List packages in a namespace or installed harnesses")
@@ -30,6 +31,40 @@ func newListCmd() *cobra.Command {
 		}
 		if len(args) > 0 {
 			return fmt.Errorf("usage: also list [packages|harnesses]")
+		}
+		if installs {
+			st, err := also.LoadState()
+			if err != nil {
+				return err
+			}
+			type installRow struct {
+				Namespace string `json:"namespace"`
+				Package   string `json:"package"`
+				Version   string `json:"version"`
+				Harness   string `json:"harness"`
+				Project   string `json:"project"`
+				Scope     string `json:"scope"`
+			}
+			out := make([]installRow, 0, len(st.Installs))
+			for _, in := range st.Installs {
+				out = append(out, installRow{
+					Namespace: in.Set, Package: in.Package, Version: in.Version,
+					Harness: in.Harness, Project: in.Project, Scope: in.Scope,
+				})
+			}
+			if jsonOut {
+				return printJSON(out)
+			}
+			w := newTabWriter()
+			fmt.Fprintf(w, "NAMESPACE\tPACKAGE\tVERSION\tHARNESS\tPROJECT\n")
+			for _, row := range out {
+				project := row.Project
+				if project == "" {
+					project = "(global)"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.Namespace, row.Package, short(row.Version), row.Harness, project)
+			}
+			return w.Flush()
 		}
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -125,6 +160,7 @@ func newListCmd() *cobra.Command {
 	c.Flags().StringVar(&from, "from", "", "use a remote git URL without configuring a namespace")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch the remote before listing")
 	c.Flags().BoolVar(&versions, "versions", false, "show every version")
+	c.Flags().BoolVar(&installs, "installs", false, "list every install on this machine with its project")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	return c
 }
@@ -355,6 +391,7 @@ func newPushCmd() *cobra.Command {
 		allowSecret bool
 		allowLarge  bool
 		allFiles    bool
+		allowEmpty  bool
 		semver      string
 		bump        string
 		jsonOut     bool
@@ -419,7 +456,8 @@ Re-running push with unchanged content is a no-op.`
 			res, err := repo.Push(dir, also.PushOptions{
 				Name: name, Description: desc, Harness: harnessID, Label: label,
 				Message: message, AllowSecrets: allowSecret, AllowLarge: allowLarge,
-				DryRun: dryRun, AllFiles: allFiles, Semver: semver, Bump: bump,
+				DryRun: dryRun, AllFiles: allFiles, AllowEmpty: allowEmpty,
+				Semver: semver, Bump: bump,
 			})
 			if err != nil {
 				return err
@@ -474,6 +512,7 @@ Re-running push with unchanged content is a no-op.`
 	c.Flags().BoolVar(&allowSecret, "allow-secrets", false, "allow likely secret files and literal MCP credentials")
 	c.Flags().BoolVar(&allowLarge, "allow-large", false, "allow files larger than 8 MiB")
 	c.Flags().BoolVar(&allFiles, "all-files", false, "publish files outside the harness layout too")
+	c.Flags().BoolVar(&allowEmpty, "allow-empty", false, "publish even when no component is installable")
 	c.Flags().StringVar(&semver, "semver", "", "tag this version with an exact semantic version, e.g. 1.4.0")
 	c.Flags().StringVar(&bump, "bump", "", "tag this version as the next major, minor or patch release")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")

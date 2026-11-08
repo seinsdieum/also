@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.4.0 (2026-11-08)
+
+This release closes the self-hosting gaps found by running `also` against
+itself: artifact-free product repositories, multi-project state, package
+ownership and harness migration.
+
+### Added
+
+- `audit --ci` fails on installed infrastructure that is tracked by git:
+  `infra-tracked`, `block-tracked` and `config-tracked`.
+- `install --except <kind|name>` and `--only`: install everything except
+  instructions/settings/MCP, or replace the previous selection. Multiple part
+  selectors are accepted in one command.
+- Additive partial installs: adding agents keeps existing skills.
+- `install --latest` opts out of the default `^major.minor.patch` pin.
+- `upgrade --major` is required to cross a major version.
+- `reshape --dir <path>` and `--all`; project scope is the default and the lock
+  is updated after a reshape.
+- `uninstall --namespace <name>` for the same package from two namespaces.
+- `list --installs` shows every install with its project; `audit --all` prints
+  the project column.
+- `push --allow-empty` for an intentional metadata-only package; such a package
+  is refused by default.
+- `also.policy` now records approval roles and signatures in `also policy`.
+
+### Fixed
+
+- `exclude infra` uses the project layout before the machine default harness,
+  so an OpenCode project cannot receive Claude ignore entries.
+- Commands resolve the nearest project root (`also.lock`, `also.json`, then the
+  git root); running from a subdirectory no longer creates a nested project.
+- Config ownership is order-independent: identical values from two packages are
+  recorded, a remaining package keeps its value, and the last uninstall
+  restores the original user value or removes the key/file.
+- The lock is keyed by namespace, package and harness, so two namespaces can
+  carry the same package name.
+- `install --frozen` uses the remote recorded in the lock and preflights every
+  entry before writing; a fresh CI checkout needs no namespace setup, and a
+  restored tree with identical files is adopted without `--force`.
+- OpenCode/Claude agent conversion drops the wrong model id, maps permission
+  deny rules to a Claude tools allowlist, maps `permissionMode: plan`, and warns
+  instead of silently writing an invalid model.
+- `.also-layers/<harness>` is an authoritative native override; layer config is
+  merged with the main package instead of replacing it.
+- Uninstall removes an instruction file it created when the last block is gone.
+- State and lock reads are refreshed under the transaction lock for uninstall,
+  upgrade, reshape, prune and frozen replay.
+
+### Changed
+
+- `also install` targets the project root, not the literal current directory.
+- A fresh install without a version pins the resolved semantic version.
+- `also upgrade` stays inside the installed major unless `--major` is passed.
+- `audit --ci` now rejects tracked harness files; the artifact-free layout is a
+  CI invariant.
+- Cross-harness agents with an incompatible model are installed without a model
+  and emit a warning rather than passing an invalid id to the harness.
+
 ## 1.3.0 (2026-11-08)
 
 This release makes policy governance cryptographic and removes the remaining

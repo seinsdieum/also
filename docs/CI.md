@@ -3,10 +3,11 @@
 The control-plane workflow is three commands: install exactly what the lock
 pins, verify the result, and keep the evidence.
 
-Commit all three files to the repository:
+Commit these files to the repository:
 
+- `.gitignore` — the managed infra/also blocks from `also exclude`;
 - `also.lock` — the resolved package, namespace, content version, digest,
-  harness and parts;
+  harness, parts and exclusions;
 - `also.policy.yml` — allowed namespaces and packages, executable gates,
   limits and the governance block;
 - `also.policy.sig` — the detached Ed25519 approvals over the policy bytes.
@@ -31,14 +32,6 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/seinsdieum/also/main/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: connect the namespace
-        env:
-          NAMESPACE_URL: ${{ secrets.ALSO_NAMESPACE_URL }}
-        run: |
-          also setup --yes --harness claude \
-            --namespace personal="$NAMESPACE_URL" \
-            --default-namespace personal
 
       - name: reproduce the lock
         run: also install --frozen
@@ -67,14 +60,20 @@ Notes:
 
 - `install --frozen` fails if the lock is missing, if a package resolves to a
   different version, or if a digest differs. It never silently updates the
-  lock; use `also upgrade` locally and commit the new lock.
+  lock; use `also upgrade` locally and commit the new lock. The lock records
+  the remote, so a fresh checkout needs no namespace setup.
 - `audit --ci` fails on a missing file, managed block or config entry, on a
   version or digest mismatch against `also.lock`, on a missing or untracked
   lock, on an install that is missing from the lock, on an unsigned or invalid
-  policy signature, on a missing required role or approval, and on a policy
-  violation. A user-edited file is a warning, because edits can be intentional.
-  The lock is the committed source of truth; `~/.also/state.json` is only the
-  local cache.
+  policy signature, on a missing required role or approval, on a policy
+  violation, and on installed infrastructure that is tracked by git
+  (`infra-tracked`, `block-tracked`, `config-tracked`). A user-edited file is a
+  warning, because edits can be intentional. The lock is the committed source
+  of truth; `~/.also/state.json` is only the local cache.
+- The artifact-free setup is: `also exclude infra for <harness>` and
+  `also exclude you` before the first install, then commit only `.gitignore`,
+  `also.lock`, `also.policy.yml` and `also.policy.sig`. The audit check above
+  catches a tracked `.opencode/`, `AGENTS.md`, `CLAUDE.md` or harness config.
 - `ALSO_TRUSTED_POLICY_KEYS` holds base64 Ed25519 public keys, comma-separated.
   The policy cannot trust its own key; see `docs/GOVERNANCE.md`.
 - `audit --strict` also fails on a warning, which is the right default when the

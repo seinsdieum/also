@@ -41,9 +41,11 @@ part of the model.
 ### State (`also.state/v1`)
 
 Install records are tracked by opaque IDs. The ID includes the target harness
-so one package can be installed into several harnesses in one directory; states
+and the canonical project path; symlinked paths are the same project. States
 written by older versions are accepted through a legacy-ID fallback and
 rewritten on the next install. Do not interpret IDs as a stable public API.
+An install records `parts` and `exclude`; config edits carry a `base` value so
+the last uninstall restores the user's original value regardless of order.
 
 If a future change needs to alter the meaning of a stored field, `also` must
 introduce `also.state/v2` plus a migration. Adding optional fields keeps v1.
@@ -67,11 +69,14 @@ component kinds must exist in the binary.
 `also.lock` is project-local desired state and is meant to be committed. Each
 entry records `package`, `namespace`, `remote`, `version` (content digest),
 `digest` (full SHA-256), optional `constraint`, `harness`, `source_harness`,
-`parts` and `with_config`. Entries are keyed by package and harness. Unknown
+`parts`, `exclude` and `with_config`. Entries are keyed by namespace, package
+and harness, so the same package from two namespaces can coexist. Unknown
 fields are ignored; changing the meaning of an existing field needs v2.
 
 `--frozen` reads the lock and refuses to install anything that does not match.
-A missing lock entry is an error, not an empty resolution.
+A missing lock entry is an error, not an empty resolution. If the namespace is
+not configured, the `remote` in the entry is used; this is what makes a fresh
+CI checkout work without a separate setup step.
 
 ### Policy (`also.policy/v1`)
 
@@ -100,9 +105,10 @@ Findings have a severity (`fail` or `warn`) and a
 stable code such as `file-missing`, `file-modified`, `block-missing`,
 `block-modified`, `config-missing`, `config-modified`, `shared-file`,
 `shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
-`policy-namespace`, `policy-package`, `policy-executable`, `policy-unsigned`
-and `policy-signature-invalid`. New codes may be added; clients should treat an
-unknown code as a generic finding.
+`policy-namespace`, `policy-package`, `policy-executable`, `policy-unsigned`,
+`policy-signature-invalid`, `infra-tracked`, `block-tracked` and
+`config-tracked`. New codes may be added; clients should treat an unknown code
+as a generic finding.
 
 `--sbom` emits CycloneDX 1.5, not an also schema.
 

@@ -102,6 +102,29 @@ func (s *SetRepo) SemverAliases(pkg string) (map[string]string, error) {
 // Aliases are immutable by default; allowMove is only for the explicit
 // "also tag --move" path and still refuses to overwrite a remote change that
 // this clone has not seen.
+// HighestSemverForVersion returns the highest semantic alias attached to one
+// content version. It is used to pin installs and to keep upgrades inside the
+// same major by default.
+func (s *SetRepo) HighestSemverForVersion(pkg, version string) (Semver, bool) {
+	aliases, err := s.SemverAliases(pkg)
+	if err != nil {
+		return Semver{}, false
+	}
+	var found []Semver
+	for alias, target := range aliases {
+		if target != version {
+			continue
+		}
+		if v, ok := ParseSemver(alias); ok {
+			found = append(found, v)
+		}
+	}
+	if len(found) == 0 {
+		return Semver{}, false
+	}
+	return HighestSemver(found)
+}
+
 func (s *SetRepo) SetSemver(pkg, semver, version string, allowMove bool) error {
 	if _, ok := ParseSemver(semver); !ok {
 		return fmt.Errorf("invalid semantic version %q; use MAJOR.MINOR.PATCH", semver)

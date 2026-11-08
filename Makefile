@@ -23,6 +23,7 @@ release-check: check
 	go mod verify
 	go test -count=1 -race ./...
 	./test/e2e/control-plane.sh
+	./test/e2e/selfhost.sh
 
 smoke: build
 	./test/e2e/harness-smoke.sh

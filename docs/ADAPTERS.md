@@ -33,6 +33,14 @@ Reusable native encodings live in `MCPFormat`: `claude-json`, `qwen-json`,
 `opencode-json`, `codex-toml`. Command dialects are `claude`/`qwen`; agent
 dialects are `claude`/`opencode`. A new harness usually reuses one of these.
 
+Agent conversion never carries an incompatible model id across harnesses. An
+OpenCode `provider/model` id is dropped for Claude and a Claude alias such as
+`sonnet` is dropped for OpenCode; both emit a warning and the harness uses its
+own default. OpenCode `permission` deny rules become a Claude tools allowlist;
+`permissionMode: plan` becomes disabled edit tools in OpenCode. `.also-layers/<harness>/`
+is an authoritative native override and its config is merged with the main
+package.
+
 `Settings.Keys` is an allowlist of reversible top-level config keys, not a
 whole-file install. For OpenCode it covers `default_agent`, `theme`, `model`,
 `small_model`, `keybinds`, `permission` and the legacy `permissions`; MCP and

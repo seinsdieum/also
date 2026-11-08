@@ -153,7 +153,7 @@ func TestEndToEnd(t *testing.T) {
 
 	// Reshape to codex.
 	st, _ = LoadState()
-	rr, err := Reshape(cfg, st, "codex", []string{"p"}, false)
+	rr, err := Reshape(cfg, st, "codex", project, false, []string{"p"}, false)
 	if err != nil || len(rr) != 1 || rr[0].Err != nil {
 		t.Fatalf("reshape: %+v %v", rr, err)
 	}

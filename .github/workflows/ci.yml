@@ -40,6 +40,8 @@ jobs:
           cache: true
       - name: run the committed-lock workflow
         run: ./test/e2e/control-plane.sh
+      - name: run the self-hosting workflow
+        run: ./test/e2e/selfhost.sh
 
   windows-install:
     runs-on: windows-latest

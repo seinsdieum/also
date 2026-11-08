@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
 
 const (
 	// Version is the CLI and package-encoder version.
-	Version = "1.3.0"
+	Version = "1.4.0"
 
 	SchemaConfig  = "also.config/v2"
 	SchemaState   = "also.state/v1"
@@ -184,7 +185,55 @@ func ExpandHome(p string) string {
 }
 
 func AbsPath(p string) (string, error) {
-	return filepath.Abs(ExpandHome(p))
+	abs, err := filepath.Abs(ExpandHome(p))
+	if err != nil {
+		return "", err
+	}
+	// Symlinked workspaces are the same project. Canonicalizing here keeps
+	// install slots, ownership checks and the lock pointing at one path.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return filepath.Clean(abs), nil
+}
+
+// PathKey is the identity form of a path. Windows paths are case-insensitive,
+// so two spellings must not create two install slots over the same files.
+func PathKey(p string) string {
+	clean := filepath.Clean(ExpandHome(p))
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		clean = resolved
+	}
+	if runtime.GOOS == "windows" {
+		clean = strings.ToLower(clean)
+	}
+	return clean
+}
+
+// FindProjectRoot resolves the project a command was run in. The nearest
+// also.lock or also.json wins; otherwise the nearest git root wins. Without
+// this, running an install from internal/... created a second project inside
+// the first one.
+func FindProjectRoot(start string) (string, error) {
+	abs, err := AbsPath(start)
+	if err != nil {
+		return "", err
+	}
+	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+		return abs, nil
+	}
+	for cur := abs; ; cur = filepath.Dir(cur) {
+		if fileExists(filepath.Join(cur, LockFile)) || fileExists(filepath.Join(cur, InfraFile)) {
+			return cur, nil
+		}
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			return cur, nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+	}
 }
 
 func isWithin(root, path string) bool {

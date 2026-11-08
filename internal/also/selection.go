@@ -11,9 +11,12 @@ import (
 // Selection is a set of component parts requested for a partial install,
 // for example "skill:review" or "commands". An empty selection means all parts.
 type Selection struct {
-	all   bool
-	kinds map[string]bool
-	items map[string]map[string]bool
+	all         bool
+	kinds       map[string]bool
+	items       map[string]map[string]bool
+	exceptKinds map[string]bool
+	exceptItems map[string]map[string]bool
+	hasExcept   bool
 }
 
 var standardKindAliases = map[string]string{
@@ -51,74 +54,85 @@ func CanonicalComponentKind(kind string) (string, bool) {
 // NewSelection parses selectors such as "skill:review", "skills", or
 // "mcp:github". No selectors or "all" means every part.
 func NewSelection(parts []string) (*Selection, error) {
-	s := &Selection{kinds: map[string]bool{}, items: map[string]map[string]bool{}}
-	if len(parts) == 0 {
+	return NewSelectionWithExclusions(parts, nil)
+}
+
+// NewSelectionWithExclusions parses include selectors plus exclusions. An empty
+// include list with exclusions means "everything except these".
+func NewSelectionWithExclusions(parts, except []string) (*Selection, error) {
+	s := &Selection{
+		kinds: map[string]bool{}, items: map[string]map[string]bool{},
+		exceptKinds: map[string]bool{}, exceptItems: map[string]map[string]bool{},
+	}
+	all, err := addSelectors(s, parts, false)
+	if err != nil {
+		return nil, err
+	}
+	if all {
 		s.all = true
-		return s, nil
 	}
-	for _, raw := range parts {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
+	if len(except) > 0 {
+		s.hasExcept = true
+		if _, err := addSelectors(s, except, true); err != nil {
+			return nil, err
 		}
-		if strings.EqualFold(raw, "all") {
-			return &Selection{all: true, kinds: map[string]bool{}, items: map[string]map[string]bool{}}, nil
-		}
-		kind, name := raw, ""
-		if i := strings.Index(raw, ":"); i >= 0 {
-			kind, name = raw[:i], strings.TrimSpace(raw[i+1:])
-		}
-		canon, ok := CanonicalComponentKind(kind)
-		if !ok {
-			return nil, fmt.Errorf("unknown component kind %q; try: skill, command, agent, plugin, hook, mcp, settings, instructions", kind)
-		}
-		if name == "" {
-			s.kinds[canon] = true
-			continue
-		}
-		if s.items[canon] == nil {
-			s.items[canon] = map[string]bool{}
-		}
-		s.items[canon][name] = true
 	}
-	if len(s.kinds) == 0 && len(s.items) == 0 {
+	if len(parts) == 0 && len(except) == 0 {
+		s.all = true
+	}
+	if len(parts) == 0 && len(except) > 0 {
+		s.all = true
+	}
+	if len(s.kinds) == 0 && len(s.items) == 0 && !s.hasExcept {
 		s.all = true
 	}
 	return s, nil
 }
 
-func (s *Selection) IsAll() bool { return s == nil || s.all }
-
-// Wants reports whether a kind was selected at all, either whole or by name.
-func (s *Selection) Wants(kind string) bool {
-	if s == nil || s.all {
-		return true
+func addSelectors(s *Selection, raw []string, except bool) (bool, error) {
+	all := false
+	for _, selector := range raw {
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			continue
+		}
+		if strings.EqualFold(selector, "all") {
+			all = true
+			continue
+		}
+		kind, name := selector, ""
+		if i := strings.Index(selector, ":"); i >= 0 {
+			kind, name = selector[:i], strings.TrimSpace(selector[i+1:])
+		}
+		canon, ok := CanonicalComponentKind(kind)
+		if !ok {
+			return false, fmt.Errorf("unknown component kind %q; try: skill, command, agent, plugin, hook, mcp, settings, instructions", kind)
+		}
+		if name == "" {
+			if except {
+				s.exceptKinds[canon] = true
+			} else {
+				s.kinds[canon] = true
+			}
+			continue
+		}
+		target := s.items
+		if except {
+			target = s.exceptItems
+		}
+		if target[canon] == nil {
+			target[canon] = map[string]bool{}
+		}
+		target[canon][name] = true
 	}
-	canon, ok := CanonicalComponentKind(kind)
-	if !ok {
-		canon = kind
-	}
-	return s.kinds[canon] || len(s.items[canon]) > 0
+	return all, nil
 }
 
-// Allows reports whether a named part of a kind is selected. An empty name
-// selects the whole kind.
-func (s *Selection) Allows(kind, name string) bool {
-	if s == nil || s.all {
-		return true
-	}
-	canon, ok := CanonicalComponentKind(kind)
-	if !ok {
-		canon = strings.ToLower(strings.TrimSpace(kind))
-	}
-	if s.kinds[canon] {
-		return true
-	}
-	names := s.items[canon]
-	if len(names) == 0 {
-		return false
-	}
-	if name == "" {
+func (s *Selection) IsAll() bool     { return s == nil || (s.all && !s.hasExcept) }
+func (s *Selection) Filtering() bool { return s != nil && (!s.all || s.hasExcept) }
+
+func nameMatches(names map[string]bool, name string) bool {
+	if len(names) == 0 || name == "" {
 		return false
 	}
 	candidates := []string{name, strings.TrimSuffix(name, path.Ext(name)), filepath.Base(name), strings.TrimSuffix(filepath.Base(name), path.Ext(name))}
@@ -130,8 +144,59 @@ func (s *Selection) Allows(kind, name string) bool {
 	return false
 }
 
+func (s *Selection) excluded(kind, name string) bool {
+	if s == nil || !s.hasExcept {
+		return false
+	}
+	canon, ok := CanonicalComponentKind(kind)
+	if !ok {
+		canon = strings.ToLower(strings.TrimSpace(kind))
+	}
+	if s.exceptKinds[canon] {
+		return true
+	}
+	return nameMatches(s.exceptItems[canon], name)
+}
+
+// Wants reports whether a kind was selected at all, either whole or by name.
+func (s *Selection) Wants(kind string) bool {
+	if s == nil {
+		return true
+	}
+	canon, ok := CanonicalComponentKind(kind)
+	if !ok {
+		canon = kind
+	}
+	if s.exceptKinds[canon] {
+		return false
+	}
+	if s.all {
+		return true
+	}
+	return s.kinds[canon] || len(s.items[canon]) > 0
+}
+
+// Allows reports whether a named part of a kind is selected. An empty name
+// selects the whole kind.
+func (s *Selection) Allows(kind, name string) bool {
+	if s == nil || s.excluded(kind, name) {
+		return false
+	}
+	if s.all {
+		return true
+	}
+	canon, ok := CanonicalComponentKind(kind)
+	if !ok {
+		canon = strings.ToLower(strings.TrimSpace(kind))
+	}
+	if s.kinds[canon] {
+		return true
+	}
+	return nameMatches(s.items[canon], name)
+}
+
 func filterPartsBySelection(parts *bundleParts, h *Harness, sel *Selection) {
-	if sel.IsAll() {
+	if !sel.Filtering() {
 		return
 	}
 	if parts.Instr != "" && !sel.Allows("instructions", "") {

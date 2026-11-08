@@ -153,7 +153,34 @@ also install 'code-review@^1.4'   # resolve the highest matching alias
 
 The installed version remains the digest. The alias only answers "give me the latest 1.x". Aliases are immutable by default; moving one requires `--move`, and the move refuses to overwrite a remote change this clone has not seen.
 
-`also install` writes `also.lock`, a small JSON file that pins the package, namespace, content version, digest, harness, parts and the original constraint. Keep it in git. `also install --frozen` refuses to resolve anything new, and `--update` ignores the pins for one command while still writing the result.
+`also install` writes `also.lock`, a small JSON file that pins the package, namespace, content version, digest, harness, parts, exclusions and the original constraint. Keep it in git. The first install pins `^major.minor.patch` when the version has a semantic alias; `--latest` opts out. `also install --frozen` refuses to resolve anything new, and `--update` ignores the pins for one command while still writing the result. A fresh checkout does not need a namespace setup step: the lock records the remote.
+
+### Self-hosting one repository
+
+Keep the team in an infrastructure repository and the product in another. The
+product commits only `.gitignore`, `also.lock`, `also.policy.yml` and
+`also.policy.sig`; the harness files are generated on each machine and in CI:
+
+```sh
+cd product
+git init
+also exclude infra for opencode   # explicit; the project layout wins over a machine default
+also exclude you
+also install team for opencode
+git add .gitignore also.lock also.policy.yml also.policy.sig
+```
+
+If the product owns its own `AGENTS.md` or `opencode.json`, exclude the managed
+parts instead of handing over the whole file:
+
+```sh
+also install team for opencode --except instructions --except settings --except mcp
+```
+
+Selection is additive: `also install agents from team` keeps existing skills.
+`--only` replaces the selection. `also audit --ci` fails when any installed
+file, managed block or managed config file is tracked by git, so the
+artifact-free rule is an invariant rather than a convention.
 
 ### Audit, drift and the executable surface
 
@@ -176,7 +203,7 @@ also drift                       # only the differences
 
 `also audit` never downloads a package; the recorded digest is the evidence. A modified file is a warning because you may have edited it on purpose. A missing file, managed block or configuration entry is a failure because the install is incomplete.
 
-`also audit --ci` additionally requires a git-tracked `also.lock` and compares every entry with the local state: a lock entry that is not installed, a version or digest mismatch, an unexpected extra install, or a missing lock is a failure. The lock is the committed source of truth; `~/.also/state.json` is the per-machine cache. That is what makes the CI gate meaningful even if the local state was edited.
+`also audit --ci` additionally requires a git-tracked `also.lock` and compares every entry with the local state: a lock entry that is not installed, a version or digest mismatch, an unexpected extra install, or a missing lock is a failure. It also fails when an installed file, managed instruction block or managed config file is tracked by git (`infra-tracked`, `block-tracked`, `config-tracked`), which turns the artifact-free layout into a CI invariant. The lock is the committed source of truth; `~/.also/state.json` is the per-machine cache. That is what makes the CI gate meaningful even if the local state was edited.
 
 ### Policy
 
@@ -263,21 +290,21 @@ Supported selectors include `instructions`, `skills`, `commands`, `agents`, `plu
 | `also init <name> [for <harness>]` | Mark the current directory as portable infrastructure. |
 | `also connect <name> <git-url>` | Connect a remote namespace. |
 | `also use <namespace>` | Choose the active namespace. |
-| `also list [--versions]` | List packages, content versions and semantic aliases. |
+| `also list [--versions] [--installs]` | List packages, versions, aliases or every install with its project. |
 | `also search [query]` | Search every connected namespace. |
 | `also show <package>[@version] [from <namespace>]` | Show a package manifest and its components. |
-| `also install <package> [for <harness>] [from <namespace>]` | Install a package into the current directory and update `also.lock`. |
-| `also install --frozen` | Reproduce `also.lock` exactly. |
+| `also install <package> [for <harness>] [from <namespace>] [--except K] [--only] [--latest]` | Install a package into the project and update `also.lock`. |
+| `also install --frozen` | Reproduce `also.lock` exactly, using the lock's remote if needed. |
 | `also tag <package> <semver> [version]` | Point a semantic alias at a content version. |
 | `also adopt [directory] [for <harness>]` | Capture the initialized infrastructure and publish a new version. |
-| `also push [directory] [--semver V] [--bump kind]` | Publish the initialized directory. |
-| `also upgrade` | Upgrade the packages installed in the current directory. |
-| `also reshape <harness>` | Re-materialize installed packages for another harness. |
+| `also push [directory] [--semver V] [--bump kind] [--allow-empty]` | Publish the initialized directory. |
+| `also upgrade [--major]` | Upgrade packages installed in the current project; a major needs `--major`. |
+| `also reshape <harness> [--dir <path>|--all]` | Re-materialize this project's packages for another harness and update the lock. |
 | `also audit` | Inventory packages, digests, drift, policy and executable surface. |
 | `also drift` | Show only the differences from the recorded state. |
 | `also policy` | Show the project policy that install and audit enforce. |
 | `also tree` | Show only the installed infrastructure. |
-| `also uninstall <package>` | Remove an installation and reverse its configuration edits. |
+| `also uninstall <package> [--namespace N]` | Remove an installation and reverse its configuration edits. |
 | `also prune` | Drop install records whose project directory was deleted manually. |
 | `also doctor` | Check git, configuration, adapters, caches and installs. |
 | `also verify` | Verify package digests, version tags and installation state. |

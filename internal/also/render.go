@@ -58,6 +58,24 @@ type bundleParts struct {
 	Warnings []string
 }
 
+// Empty reports whether a package has no component a harness can install.
+// Metadata and Other files do not make an installable package.
+func (p *bundleParts) Empty() bool {
+	if p == nil {
+		return true
+	}
+	if p.Instr != "" || len(p.Skills) > 0 || len(p.Commands) > 0 || len(p.Agents) > 0 ||
+		len(p.Plugins) > 0 || len(p.Hooks) > 0 || len(p.Extras) > 0 || len(p.Configs) > 0 {
+		return false
+	}
+	for _, rels := range p.Custom {
+		if len(rels) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func isMetaFile(rel string) bool {
 	if strings.HasPrefix(rel, "docs/") || strings.HasPrefix(rel, ".github/") {
 		return true
@@ -301,13 +319,13 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 }
 
 func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
-	return RenderPackageSelection(pkg, source, target, nil)
+	return RenderPackageSelection(pkg, source, target, nil, nil)
 }
 
 // RenderPackageSelection renders only the selected parts. An empty selection
-// installs the whole package.
-func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts []string) (*RenderPlan, error) {
-	sel, err := NewSelection(parts)
+// installs the whole package; excludes remove individual kinds or names.
+func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts, excludes []string) (*RenderPlan, error) {
+	sel, err := NewSelectionWithExclusions(parts, excludes)
 	if err != nil {
 		return nil, err
 	}
@@ -331,42 +349,47 @@ func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts 
 	merged := *plan
 	merged.Warnings = append(append([]string{}, plan.Warnings...), layerPlan.Warnings...)
 	merged.Skipped = append(append([]string{}, plan.Skipped...), layerPlan.Skipped...)
-	if merged.Instr == nil && layerPlan.Instr != nil {
+	// .also-layers/<harness> is an explicit native override. When it has an
+	// instruction file, it is authoritative for that harness.
+	if layerPlan.Instr != nil {
 		merged.Instr = layerPlan.Instr
 	}
-	if len(layerPlan.ConfigFiles) > 0 {
-		merged.MCP = layerPlan.MCP
-		merged.Hooks = layerPlan.Hooks
-		merged.Settings = layerPlan.Settings
-		merged.MCPNative = true
-		merged.SettingsNative = true
+	// Merge config instead of replacing it: a new MCP server or setting in the
+	// main package must still reach the harness that has a native layer.
+	merged.MCP = map[string]MCPServer{}
+	for k, v := range plan.MCP {
+		merged.MCP[k] = v
 	}
+	for k, v := range layerPlan.MCP {
+		merged.MCP[k] = v
+	}
+	merged.Settings = map[string]any{}
+	for k, v := range plan.Settings {
+		merged.Settings[k] = v
+	}
+	for k, v := range layerPlan.Settings {
+		merged.Settings[k] = v
+	}
+	merged.Hooks = HookSet{}
+	for k, v := range plan.Hooks {
+		merged.Hooks[k] = v
+	}
+	for k, v := range layerPlan.Hooks {
+		merged.Hooks[k] = v
+	}
+	merged.MCPNative = plan.MCPNative || layerPlan.MCPNative || len(layerPlan.ConfigFiles) > 0
+	merged.SettingsNative = plan.SettingsNative || layerPlan.SettingsNative || len(layerPlan.ConfigFiles) > 0
 	have := map[string]int{}
 	for i, f := range merged.Files {
 		have[f.Dest] = i
 	}
-	baseline := loadLayerManifest(pkg.Files)[target.Harness.ID]
 	for _, f := range layerPlan.Files {
 		if i, ok := have[f.Dest]; ok {
 			main := &merged.Files[i]
-			// Prefer the native layer only when the intermediate harness's
-			// origin file still matches what also installed. A modified copy in
-			// that harness wins. Compare the source file, not the re-rendered
-			// output, because translation is not the identity.
-			unchanged := false
-			if main.OriginRel != "" {
-				if of := pkg.Files[main.OriginRel]; of != nil {
-					unchanged = baseline[f.OriginRel] == ShortHash(of.Data, 64)
-				}
-			} else if sha, ok := baseline[f.OriginRel]; ok {
-				unchanged = sha == ShortHash(main.Data, 64)
-			}
-			if unchanged {
-				main.Data = f.Data
-				main.Mode = f.Mode
-				main.Component = f.Component
-				main.OriginRel = f.OriginRel
-			}
+			main.Data = f.Data
+			main.Mode = f.Mode
+			main.Component = f.Component
+			main.OriginRel = f.OriginRel
 			continue
 		}
 		merged.Files = append(merged.Files, f)
