@@ -74,6 +74,9 @@ Notes:
   `also exclude you` before the first install, then commit only `.gitignore`,
   `also.lock`, `also.policy.yml` and `also.policy.sig`. The audit check above
   catches a tracked `.opencode/`, `AGENTS.md`, `CLAUDE.md` or harness config.
+  For a self-hosting gate use `audit --ci --strict`; `--ci` alone treats a
+  modified generated file as a warning, while `--strict` catches package
+  collisions and local drift.
 - `ALSO_TRUSTED_POLICY_KEYS` holds base64 Ed25519 public keys, comma-separated.
   The policy cannot trust its own key; see `docs/GOVERNANCE.md`.
 - `audit --strict` also fails on a warning, which is the right default when the

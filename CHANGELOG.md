@@ -15,7 +15,10 @@ ownership and harness migration.
   selectors are accepted in one command.
 - Additive partial installs: adding agents keeps existing skills.
 - `install --latest` opts out of the default `^major.minor.patch` pin.
-- `upgrade --major` is required to cross a major version.
+- `upgrade --major` is required to cross a major version; the lock constraint
+  moves to the new major and a downgrade is refused.
+- A plain `also install <package>` installs the whole package again, resetting
+  a previous partial selection.
 - `reshape --dir <path>` and `--all`; project scope is the default and the lock
   is updated after a reshape.
 - `uninstall --namespace <name>` for the same package from two namespaces.
@@ -47,6 +50,16 @@ ownership and harness migration.
 - Uninstall removes an instruction file it created when the last block is gone.
 - State and lock reads are refreshed under the transaction lock for uninstall,
   upgrade, reshape, prune and frozen replay.
+- `upgrade` and `reshape` on a fresh lock-only machine keep the recorded
+  namespace instead of inventing `remote-<hash>`, so no stale managed block or
+  duplicate install slot is left behind.
+- `reshape` updates the managed infra `.gitignore` block for the new harness.
+- OpenCode wildcard/pattern deny rules remove the affected Claude tool instead
+  of silently keeping full access.
+- The lock records the installed semantic alias; `audit` rejects a constraint
+  that no longer matches the pinned version.
+- A config key created by a package keeps an absent base across upgrades, so
+  uninstalling does not restore the previous package value.
 
 ### Changed
 

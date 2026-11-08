@@ -157,6 +157,49 @@ func TestInstallExclusionsAndAdditiveParts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".opencode", "agents", "dev.md")); !os.IsNotExist(err) {
 		t.Fatalf("--only did not remove the old part: %v", err)
 	}
+
+	// A plain install means the whole package again, not the old selection.
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "AGENTS.md")); err != nil {
+		t.Fatalf("plain install did not reset the selection: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".opencode", "agents", "dev.md")); err != nil {
+		t.Fatalf("plain install did not restore the agent: %v", err)
+	}
+}
+
+func TestAuditFindsConstraintMismatch(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p", Semver: "1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	entry := LockEntryFromInstall(st.InstallsOf("p")[0], "^2.0.0")
+	if err := SaveLock(project, &Lockfile{Packages: []LockEntry{entry}}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "lock-constraint-mismatch" {
+			return
+		}
+	}
+	t.Fatalf("constraint mismatch was not reported: %+v", report.Findings)
 }
 
 func TestAuditFindsTrackedInfra(t *testing.T) {
@@ -267,6 +310,19 @@ func TestConvertAgentMapsModelsAndPermissions(t *testing.T) {
 		t.Fatal("expected warnings")
 	}
 
+	// A wildcard deny inside a pattern map must still remove Bash.
+	in = []byte("---\ndescription: d\npermission:\n  bash:\n    \"*\": deny\n    \"git status *\": allow\n---\nbody\n")
+	out, warnings, err = ConvertAgent(in, "opencode", "claude", "bm.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "Bash") {
+		t.Fatalf("wildcard bash deny was lost:\n%s", out)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning for pattern permissions")
+	}
+
 	in = []byte("---\ndescription: d\nmodel: sonnet\npermissionMode: plan\ntools: Read, Edit, Bash\n---\nbody\n")
 	out, _, err = ConvertAgent(in, "claude", "opencode", "rev.md")
 	if err != nil {
@@ -275,6 +331,47 @@ func TestConvertAgentMapsModelsAndPermissions(t *testing.T) {
 	s = string(out)
 	if strings.Contains(s, "sonnet") || strings.Contains(s, "permissionMode") {
 		t.Fatalf("Claude-only fields leaked into OpenCode:\n%s", s)
+	}
+}
+
+func TestUpgradeKeepsAbsentBaseForCreatedConfig(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"theme":"x","model":"m1"}`)
+	writeFile(t, filepath.Join(bundle, ".opencode", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"theme":"x","model":"m2"}`)
+	repo2 := openRepo(t, cfg)
+	if _, err := repo2.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.RawAt("model"); ok {
+		t.Fatalf("upgrade leaked the previous package value after uninstall: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	}
+	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"x"` {
+		t.Fatalf("user value was lost: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
 	}
 }
 

@@ -134,7 +134,7 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		}
 	}
 	parts, excludes := opts.Parts, opts.Exclude
-	if old != nil && !opts.OnlyParts {
+	if old != nil && !opts.OnlyParts && (len(parts) > 0 || len(excludes) > 0) {
 		switch {
 		case len(old.Parts) == 0:
 			// The previous install was complete (possibly with exclusions).
@@ -164,6 +164,9 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 		Root: target.Root, WithConfig: opts.WithConfig,
 		Parts: UniqueStrings(parts), Exclude: UniqueStrings(excludes),
 		InstalledAt: time.Now().UTC(),
+	}
+	if sem, ok := HighestSemverString(version.Semver); ok {
+		inst.Semver = sem.String()
 	}
 
 	// ---- regular files ----
@@ -572,7 +575,7 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 	}
 	existing, exists := doc.RawAt(path...)
 	oldEdit := findOldEdit(old, file, path)
-	base, hasBase, hasOwner := st.configBase(old, file, path)
+	base, _, hasOwner := st.configBase(old, file, path)
 	if exists && oldEdit == nil && jsonEqual(existing, raw) {
 		// Two packages may want the same value. The second one still has to
 		// record ownership, otherwise uninstalling the first removes a value
@@ -599,20 +602,24 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 		e.HadPrev = oldEdit.HadPrev
 		e.Previous = oldEdit.Previous
 		e.CreatedFile = oldEdit.CreatedFile
-		if oldEdit.BaseSet {
+		switch {
+		case oldEdit.BaseSet:
 			e.Base, e.BaseSet = oldEdit.Base, true
-		} else if oldEdit.HadPrev {
+		case oldEdit.HadPrev:
 			e.Base, e.BaseSet = oldEdit.Previous, true
+		default:
+			// The key was created by also; it had no user value. Do not
+			// promote the previous package value to the base.
+			e.Base, e.BaseSet = nil, true
 		}
+	} else if hasOwner {
+		e.Base, e.BaseSet = base, true
 	} else if exists {
 		e.HadPrev = true
 		e.Previous = existing
-	}
-	if !e.BaseSet && hasBase {
-		e.Base, e.BaseSet = base, true
-	}
-	if !e.BaseSet && exists {
 		e.Base, e.BaseSet = existing, true
+	} else {
+		e.Base, e.BaseSet = nil, true
 	}
 	if !e.CreatedFile && st.fileCreatedByAlso(file) {
 		e.CreatedFile = true

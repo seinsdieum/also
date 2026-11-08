@@ -130,12 +130,6 @@ into native config with reversible bookkeeping.`
 				} else if !update {
 					spec.Ref.Version = entry.Version
 				}
-				if len(spec.Parts) == 0 && !spec.OnlyParts {
-					spec.Parts = entry.Parts
-				}
-				if len(spec.Exclude) == 0 && !spec.OnlyParts {
-					spec.Exclude = entry.Exclude
-				}
 			}
 			if installSet == "" && from == "" {
 				installSet = entry.Namespace
@@ -537,9 +531,11 @@ func refreshLockAfterUpgrade(project string, results []also.UpgradeResult) error
 			if also.PathKey(in.Project) != also.PathKey(project) {
 				continue
 			}
-			constraint := ""
-			if old := lock.FindIn(in.Set, in.Package, in.Harness); old != nil {
-				constraint = old.Constraint
+			constraint := r.Constraint
+			if constraint == "" {
+				if old := lock.FindIn(in.Set, in.Package, in.Harness); old != nil {
+					constraint = old.Constraint
+				}
 			}
 			lock.Upsert(also.LockEntryFromInstall(in, constraint))
 			changed = true
@@ -589,9 +585,63 @@ func refreshLockAfterReshape(results []also.ReshapeResult) error {
 			constraint = old.Constraint
 			lock.RemoveIn(r.Install.Set, r.Install.Package, r.Install.Harness)
 		}
+		if next.Semver != "" {
+			if v, ok := also.ParseSemver(next.Semver); ok {
+				if rng, ok := also.ParseSemverRange(constraint); constraint != "" && (!ok || !rng.Match(v)) {
+					constraint = "^" + v.String()
+				} else if constraint == "" {
+					constraint = "^" + v.String()
+				}
+			}
+		}
 		lock.Upsert(also.LockEntryFromInstall(next, constraint))
 		if err := also.SaveLock(project, lock); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// updateIgnoreAfterReshape extends the managed infra block for the new
+// harness. Without this, an agent's "git add -A" stages .claude/CLAUDE.md and
+// the next audit fails on tracked infrastructure.
+func updateIgnoreAfterReshape(results []also.ReshapeResult) error {
+	st, err := also.LoadState()
+	if err != nil {
+		return err
+	}
+	projects := map[string]map[string]bool{}
+	for _, r := range results {
+		if r.Err != nil || r.Status != "reshaped" || r.Install.Project == "" {
+			continue
+		}
+		if projects[r.Install.Project] == nil {
+			projects[r.Install.Project] = map[string]bool{}
+		}
+		projects[r.Install.Project][r.To] = true
+	}
+	for project, harnesses := range projects {
+		data, err := os.ReadFile(filepath.Join(project, ".gitignore"))
+		if err != nil || !strings.Contains(string(data), "# also:begin infra") {
+			continue
+		}
+		for _, in := range st.Installs {
+			if also.PathKey(in.Project) == also.PathKey(project) && in.Harness != "" {
+				harnesses[in.Harness] = true
+			}
+		}
+		var list []string
+		for h := range harnesses {
+			list = append(list, h)
+		}
+		sort.Strings(list)
+		if _, err := also.UpdateGitIgnore(project, also.IgnoreInfra, true, also.InfraIgnoreEntries(list)); err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(project, ".also-layers")); err == nil {
+			if _, err := also.UpdateGitIgnore(project, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -653,6 +703,9 @@ every project on this machine.`
 				return err
 			}
 			if err := refreshLockAfterReshape(results); err != nil {
+				return err
+			}
+			if err := updateIgnoreAfterReshape(results); err != nil {
 				return err
 			}
 			failed := 0

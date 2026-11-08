@@ -152,6 +152,18 @@ func (r SemverRange) String() string {
 
 // HighestSemver prefers the highest stable version; prereleases are used only
 // when no stable version exists.
+// HighestSemverString parses a list of semantic aliases and returns the
+// highest one. It is used when a VersionInfo carries aliases as strings.
+func HighestSemverString(list []string) (Semver, bool) {
+	var parsed []Semver
+	for _, s := range list {
+		if v, ok := ParseSemver(s); ok {
+			parsed = append(parsed, v)
+		}
+	}
+	return HighestSemver(parsed)
+}
+
 func HighestSemver(versions []Semver) (Semver, bool) {
 	var stable, any *Semver
 	for i := range versions {

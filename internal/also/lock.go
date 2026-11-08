@@ -22,6 +22,7 @@ type LockEntry struct {
 	Remote        string   `json:"remote,omitempty"`
 	Version       string   `json:"version"`
 	Digest        string   `json:"digest,omitempty"`
+	Semver        string   `json:"semver,omitempty"`
 	Constraint    string   `json:"constraint,omitempty"`
 	Harness       string   `json:"harness"`
 	SourceHarness string   `json:"source_harness,omitempty"`
@@ -152,7 +153,7 @@ func (l *Lockfile) RemoveIn(namespace, pkg, harness string) {
 func LockEntryFromInstall(in *Install, constraint string) LockEntry {
 	return LockEntry{
 		Package: in.Package, Namespace: in.Set, Remote: in.SetRemote,
-		Version: in.Version, Digest: in.Digest, Constraint: constraint,
+		Version: in.Version, Digest: in.Digest, Semver: in.Semver, Constraint: constraint,
 		Harness: in.Harness, SourceHarness: in.SourceHarness,
 		Parts: in.Parts, Exclude: in.Exclude, WithConfig: in.WithConfig,
 	}

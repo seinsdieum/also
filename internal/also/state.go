@@ -58,6 +58,7 @@ type Install struct {
 	Package       string          `json:"package"`
 	Version       string          `json:"version"`
 	Digest        string          `json:"digest,omitempty"`
+	Semver        string          `json:"semver,omitempty"`
 	Label         string          `json:"label,omitempty"`
 	SourceHarness string          `json:"source_harness"`
 	Harness       string          `json:"harness"`

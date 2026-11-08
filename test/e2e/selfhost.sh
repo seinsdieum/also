@@ -54,7 +54,8 @@ test -e "$P/.opencode/commands/fix.md"
 test -e "$P/.opencode/skills/review/SKILL.md"
 (cd "$P" && "$ALSO" install skills from p for opencode --only >/dev/null)
 test ! -e "$P/.opencode/agents/dev.md"
-(cd "$P" && "$ALSO" install p for opencode --only >/dev/null)
+# A plain install means the whole package again.
+(cd "$P" && "$ALSO" install p for opencode >/dev/null)
 test -e "$P/AGENTS.md"
 
 # The install is pinned so a later upgrade cannot cross a major by accident.
@@ -62,15 +63,15 @@ python3 -c 'import json;d=json.load(open("'"$P"'/also.lock"));assert d["packages
 
 # Leaked infrastructure is a CI failure even if the lock is committed.
 (cd "$P" && git add also.lock && git add -f .opencode AGENTS.md opencode.json)
-if (cd "$P" && "$ALSO" audit --ci >/dev/null 2>&1); then
-	echo "selfhost: tracked infra did not fail audit --ci" >&2
+if (cd "$P" && "$ALSO" audit --ci --strict >/dev/null 2>&1); then
+	echo "selfhost: tracked infra did not fail audit --ci --strict" >&2
 	exit 1
 fi
-(cd "$P" && git rm -r --cached -q .opencode AGENTS.md opencode.json && git add .gitignore also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm lock >/dev/null && "$ALSO" audit --ci >/dev/null)
+(cd "$P" && git rm -r --cached -q .opencode AGENTS.md opencode.json && git add .gitignore also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm lock >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 
 # A command from a subdirectory targets the project root, not a nested project.
 mkdir -p "$P/cmd/app"
-(cd "$P/cmd/app" && "$ALSO" audit --ci >/dev/null)
+(cd "$P/cmd/app" && "$ALSO" audit --ci --strict >/dev/null)
 test ! -e "$P/cmd/app/also.lock"
 
 # A major release waits for --major.
@@ -82,6 +83,11 @@ test "$V1" = "$V2"
 (cd "$P" && "$ALSO" upgrade --major >/dev/null)
 V3=$(python3 -c 'import json;print(json.load(open("'"$P"'/also.lock"))["packages"][0]["version"])')
 test "$V1" != "$V3"
+python3 -c 'import json;d=json.load(open("'"$P"'/also.lock"));assert d["packages"][0]["constraint"]=="^2.0.0", d'
+# The next ordinary upgrade must not downgrade back into the old major.
+(cd "$P" && "$ALSO" upgrade >/dev/null)
+V4=$(python3 -c 'import json;print(json.load(open("'"$P"'/also.lock"))["packages"][0]["version"])')
+test "$V3" = "$V4"
 (cd "$P" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm major >/dev/null)
 
 # Reshape is project-scoped and updates the lock.
@@ -93,7 +99,9 @@ test -e "$P/.claude/agents/dev.md"
 test ! -e "$P/.opencode/agents/dev.md"
 test -e "$Q/.opencode/agents/dev.md"
 python3 -c 'import json;d=json.load(open("'"$P"'/also.lock"));assert d["packages"][0]["harness"]=="claude", d'
-(cd "$P" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm reshape >/dev/null && "$ALSO" audit --ci >/dev/null)
+grep -q '^\.claude/$' "$P/.gitignore"
+(cd "$P" && git add -A && ! git diff --cached --name-only | grep -qE '^(\.claude/|CLAUDE\.md)' && git reset -q)
+(cd "$P" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm reshape >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 
 # The same package from two namespaces has two lock entries.
 (cd "$Q" && "$ALSO" install p for opencode from work >/dev/null)
@@ -101,7 +109,7 @@ python3 -c 'import json;d=json.load(open("'"$Q"'/also.lock"));assert len(d["pack
 (cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm work >/dev/null && "$ALSO" audit --ci >/dev/null)
 (cd "$Q" && "$ALSO" uninstall p for opencode --namespace work >/dev/null)
 python3 -c 'import json;d=json.load(open("'"$Q"'/also.lock"));assert len(d["packages"])==1, d'
-(cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm removed >/dev/null && "$ALSO" audit --ci >/dev/null)
+(cd "$Q" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm removed >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 
 # A fresh checkout has no state and no namespace config; the lock's remote is
 # enough, and identical existing files are adopted if the tree was restored.
@@ -112,20 +120,26 @@ mkdir -p "$WORK/home-ci"
 (
 	export HOME="$WORK/home-ci" USERPROFILE="$WORK/home-ci" ALSO_HOME="$WORK/also-ci"
 	mkdir -p "$ALSO_HOME"
-	cp "$WORK/also/config.json" "$ALSO_HOME/config.json" 2>/dev/null || true
-	rm -f "$ALSO_HOME/state.json"
+	test ! -e "$ALSO_HOME/config.json"
 	cd "$C"
 	"$ALSO" install --frozen >/dev/null
-	"$ALSO" audit --ci >/dev/null
+	"$ALSO" audit --ci --strict >/dev/null
+	# Upgrade and reshape on a lock-only machine must not invent a
+	# remote-<hash> namespace or leave a stale managed block.
+	"$ALSO" upgrade >/dev/null
+	"$ALSO" reshape claude >/dev/null
+	"$ALSO" audit --ci --strict >/dev/null
+	test "$(grep -c 'also:begin' CLAUDE.md 2>/dev/null || true)" -eq 1
+	test ! -e AGENTS.md || ! grep -q 'also:begin' AGENTS.md
 	# State loss with the same files present must adopt them, not fail.
 	rm -f "$ALSO_HOME/state.json"
 	"$ALSO" install --frozen >/dev/null
-	"$ALSO" audit --ci >/dev/null
+	"$ALSO" audit --ci --strict >/dev/null
 )
 
 # A symlinked checkout is the same project, with one install slot.
 ln -s "$P" "$WORK/link"
-(cd "$WORK/link" && "$ALSO" audit --ci >/dev/null)
+(cd "$WORK/link" && "$ALSO" audit --ci --strict >/dev/null)
 COUNT=$(cd "$WORK/link" && "$ALSO" list --installs --json | python3 -c "
 import json,sys,os
 p=os.path.realpath('$P')

@@ -178,8 +178,20 @@ func isOpenCodeModel(m string) bool {
 }
 
 func permissionDenies(v any) bool {
-	s, ok := v.(string)
-	return ok && strings.EqualFold(strings.TrimSpace(s), "deny")
+	switch x := v.(type) {
+	case string:
+		return strings.EqualFold(strings.TrimSpace(x), "deny")
+	case map[string]any:
+		// A per-command map cannot be expressed by Claude's agent
+		// frontmatter. Any deny in it means the safe mapping is to remove
+		// the whole tool rather than silently allow the denied command.
+		for _, raw := range x {
+			if permissionDenies(raw) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func toolSet(v any) map[string]bool {
@@ -408,7 +420,7 @@ func agentToClaude(data []byte, _, _, filename string) ([]byte, []string, error)
 				}
 			}
 		}
-		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permission map is not supported by Claude; deny rules were mapped to tools and the map was dropped", filename))
+		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permission map is not supported by Claude; deny rules removed the affected tools, while ask/allow patterns cannot be expressed and were dropped", filename))
 		delete(fm, "permission")
 	}
 	if hasTools || tools != nil && len(tools) > 0 {

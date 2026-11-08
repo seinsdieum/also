@@ -331,6 +331,18 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 				addLockFinding("fail", "lock-invalid", entry.Package, entry.Harness, err.Error())
 				continue
 			}
+			if entry.Semver != "" && entry.Constraint != "" {
+				if v, ok := ParseSemver(entry.Semver); ok {
+					if rng, ok := ParseSemverRange(entry.Constraint); ok && !rng.Match(v) {
+						severity := "warn"
+						if requireLock {
+							severity = "fail"
+						}
+						addLockFinding(severity, "lock-constraint-mismatch", entry.Package, entry.Harness,
+							"also.lock pins "+entry.Semver+" but the constraint "+entry.Constraint+" does not match it")
+					}
+				}
+			}
 			in := projectInstalls[key]
 			if in == nil {
 				addLockFinding("fail", "lock-not-installed", entry.Package, entry.Harness,

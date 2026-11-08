@@ -169,8 +169,11 @@ type UpgradeResult struct {
 	Install Install
 	Old     string
 	New     string
-	Status  string
-	Err     error
+	// Constraint is the lock constraint that follows from this upgrade. It is
+	// set when a major move requires replacing an old ^1.x pin.
+	Constraint string
+	Status     string
+	Err        error
 }
 
 func UpgradeInstalls(cfg *Config, st *State, pkgs []string, force, check bool, major ...bool) ([]UpgradeResult, error) {
@@ -247,6 +250,23 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, m
 			out = append(out, res)
 			continue
 		}
+		res.Constraint = constraint
+		if latestSem, ok := HighestSemverString(latest.Semver); ok {
+			if constraint == "" {
+				res.Constraint = "^" + latestSem.String()
+			} else if rng, ok := ParseSemverRange(constraint); !ok || !rng.Match(latestSem) {
+				// A major (or any out-of-range) move must not leave an old
+				// ^1.x pin behind, or the next ordinary upgrade would move
+				// content backwards.
+				res.Constraint = "^" + latestSem.String()
+			}
+			if installedSem, ok := repo.HighestSemverForVersion(in.Package, in.Version); ok &&
+				CompareSemver(latestSem, installedSem) < 0 {
+				res.Err = fmt.Errorf("refusing to downgrade %s from %s to %s; run also upgrade --major to choose a newer major", in.Package, installedSem, latestSem)
+				out = append(out, res)
+				continue
+			}
+		}
 		res.New = latest.Version
 		if latest.Version == in.Version {
 			res.Status = "up to date"
@@ -312,6 +332,11 @@ func upgradeRepo(cfg *Config, in *Install, cache map[string]*SetRepo) (*SetRepo,
 	var err error
 	if sc, ok := cfg.Namespaces[in.Set]; ok && sc.Remote == in.SetRemote {
 		r, err = OpenSet(in.Set, sc, true)
+	} else if in.Set != "" && in.SetRemote != "" {
+		// Keep the install's namespace name. Synthesising remote-<hash>
+		// changes the install slot identity and leaves a stale managed block
+		// behind, which is exactly the fresh-lock-only case.
+		r, err = openSet(in.Set, NamespaceConfig{Remote: in.SetRemote}, true, false)
 	} else {
 		r, err = OpenRemote(in.SetRemote, true)
 	}

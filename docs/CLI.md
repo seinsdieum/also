@@ -148,9 +148,11 @@ same directory. `also install --frozen` with no package argument installs every
 entry in `also.lock` for the recorded harness, parts and exclusions, which is
 the intended CI form.
 
-Selection is additive by default: `also install agents from p` keeps the
-skills already installed. `--only` replaces the selection. `--except` removes a
-kind or a named component from a complete install, for example
+A plain `also install <package>` installs the whole package again, resetting a
+previous partial selection. When selectors are present, they are additive:
+`also install agents from p` keeps the skills already installed. `--only`
+replaces the selection. `--except` removes a kind or a named component from a
+complete install, for example
 `also install p for opencode --except instructions --except settings` leaves a
 project-owned `AGENTS.md` and `opencode.json` untouched. `also upgrade` upgrades
 the packages installed in the current directory, not packages elsewhere;

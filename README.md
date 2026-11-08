@@ -177,8 +177,9 @@ parts instead of handing over the whole file:
 also install team for opencode --except instructions --except settings --except mcp
 ```
 
-Selection is additive: `also install agents from team` keeps existing skills.
-`--only` replaces the selection. `also audit --ci` fails when any installed
+A plain `also install team` restores the whole package. Adding selectors is
+additive (`also install agents from team` keeps existing skills); `--only`
+replaces the selection. `also audit --ci` fails when any installed
 file, managed block or managed config file is tracked by git, so the
 artifact-free rule is an invariant rather than a convention.
 

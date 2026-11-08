@@ -68,9 +68,11 @@ component kinds must exist in the binary.
 
 `also.lock` is project-local desired state and is meant to be committed. Each
 entry records `package`, `namespace`, `remote`, `version` (content digest),
-`digest` (full SHA-256), optional `constraint`, `harness`, `source_harness`,
-`parts`, `exclude` and `with_config`. Entries are keyed by namespace, package
-and harness, so the same package from two namespaces can coexist. Unknown
+`digest` (full SHA-256), optional `semver`, `constraint`, `harness`,
+`source_harness`, `parts`, `exclude` and `with_config`. Entries are keyed by
+namespace, package and harness, so the same package from two namespaces can
+coexist. `semver` is the semantic alias used for the installed content and lets
+`audit` reject a lock whose `constraint` no longer matches its version. Unknown
 fields are ignored; changing the meaning of an existing field needs v2.
 
 `--frozen` reads the lock and refuses to install anything that does not match.
