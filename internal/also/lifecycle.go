@@ -146,6 +146,11 @@ func checkPolicyPackage(p *Policy, namespace string, pkg *Package) error {
 	return nil
 }
 
+// CheckPolicyExecutables is the exported preflight form used by frozen replay.
+func CheckPolicyExecutables(p *Policy, execs []Executable) error {
+	return checkPolicyExecutables(p, execs)
+}
+
 func checkPolicyExecutables(p *Policy, execs []Executable) error {
 	if p == nil || len(execs) == 0 {
 		return nil

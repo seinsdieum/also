@@ -170,6 +170,41 @@ func TestInstallExclusionsAndAdditiveParts(t *testing.T) {
 	}
 }
 
+func TestAuditFindsStaleHarnessFiles(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".opencode", "skills", "local", "SKILL.md"), "local\n")
+	if out, err := runGit(project, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if out, err := runGit(project, "add", "-f", ".opencode/skills/local/SKILL.md"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, project, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" {
+			return
+		}
+	}
+	t.Fatalf("stale harness file was not reported: %+v", report.Findings)
+}
+
 func TestAuditFindsConstraintMismatch(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)

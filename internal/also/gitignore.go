@@ -117,14 +117,19 @@ func AlsoIgnoreEntries() []string { return append([]string{}, alsoIgnoreEntries.
 
 // UpdateGitIgnore adds or removes a managed block in the project .gitignore.
 func UpdateGitIgnore(project string, kind IgnoreKind, add bool, entries []string) (bool, error) {
-	if kind != IgnoreInfra && kind != IgnoreAlso {
-		return false, fmt.Errorf("unknown ignore scope %q; use infra or you", kind)
-	}
 	root, err := GitProjectRoot(project)
 	if err != nil {
 		return false, err
 	}
-	path := filepath.Join(root, ".gitignore")
+	return UpdateGitIgnoreAt(filepath.Join(root, ".gitignore"), kind, add, entries)
+}
+
+// UpdateGitIgnoreAt updates a specific .gitignore file. It is used for
+// archive checkouts that have no .git yet but still carry a managed block.
+func UpdateGitIgnoreAt(path string, kind IgnoreKind, add bool, entries []string) (bool, error) {
+	if kind != IgnoreInfra && kind != IgnoreAlso {
+		return false, fmt.Errorf("unknown ignore scope %q; use infra or you", kind)
+	}
 	mode := os.FileMode(0o644)
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {

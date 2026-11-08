@@ -99,13 +99,18 @@ test "$V3" = "$V4"
 Q="$WORK/product2"
 mkdir -p "$Q"
 (cd "$Q" && git init -q . && printf '# q\n' > README.md && git add . && git -c user.name=dev -c user.email=dev@example.invalid commit -qm init >/dev/null && "$ALSO" exclude infra for opencode >/dev/null && "$ALSO" install p for opencode >/dev/null && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm lock >/dev/null)
+# A file the user left under the old harness directory must stay ignored
+# after the migration; it is not silently exposed to git add -A.
+mkdir -p "$P/.opencode/skills/local"
+printf 'local\n' > "$P/.opencode/skills/local/SKILL.md"
 (cd "$P" && "$ALSO" reshape claude >/dev/null)
+grep -q '^\.opencode/$' "$P/.gitignore"
 test -e "$P/.claude/agents/dev.md"
 test ! -e "$P/.opencode/agents/dev.md"
 test -e "$Q/.opencode/agents/dev.md"
 python3 -c 'import json;d=json.load(open("'"$P"'/also.lock"));assert d["packages"][0]["harness"]=="claude", d'
 grep -q '^\.claude/$' "$P/.gitignore"
-(cd "$P" && git add -A && ! git diff --cached --name-only | grep -qE '^(\.claude/|CLAUDE\.md)' && git reset -q)
+(cd "$P" && git add -A && ! git diff --cached --name-only | grep -qE '^(\.claude/|CLAUDE\.md|\.opencode/)' && git reset -q)
 (cd "$P" && git add also.lock && git -c user.name=dev -c user.email=dev@example.invalid commit -qm reshape >/dev/null && "$ALSO" audit --ci --strict >/dev/null)
 
 # A package-created harness config is removed on reshape, not left as a
@@ -124,10 +129,15 @@ M="$WORK/mono"
 P2="$M/product"
 mkdir -p "$P2"
 (cd "$M" && git init -q . && printf '# mono\n' > README.md && git add . && git -c user.name=dev -c user.email=dev@example.invalid commit -qm init >/dev/null)
-(cd "$P2" && "$ALSO" exclude infra for opencode >/dev/null && "$ALSO" install p for opencode >/dev/null)
+(cd "$P2" && "$ALSO" exclude infra for opencode >/dev/null && "$ALSO" install p for opencode --dir "$P2" >/dev/null)
+P4="$M/claude"
+mkdir -p "$P4"
+(cd "$P4" && "$ALSO" install p for claude --dir "$P4" >/dev/null && "$ALSO" exclude infra >/dev/null)
+grep -q '^\.opencode/$' "$M/.gitignore"
+grep -q '^\.claude/$' "$M/.gitignore"
 (cd "$P2" && "$ALSO" reshape claude >/dev/null)
 grep -q '^\.claude/$' "$M/.gitignore"
-(cd "$M" && git add -A && ! git diff --cached --name-only | grep -qE '^product/(\.claude/|CLAUDE\.md)$' && git reset -q)
+(cd "$M" && git add -A && ! git diff --cached --name-only | grep -qE '^product/(\.claude/|CLAUDE\.md)|^claude/(\.claude/|CLAUDE\.md)' && git reset -q)
 
 # The same package from two namespaces has two lock entries.
 (cd "$Q" && "$ALSO" install p for opencode from work >/dev/null)
@@ -157,6 +167,8 @@ mkdir -p "$WORK/home-ci"
 	test "$V0" != "$V1"
 	"$ALSO" reshape claude >/dev/null
 	"$ALSO" audit --ci --strict >/dev/null
+	grep -q '^\.claude/$' .gitignore
+	grep -q '^\.opencode/$' .gitignore
 	test -e .claude/agents/dev.md
 	test ! -e .opencode
 	test ! -e AGENTS.md || ! grep -q 'also:begin' AGENTS.md

@@ -67,9 +67,9 @@ Notes:
   lock, on an install that is missing from the lock, on an unsigned or invalid
   policy signature, on a missing required role or approval, on a policy
   violation, and on installed infrastructure that is tracked by git
-  (`infra-tracked`, `block-tracked`, `config-tracked`). A user-edited file is a
-  warning, because edits can be intentional. The lock is the committed source
-  of truth; `~/.also/state.json` is only the local cache.
+  (`infra-tracked`, `block-tracked`, `config-tracked`, `stale-infra`). A
+  user-edited file is a warning, because edits can be intentional. The lock is
+  the committed source of truth; `~/.also/state.json` is only the local cache.
 - The artifact-free setup is: `also exclude infra for <harness>` and
   `also exclude you` before the first install, then commit only `.gitignore`,
   `also.lock`, `also.policy.yml` and `also.policy.sig`. The audit check above

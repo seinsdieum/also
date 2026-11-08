@@ -109,9 +109,9 @@ identical resources and does not fail `--strict`) and a stable code such as
 `block-modified`, `config-missing`, `config-modified`, `shared-file`,
 `shared-block`, `shared-config`, `legacy-global`, `digest-missing`,
 `policy-namespace`, `policy-package`, `policy-executable`, `policy-unsigned`,
-`policy-signature-invalid`, `infra-tracked`, `block-tracked` and
-`config-tracked`. New codes may be added; clients should treat an unknown code
-as a generic finding.
+`policy-signature-invalid`, `infra-tracked`, `block-tracked`,
+`config-tracked`, `stale-infra` and `lock-constraint-mismatch`. New codes may be
+added; clients should treat an unknown code as a generic finding.
 
 `--sbom` emits CycloneDX 1.5, not an also schema.
 

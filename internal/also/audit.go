@@ -146,6 +146,76 @@ func trackedInfraFindings(in *Install, tracked map[string]bool, requireLock bool
 	return out
 }
 
+func harnessComponentDirs(h *Harness) []string {
+	var dirs []string
+	p := h.Project
+	dirs = append(dirs, p.Skills, p.Commands, p.Agents, p.Plugins, p.Hooks)
+	for _, d := range h.ExtraDirs {
+		if h.ExtraBase != "" {
+			dirs = append(dirs, filepath.Join(h.ExtraBase, d))
+		} else {
+			dirs = append(dirs, d)
+		}
+	}
+	for _, c := range h.Components {
+		if c.ProjectDir != "" {
+			dirs = append(dirs, c.ProjectDir)
+		}
+	}
+	return dirs
+}
+
+// staleInfraFindings catches tracked files under a harness component
+// directory that no current install owns. They are leftovers from a previous
+// harness or a manual copy, and the artifact-free contract says they must not
+// be in the product history.
+func staleInfraFindings(st *State, root string, tracked map[string]bool, requireLock bool) []AuditFinding {
+	if len(tracked) == 0 {
+		return nil
+	}
+	severity := "warn"
+	if requireLock {
+		severity = "fail"
+	}
+	var out []AuditFinding
+	for path := range tracked {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if len(st.ownersOf(path)) > 0 {
+			continue
+		}
+		for _, h := range Harnesses() {
+			for _, dir := range harnessComponentDirs(h) {
+				dir = strings.TrimSuffix(filepath.ToSlash(dir), "/")
+				if dir == "" || dir == "." {
+					continue
+				}
+				if rel == dir || strings.HasPrefix(rel, dir+"/") {
+					out = append(out, AuditFinding{
+						Severity: severity, Code: "stale-infra", Harness: h.ID, Path: path,
+						Detail: "tracked file is under a harness component directory but is not owned by an install; remove it or run also exclude infra",
+					})
+					goto nextPath
+				}
+			}
+			if rel == filepath.ToSlash(h.Project.Instr) {
+				if data, rerr := os.ReadFile(path); rerr == nil && bytes.Contains(data, []byte(blockBeginPrefix)) {
+					out = append(out, AuditFinding{
+						Severity: severity, Code: "block-tracked", Harness: h.ID, Path: path,
+						Detail: "managed instruction block is tracked but not owned by an install; remove the block or untrack the file",
+					})
+					goto nextPath
+				}
+			}
+		}
+	nextPath:
+	}
+	return out
+}
+
 func Audit(st *State, project string, all, requireLock bool) (*AuditReport, error) {
 	if st == nil {
 		return nil, fmt.Errorf("no install state")
@@ -319,6 +389,9 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 			}
 		}
 		report.Packages = append(report.Packages, ap)
+	}
+	for root, tracked := range trackedCache {
+		report.Findings = append(report.Findings, staleInfraFindings(st, root, tracked, requireLock)...)
 	}
 	if lockExists {
 		addLockFinding := func(severity, code, pkg, harness, detail string) {

@@ -326,6 +326,19 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut bool)
 			if err := also.CheckPolicyPackage(policy, entry.Namespace, pkg); err != nil {
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
 			}
+			st, lerr := also.LoadState()
+			if lerr != nil {
+				return lerr
+			}
+			plan, perr := also.BuildPlan(st, set, pkg, version, entry.Harness, "project", project, also.InstallOptions{
+				Force: force, WithConfig: entry.WithConfig, Parts: entry.Parts, Exclude: entry.Exclude,
+			})
+			if perr != nil {
+				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, perr)
+			}
+			if err := also.CheckPolicyExecutables(policy, plan.Install.Executables); err != nil {
+				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
 		}
 		out := make([]installOutput, 0, len(lock.Packages))
 		for _, entry := range lock.Packages {
@@ -603,6 +616,17 @@ func refreshLockAfterReshape(results []also.ReshapeResult) error {
 	return nil
 }
 
+func preflightIgnoreUpdate(project string) error {
+	path := filepath.Join(project, ".gitignore")
+	if root, err := also.GitProjectRoot(project); err == nil {
+		path = filepath.Join(root, ".gitignore")
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to reshape: %s is a symlink; make it a regular file first", path)
+	}
+	return nil
+}
+
 // updateIgnoreAfterReshape extends the managed infra block for the new
 // harness. Without this, an agent's "git add -A" stages .claude/CLAUDE.md and
 // the next audit fails on tracked infrastructure.
@@ -611,43 +635,90 @@ func updateIgnoreAfterReshape(results []also.ReshapeResult) error {
 	if err != nil {
 		return err
 	}
-	projects := map[string]map[string]bool{}
+	// The managed block belongs to the git root and is shared by every project
+	// under it. A reshape of one project must union the harnesses, never
+	// replace the block with only the new harness.
+	harnesses := map[string]map[string]bool{}
+	pathByKey := map[string]string{}
+	gitByKey := map[string]bool{}
+	add := func(project, harness string) {
+		if project == "" || harness == "" {
+			return
+		}
+		root, err := also.GitProjectRoot(project)
+		key, path, git := project, project, false
+		if err == nil {
+			key, path, git = root, root, true
+		}
+		if harnesses[key] == nil {
+			harnesses[key] = map[string]bool{}
+			pathByKey[key] = path
+			gitByKey[key] = git
+		}
+		harnesses[key][harness] = true
+	}
 	for _, r := range results {
 		if r.Err != nil || r.Status != "reshaped" || r.Install.Project == "" {
 			continue
 		}
-		if projects[r.Install.Project] == nil {
-			projects[r.Install.Project] = map[string]bool{}
-		}
-		projects[r.Install.Project][r.To] = true
+		add(r.Install.Project, r.Install.Harness)
+		add(r.Install.Project, r.To)
 	}
-	for project, harnesses := range projects {
-		root, err := also.GitProjectRoot(project)
-		if err != nil {
-			// Archive/tarball checkouts have no git; there is no ignore file
-			// to update and reshape must still succeed.
-			continue
+	for key, path := range pathByKey {
+		for _, in := range st.Installs {
+			if in.Harness == "" || in.Project == "" {
+				continue
+			}
+			if gitByKey[key] {
+				rel, rerr := filepath.Rel(path, in.Project)
+				if rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					harnesses[key][in.Harness] = true
+				}
+			} else if also.PathKey(in.Project) == also.PathKey(path) {
+				harnesses[key][in.Harness] = true
+			}
 		}
-		data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	}
+	for key, list := range harnesses {
+		path := pathByKey[key]
+		gitignore := filepath.Join(path, ".gitignore")
+		data, err := os.ReadFile(gitignore)
 		if err != nil || !strings.Contains(string(data), "# also:begin infra") {
 			continue
 		}
-		for _, in := range st.Installs {
-			if also.PathKey(in.Project) == also.PathKey(project) && in.Harness != "" {
-				harnesses[in.Harness] = true
+		var names []string
+		for h := range list {
+			names = append(names, h)
+		}
+		sort.Strings(names)
+		entries := also.InfraIgnoreEntries(names)
+		if gitByKey[key] {
+			if _, err := also.UpdateGitIgnore(path, also.IgnoreInfra, true, entries); err != nil {
+				return err
 			}
-		}
-		var list []string
-		for h := range harnesses {
-			list = append(list, h)
-		}
-		sort.Strings(list)
-		if _, err := also.UpdateGitIgnore(project, also.IgnoreInfra, true, also.InfraIgnoreEntries(list)); err != nil {
+		} else if _, err := also.UpdateGitIgnoreAt(gitignore, also.IgnoreInfra, true, entries); err != nil {
 			return err
 		}
-		if _, err := os.Stat(filepath.Join(project, ".also-layers")); err == nil {
-			if _, err := also.UpdateGitIgnore(project, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
-				return err
+		for _, in := range st.Installs {
+			match := false
+			if gitByKey[key] {
+				rel, rerr := filepath.Rel(path, in.Project)
+				match = rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+			} else {
+				match = also.PathKey(in.Project) == also.PathKey(path)
+			}
+			if !match {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(in.Project, ".also-layers")); err == nil {
+				if gitByKey[key] {
+					if _, err := also.UpdateGitIgnore(path, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
+						return err
+					}
+				} else if _, err := also.UpdateGitIgnoreAt(gitignore, also.IgnoreAlso, true, also.AlsoIgnoreEntries()); err != nil {
+					return err
+				}
+				break
 			}
 		}
 	}
@@ -691,6 +762,11 @@ every project on this machine.`
 		if !all {
 			proj, err = installProject(project)
 			if err != nil {
+				return err
+			}
+		}
+		if !all {
+			if err := preflightIgnoreUpdate(proj); err != nil {
 				return err
 			}
 		}

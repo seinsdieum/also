@@ -128,8 +128,9 @@ The file is local desired state, not a replacement for `~/.also/state.json`,
 which records what was actually written on this machine. After a state loss,
 `install --frozen` can re-adopt byte-identical files and the current config
 values, but it cannot recover the user's pre-install config base: a later
-`uninstall` leaves the adopted value in place. Uninstall before deleting state
-if exact config reversal matters.
+`uninstall` leaves the adopted package config values (and a possibly empty
+instruction file) in place. Uninstall before deleting state if exact config
+reversal matters.
 
 ## Installs
 
@@ -212,8 +213,10 @@ is only a cache, so the committed lock is the source of truth. It also fails
 when the lock pins a package that is not installed, when the installed version
 or digest differs, when an install is missing from the lock, and when an
 installed file, managed instruction block or managed config file is tracked by
-git (`infra-tracked`, `block-tracked`, `config-tracked`). Those findings make
-the artifact-free rule a CI invariant instead of a `.gitignore` convention.
+git (`infra-tracked`, `block-tracked`, `config-tracked`), or when a tracked file
+sits under a harness component directory without being owned by an install
+(`stale-infra`). Those findings make the artifact-free rule a CI invariant
+instead of a `.gitignore` convention.
 `--strict` exits 1 on any warning or failure; shared identical files, blocks
 and config entries are informational and do not fail it. `drift` prints only
 the differences.

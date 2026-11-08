@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -219,14 +220,16 @@ func harnessesForProject(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	abs, _ := also.AbsPath(dir)
 	seen := map[string]bool{}
 	if st, err := also.LoadState(); err == nil {
 		for _, in := range st.Installs {
 			if in.Project == "" {
 				continue
 			}
-			if also.PathKey(in.Project) == also.PathKey(root) || also.PathKey(in.Project) == also.PathKey(abs) {
+			// The .gitignore block is shared by every project under the git
+			// root. Include descendants, not only the exact current directory.
+			rel, rerr := filepath.Rel(root, in.Project)
+			if rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				seen[in.Harness] = true
 			}
 		}

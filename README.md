@@ -204,7 +204,7 @@ also drift                       # only the differences
 
 `also audit` never downloads a package; the recorded digest is the evidence. A modified file is a warning because you may have edited it on purpose. A missing file, managed block or configuration entry is a failure because the install is incomplete.
 
-`also audit --ci` additionally requires a git-tracked `also.lock` and compares every entry with the local state: a lock entry that is not installed, a version or digest mismatch, an unexpected extra install, or a missing lock is a failure. It also fails when an installed file, managed instruction block or managed config file is tracked by git (`infra-tracked`, `block-tracked`, `config-tracked`), which turns the artifact-free layout into a CI invariant. The lock is the committed source of truth; `~/.also/state.json` is the per-machine cache. That is what makes the CI gate meaningful even if the local state was edited.
+`also audit --ci` additionally requires a git-tracked `also.lock` and compares every entry with the local state: a lock entry that is not installed, a version or digest mismatch, an unexpected extra install, or a missing lock is a failure. It also fails when an installed file, managed instruction block or managed config file is tracked by git (`infra-tracked`, `block-tracked`, `config-tracked`) or when a tracked file sits under a harness component directory without an owner (`stale-infra`), which turns the artifact-free layout into a CI invariant. The lock is the committed source of truth; `~/.also/state.json` is the per-machine cache. That is what makes the CI gate meaningful even if the local state was edited.
 
 ### Policy
 
