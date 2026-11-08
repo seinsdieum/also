@@ -1541,8 +1541,8 @@ func TestUpgradeStaysInMajorUnlessAsked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].Status != "up to date" {
-		t.Fatalf("unconstrained upgrade crossed a major: %+v", results)
+	if len(results) != 1 || !strings.Contains(results[0].Status, "major update available") {
+		t.Fatalf("unconstrained upgrade crossed a major or hid the blocked release: %+v", results)
 	}
 	st, _ = LoadState()
 	results, err = UpgradeInstalls(cfg, st, nil, false, false, true)

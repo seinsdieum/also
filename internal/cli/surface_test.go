@@ -117,6 +117,74 @@ func TestInstallMaintainsManagedGitIgnore(t *testing.T) {
 	}
 }
 
+func TestUninstallPrunesManagedGitIgnore(t *testing.T) {
+	tmp := setupHome(t)
+	remote := setupRemote(t)
+	if err := runCLI("setup", "--yes", "--harness", "opencode", "--namespace", "personal="+remote, "--default-namespace", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(tmp, "bundle")
+	if err := os.MkdirAll(filepath.Join(bundle, "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "also.json"), []byte(`{"schema":"also.infra/v1","name":"demo","harness":"opencode"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "AGENTS.md"), []byte("rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: d\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLI("push", bundle); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", project).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	old, _ := os.Getwd()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	for _, h := range []string{"opencode", "claude"} {
+		if err := runCLI("install", "demo", "for", h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ignore := func() string {
+		data, err := os.ReadFile(filepath.Join(project, ".gitignore"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if err := runCLI("uninstall", "demo", "for", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	after := ignore()
+	for _, gone := range []string{".claude/", "CLAUDE.md", ".mcp.json"} {
+		if strings.Contains(after, gone) {
+			t.Fatalf("uninstall left %q in .gitignore:\n%s", gone, after)
+		}
+	}
+	for _, kept := range []string{".opencode/", "AGENTS.md", "opencode.json"} {
+		if !strings.Contains(after, kept) {
+			t.Fatalf("uninstall removed a still-needed entry %q:\n%s", kept, after)
+		}
+	}
+	if err := runCLI("uninstall", "demo", "for", "opencode"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ignore(), "# also:begin infra") {
+		t.Fatalf("empty harness block survived the last uninstall:\n%s", ignore())
+	}
+}
+
 func TestFoldedModesAreFlags(t *testing.T) {
 	root := NewRoot()
 	audit, _, err := root.Find([]string{"audit"})

@@ -6,7 +6,7 @@
   <strong>Version once. Run anywhere.</strong>
 </p>
 
-`also` is the control plane for AI agent configuration. The project is at `0.1.0`: the command surface is deliberately small and still pre-1.0, while package, state and lock schemas are versioned independently. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
+`also` is the control plane for AI agent configuration. The project is at `0.1.1`: the command surface is deliberately small and still pre-1.0, while package, state and lock schemas are versioned independently. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
 
 ## 1. The Problem
 

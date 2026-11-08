@@ -36,15 +36,18 @@ dialects are `claude`/`opencode`. A new harness usually reuses one of these.
 Agent conversion never carries an incompatible model id across harnesses. An
 OpenCode `provider/model` id is dropped for Claude and a Claude alias such as
 `sonnet` is dropped for OpenCode; both emit a warning and the harness uses its
-own default. OpenCode `permission` deny rules become a Claude tools allowlist;
-`permissionMode: plan` becomes disabled edit tools in OpenCode. `.also-layers/<harness>/`
-is an authoritative native override and its config is merged with the main
-package.
+own default. OpenCode `permission` deny and ask rules become a Claude tools
+allowlist removal: neither has a Claude equivalent, and dropping an `ask` rule
+would silently turn it into `allow`. The V2 `permissions` array is handled the
+same way, including `action: subagent`; a resource-scoped rule removes the whole
+tool with a warning. `permissionMode: plan` becomes disabled edit tools in
+OpenCode. `.also-layers/<harness>/` is an authoritative native override and its
+config is merged with the main package.
 
 `Settings.Keys` is an allowlist of reversible top-level config keys, not a
-whole-file install. For OpenCode it covers `default_agent`, `theme`, `model`,
-`small_model`, `keybinds`, `permission` and the legacy `permissions`; MCP and
-hooks are merged separately. Each key is written and reversed independently, so
+whole-file install. For OpenCode it covers `default_agent`, `experimental`,
+`theme`, `model`, `small_model`, `keybinds`, `permission` and the V2
+`permissions`; MCP and hooks are merged separately. Each key is written and reversed independently, so
 a package can carry the intended agent and model defaults without replacing the
 whole file. Add a key to the adapter when the value is part of the
 infrastructure contract.

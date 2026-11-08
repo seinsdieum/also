@@ -146,6 +146,19 @@ func trackedInfraFindings(in *Install, tracked map[string]bool, requireLock bool
 	return out
 }
 
+// isFrontmatterComponent reports whether an installed file is one whose
+// YAML frontmatter a harness parses: an agent, a command or a skill.
+func isFrontmatterComponent(path string) bool {
+	slash := strings.ToLower(filepath.ToSlash(path))
+	base := filepath.Base(slash)
+	if base == "skill.md" {
+		return true
+	}
+	dir := filepath.ToSlash(filepath.Dir(slash))
+	return strings.HasSuffix(dir, "/agents") || strings.Contains(dir, "/agents/") ||
+		strings.HasSuffix(dir, "/commands") || strings.Contains(dir, "/commands/")
+}
+
 func harnessRootNames() map[string]bool {
 	roots := map[string]bool{}
 	add := func(p string) {
@@ -476,6 +489,11 @@ func Audit(st *State, project string, all, requireLock bool) (*AuditReport, erro
 			if ShortHash(data, 64) != f.SHA {
 				ap.Modified++
 				add("warn", "file-modified", f.Path, "content differs from the installed version")
+			}
+			if isFrontmatterComponent(f.Path) {
+				if _, _, _, ferr := splitFrontmatter(data); ferr != nil {
+					add("fail", "frontmatter-invalid", f.Path, ferr.Error())
+				}
 			}
 		}
 		if in.Block != nil {

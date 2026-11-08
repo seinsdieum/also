@@ -318,6 +318,36 @@ func ClassifyPackage(pkg *Package, h *Harness) (*bundleParts, error) {
 	return parts, nil
 }
 
+// validateComponentFrontmatter rejects a package whose agent, command or skill
+// metadata cannot be parsed. Without it push and audit stay green while the
+// first cross-harness install fails on the same bytes.
+func validateComponentFrontmatter(snap *Snapshot, parts *bundleParts) error {
+	var files []string
+	files = append(files, parts.Agents...)
+	files = append(files, parts.Commands...)
+	for _, sk := range parts.Skills {
+		for _, rel := range sk.Files {
+			if sk.Flat || filepath.Base(rel) == "SKILL.md" {
+				files = append(files, rel)
+			}
+		}
+	}
+	var problems []string
+	for _, rel := range UniqueStrings(files) {
+		f := snap.Files[rel]
+		if f == nil {
+			continue
+		}
+		if _, _, _, err := splitFrontmatter(f.Data); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", rel, err))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid component frontmatter (quote YAML values that contain ': '):\n  %s", strings.Join(problems, "\n  "))
+	}
+	return nil
+}
+
 func RenderPackage(pkg *Package, source *Harness, target Target) (*RenderPlan, error) {
 	return RenderPackageSelection(pkg, source, target, nil, nil)
 }

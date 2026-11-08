@@ -105,7 +105,9 @@ func toStringList(v any) ([]string, bool) {
 }
 
 // Agent conversion is a registry of dialect pairs, mirroring commands.
-type AgentConverter func(data []byte, from, to, filename string) ([]byte, []string, error)
+// target is the human display name of the destination harness, so warnings name
+// Qwen as Qwen instead of always saying Claude.
+type AgentConverter func(data []byte, from, to, target, filename string) ([]byte, []string, error)
 
 var agentFormats = map[string]bool{
 	AgentClaude:   true,
@@ -151,7 +153,11 @@ func ConvertAgent(data []byte, from, to string, filename string) ([]byte, []stri
 		return data, nil, nil
 	}
 	if fn, ok := agentConverters[fromFormat+">"+toFormat]; ok {
-		return fn(data, fromFormat, toFormat, filename)
+		target := to
+		if h, ok := ResolveHarness(to); ok {
+			target = h.Display
+		}
+		return fn(data, fromFormat, toFormat, target, filename)
 	}
 	return data, []string{fmt.Sprintf("agent %s: no converter from %s to %s; copied verbatim", filename, fromFormat, toFormat)}, nil
 }
@@ -177,21 +183,58 @@ func isOpenCodeModel(m string) bool {
 	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
 }
 
-func permissionDenies(v any) bool {
+func permissionRestricts(v any) bool {
 	switch x := v.(type) {
 	case string:
-		return strings.EqualFold(strings.TrimSpace(x), "deny")
+		effect := strings.ToLower(strings.TrimSpace(x))
+		// "ask" has no Claude agent equivalent. Removing the tool is the
+		// fail-closed mapping; dropping the rule would turn ask into allow.
+		return effect == "deny" || effect == "ask"
 	case map[string]any:
 		// A per-command map cannot be expressed by Claude's agent
-		// frontmatter. Any deny in it means the safe mapping is to remove
-		// the whole tool rather than silently allow the denied command.
+		// frontmatter. Any restriction means the safe mapping is to remove
+		// the whole tool rather than silently allow the restricted command.
 		for _, raw := range x {
-			if permissionDenies(raw) {
+			if permissionRestricts(raw) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// claudeToolsForAction maps one OpenCode V2 permission action to the Claude
+// tools it must remove. An unknown action is reported to the caller.
+func claudeToolsForAction(action string) []string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "edit", "write", "patch":
+		return []string{"Edit", "Write", "NotebookEdit"}
+	case "shell", "bash":
+		return []string{"Bash"}
+	case "webfetch":
+		return []string{"WebFetch"}
+	case "websearch":
+		return []string{"WebSearch"}
+	case "subagent", "task":
+		return []string{"Task"}
+	case "read":
+		return []string{"Read"}
+	case "grep":
+		return []string{"Grep"}
+	case "glob":
+		return []string{"Glob"}
+	case "list":
+		return []string{"List"}
+	case "todowrite", "todo":
+		return []string{"TodoWrite"}
+	case "*":
+		var all []string
+		for _, name := range toolNames {
+			all = append(all, name)
+		}
+		return all
+	}
+	return nil
 }
 
 func toolSet(v any) map[string]bool {
@@ -261,7 +304,7 @@ func dropAgentFields(fm map[string]any, warnings []string, to, filename string, 
 	return warnings
 }
 
-func agentToOpenCode(data []byte, fromFormat, _, filename string) ([]byte, []string, error) {
+func agentToOpenCode(data []byte, fromFormat, _, target, filename string) ([]byte, []string, error) {
 	fm, body, ok, err := splitFrontmatter(data)
 	if err != nil {
 		return nil, nil, err
@@ -330,13 +373,13 @@ func agentToOpenCode(data []byte, fromFormat, _, filename string) ([]byte, []str
 	if len(tools) > 0 {
 		fm["tools"] = tools
 	}
-	warnings = dropAgentFields(fm, warnings, AgentOpenCode, filename,
+	warnings = dropAgentFields(fm, warnings, target, filename,
 		"name", "approvalMode", "maxTurns", "mcpServers", "hooks")
 	out, err := renderFrontmatter(fm, body)
 	return out, warnings, err
 }
 
-func agentToClaude(data []byte, _, _, filename string) ([]byte, []string, error) {
+func agentToClaude(data []byte, _, _, target, filename string) ([]byte, []string, error) {
 	fm, body, ok, err := splitFrontmatter(data)
 	if err != nil {
 		return nil, nil, err
@@ -380,54 +423,62 @@ func agentToClaude(data []byte, _, _, filename string) ([]byte, []string, error)
 	}
 	hasTools := fm["tools"] != nil
 	tools := toolSet(fm["tools"])
+	var drops []string
 	if perm, ok := fm["permission"].(map[string]any); ok {
-		// Claude has no per-tool permission map. A deny becomes a tool
-		// allowlist entry removal, which preserves the role's guardrail.
-		denied := false
-		if permissionDenies(perm["edit"]) {
-			dropTools(tools, "Edit", "Write", "NotebookEdit")
-			denied = true
-		}
-		if permissionDenies(perm["bash"]) {
-			dropTools(tools, "Bash")
-			denied = true
-		}
-		if permissionDenies(perm["webfetch"]) {
-			dropTools(tools, "WebFetch")
-			denied = true
-		}
-		if permissionDenies(perm["websearch"]) {
-			dropTools(tools, "WebSearch")
-			denied = true
-		}
-		if denied && !hasTools {
-			tools = toolSet(nil)
-			for _, name := range toolNames {
-				tools[name] = true
+		// Claude has no per-tool permission map. Any deny or ask becomes a
+		// tool allowlist removal, which preserves the guardrail. Ignoring
+		// "ask" here would silently turn it into "allow".
+		for key, raw := range perm {
+			if !permissionRestricts(raw) {
+				continue
 			}
-			for key, raw := range perm {
-				if permissionDenies(raw) {
-					switch key {
-					case "edit":
-						dropTools(tools, "Edit", "Write", "NotebookEdit")
-					case "bash":
-						dropTools(tools, "Bash")
-					case "webfetch":
-						dropTools(tools, "WebFetch")
-					case "websearch":
-						dropTools(tools, "WebSearch")
-					}
-				}
+			names := claudeToolsForAction(key)
+			if len(names) == 0 {
+				warnings = append(warnings, fmt.Sprintf("agent %s: permission %q has no %s equivalent and was dropped", filename, key, target))
+				continue
 			}
+			drops = append(drops, names...)
 		}
-		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permission map is not supported by Claude; deny rules removed the affected tools, while ask/allow patterns cannot be expressed and were dropped", filename))
+		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permission map is not supported by %s; deny/ask rules removed the affected tools, while allow patterns cannot be expressed and were dropped", filename, target))
 		delete(fm, "permission")
 	}
-	if hasTools || tools != nil && len(tools) > 0 {
+	if rules, ok := fm["permissions"].([]any); ok {
+		// OpenCode V2 uses an ordered permissions array. A restricted action
+		// still has to survive the trip to a tool allowlist.
+		for _, raw := range rules {
+			rule, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			effect, _ := rule["effect"].(string)
+			if !permissionRestricts(effect) {
+				continue
+			}
+			action, _ := rule["action"].(string)
+			names := claudeToolsForAction(action)
+			if len(names) == 0 {
+				warnings = append(warnings, fmt.Sprintf("agent %s: permission action %q has no %s equivalent and was dropped", filename, action, target))
+				continue
+			}
+			if resource, _ := rule["resource"].(string); resource != "" && resource != "*" {
+				warnings = append(warnings, fmt.Sprintf("agent %s: %s cannot scope %q to %q; the whole tool was removed", filename, target, action, resource))
+			}
+			drops = append(drops, names...)
+		}
+		warnings = append(warnings, fmt.Sprintf("agent %s: OpenCode permissions array is not supported by %s; deny/ask rules removed the affected tools, while allow rules cannot be expressed and were dropped", filename, target))
+		delete(fm, "permissions")
+	}
+	if len(drops) > 0 && !hasTools {
+		for _, name := range toolNames {
+			tools[name] = true
+		}
+	}
+	dropTools(tools, drops...)
+	if hasTools || len(drops) > 0 {
 		fm["tools"] = claudeToolsString(tools)
 	}
-	warnings = dropAgentFields(fm, warnings, AgentClaude, filename,
-		"mode", "permissions", "hidden", "steps", "temperature", "top_p", "request", "disabled", "subtask")
+	warnings = dropAgentFields(fm, warnings, target, filename,
+		"mode", "hidden", "steps", "temperature", "top_p", "request", "disabled", "subtask")
 	out, err := renderFrontmatter(fm, body)
 	return out, warnings, err
 }

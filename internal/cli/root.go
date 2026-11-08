@@ -197,7 +197,8 @@ name plus a remote URL; the local clone is an internal cache. The repository
 must already exist and be reachable.
 
 With one argument, choose an already-connected namespace as the default.
-Without arguments, list connected namespaces.`
+Without arguments, list connected namespaces. Pass --yes when connecting from a
+script; the confirmation prompt reads from the terminal.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {

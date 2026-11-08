@@ -284,6 +284,24 @@ func upgradeInstalls(cfg *Config, st *State, installs []Install, force, check, m
 		}
 		out[i].New = latest.Version
 		if latest.Version == in.Version {
+			// "up to date" is misleading when the lock constraint hides a
+			// newer release. Say what is actually available.
+			if !major {
+				if newest, nerr := repo.Latest(in.Package); nerr == nil && newest.Version != in.Version {
+					if newSem, ok := HighestSemverString(newest.Semver); ok {
+						if oldSem, ok := repo.HighestSemverForVersion(in.Package, in.Version); ok &&
+							CompareSemver(newSem, oldSem) > 0 {
+							out[i].New = newest.Version
+							out[i].Status = "update available; locked constraint blocks it"
+							// Before 1.0, a 0.x minor is the breaking gate too.
+							if newSem.Major > oldSem.Major || (oldSem.Major == 0 && newSem.Minor > oldSem.Minor) {
+								out[i].Status = "major update available; use --major"
+							}
+							continue
+						}
+					}
+				}
+			}
 			out[i].Status = "up to date"
 			continue
 		}

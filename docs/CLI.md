@@ -106,7 +106,10 @@ stops at the git root (or the home directory), so a marker in `$HOME` cannot
 claim every subdirectory. Files ignored by `.gitignore` are excluded. A package
 with no installable component is refused unless `--allow-empty` is passed, and a
 source instruction file that already contains an also-managed block must be
-captured with `adopt` instead.
+captured with `adopt` instead. Agent, command and skill frontmatter is parsed
+before anything is published: an unquoted YAML value such as
+`description: Owns verification: smoke checks` fails `push` instead of failing
+later on the first cross-harness install. Quote values that contain `: `.
 
 ### Audit
 

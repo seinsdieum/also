@@ -507,6 +507,9 @@ func (s *SetRepo) Push(bundleDir string, opts PushOptions) (*PushResult, error) 
 	if err != nil {
 		return nil, err
 	}
+	if err := validateComponentFrontmatter(snap, classified); err != nil {
+		return nil, err
+	}
 	if classified.Instr != "" {
 		if f := snap.Files[classified.Instr]; f != nil && containsMarker(f.Data) {
 			return nil, fmt.Errorf("the source instruction file contains an also-managed block; use also adopt to capture a live installation, or remove the block before push")

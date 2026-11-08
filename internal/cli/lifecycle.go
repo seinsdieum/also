@@ -1110,6 +1110,11 @@ func newUninstallCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// The harness block must not keep ignoring a harness that is
+				// gone, or a file the user later creates by hand stays hidden.
+				if err := dropManagedHarness(absProj, harness); err != nil {
+					return err
+				}
 				item := uninstallOutput{
 					Namespace: namespace, Package: pkg, Version: version,
 					Harness: harness, Warnings: unique(warnings),

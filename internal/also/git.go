@@ -110,17 +110,13 @@ func gitBatchBlobs(dir string, specs []string) (map[string][]byte, error) {
 // publishableFiles returns the paths git would track under root, relative to
 // root. The bool is false when root is not inside a git work tree.
 func publishableFiles(root string) (map[string]bool, bool) {
-	top, err := runGit(root, "rev-parse", "--show-toplevel")
-	if err != nil {
+	if _, err := runGit(root, "rev-parse", "--show-toplevel"); err != nil {
 		return nil, false
 	}
-	top = filepath.Clean(strings.TrimSpace(top))
-	// git resolves symlinks in --show-toplevel (e.g. /var -> /private/var on
-	// macOS); resolve root too so relative paths line up.
-	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
-		root = resolved
-	}
-	out, err := runGitBytes(top, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	// Run inside root so git prints paths relative to root. Rebuilding them
+	// from --show-toplevel broke on case-insensitive filesystems, where git
+	// returns the on-disk case and the caller may hold another spelling.
+	out, err := runGitBytes(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, false
 	}
@@ -129,12 +125,7 @@ func publishableFiles(root string) (map[string]bool, bool) {
 		if p == "" {
 			continue
 		}
-		full := filepath.Join(top, filepath.FromSlash(p))
-		rel, err := filepath.Rel(root, full)
-		if err != nil {
-			continue
-		}
-		allowed[filepath.ToSlash(rel)] = true
+		allowed[filepath.ToSlash(p)] = true
 	}
 	return allowed, true
 }

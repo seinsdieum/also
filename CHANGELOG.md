@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.1.1 (2026-11-09)
+
+Fixes from an external end-to-end run on macOS and OpenCode v2.
+
+### Correctness
+
+- Path identity now uses the on-disk spelling of a directory. On a
+  case-insensitive filesystem (default APFS, Windows) `.../temp` and
+  `.../Temp` are one project: `install`, `uninstall`, `upgrade`, `audit` and
+  `list --installs` agree instead of one spelling reporting "no packages
+  installed". Case folding is applied only where the filesystem ignores case,
+  so a case-sensitive volume keeps distinct directories.
+- `push` asks git for paths relative to the bundle it is publishing instead of
+  rebuilding them from `git rev-parse --show-toplevel`. A case-variant path no
+  longer drops every file and reports the misleading "nothing to encode".
+- `push` and `adopt` parse agent, command and `SKILL.md` frontmatter before
+  publishing. An invalid YAML value fails at `push` with the file name, instead
+  of producing a package that installs into its source harness but fails on the
+  first cross-harness conversion. `audit` reports `frontmatter-invalid` as a
+  failure for the same files, so an older bad package cannot stay CI-green.
+- `uninstall` removes the harness's entries from the managed `.gitignore`
+  block, keeping entries another installed harness still needs. The whole block
+  is removed when the last install in the git root is uninstalled.
+
+### Harness conversion
+
+- OpenCode `permission` deny **and ask** rules become a Claude tools allowlist
+  removal. Dropping an `ask` rule silently turned it into `allow`; now it fails
+  closed. The V2 `permissions` array, including `action: subagent`, is handled
+  the same way, with a warning when a resource-scoped rule can only remove the
+  whole tool.
+- Conversion warnings name the actual destination harness (`Qwen Code`, not
+  `claude`).
+- The OpenCode settings allowlist accepts `experimental`, so a package can turn
+  on V2 features such as `experimental.todo`.
+- `upgrade` reports `major update available; use --major` (or `update
+  available; locked constraint blocks it`) instead of `up to date` when the
+  resolved release is hidden by the current constraint.
+
 ## 0.1.0 (2026-11-08)
 
 This is the first public version. The project renumbered to `0.1.0` before

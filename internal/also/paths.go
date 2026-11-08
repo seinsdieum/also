@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	// Version is the CLI and package-encoder version.
-	Version = "0.1.0"
+	Version = "0.1.1"
 
 	SchemaConfig  = "also.config/v2"
 	SchemaState   = "also.state/v1"
@@ -201,22 +202,114 @@ func AbsPath(p string) (string, error) {
 	// Symlinked workspaces are the same project. Canonicalizing here keeps
 	// install slots, ownership checks and the lock pointing at one path.
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved, nil
+		abs = resolved
 	}
-	return filepath.Clean(abs), nil
+	return canonicalCase(abs), nil
 }
 
-// PathKey is the identity form of a path. Windows paths are case-insensitive,
-// so two spellings must not create two install slots over the same files.
+// PathKey is the identity form of a path. A case-insensitive filesystem
+// (Windows, default APFS) must not turn two spellings of one directory into two
+// install slots. Case folding is applied only where the filesystem itself
+// ignores case, so a case-sensitive volume keeps distinct `Foo` and `foo`.
 func PathKey(p string) string {
 	clean := filepath.Clean(ExpandHome(p))
 	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
 		clean = resolved
 	}
+	// Only directories need the on-disk spelling; file paths are derived from
+	// an already canonical project root. This keeps audit's per-file keys
+	// cheap on large repositories.
+	if fi, err := os.Stat(clean); err == nil && fi.IsDir() {
+		clean = canonicalCase(clean)
+	}
 	if runtime.GOOS == "windows" {
 		clean = strings.ToLower(clean)
 	}
 	return clean
+}
+
+// canonicalCase returns the on-disk spelling of an existing path. Without it,
+// `/Users/me/temp` and `/Users/me/Temp` are different strings even though APFS
+// resolves them to the same directory, which breaks install slots, audit and
+// git-ignore filtering.
+func canonicalCase(abs string) string {
+	if runtime.GOOS == "windows" || !caseInsensitive(abs) {
+		return abs
+	}
+	vol := filepath.VolumeName(abs)
+	rest := strings.TrimPrefix(abs, vol)
+	sep := string(filepath.Separator)
+	parts := strings.Split(strings.Trim(rest, sep), sep)
+	cur := vol + sep
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return abs
+		}
+		match := part
+		for _, e := range entries {
+			if e.Name() == part {
+				match = part
+				break
+			}
+			if strings.EqualFold(e.Name(), part) {
+				match = e.Name()
+			}
+		}
+		cur = filepath.Join(cur, match)
+	}
+	return cur
+}
+
+var caseProbes sync.Map // probed directory -> bool
+
+// caseInsensitive reports whether the filesystem holding path ignores case. It
+// probes an existing component by flipping its ASCII letters and comparing the
+// inode; no files are created.
+func caseInsensitive(path string) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	dir := path
+	for {
+		fi, err := os.Lstat(dir)
+		if err == nil {
+			base := filepath.Base(dir)
+			flipped := flipASCII(base)
+			if flipped != base {
+				if v, ok := caseProbes.Load(dir); ok {
+					return v.(bool)
+				}
+				result := false
+				if other, statErr := os.Lstat(filepath.Join(filepath.Dir(dir), flipped)); statErr == nil && os.SameFile(fi, other) {
+					result = true
+				}
+				caseProbes.Store(dir, result)
+				return result
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
+func flipASCII(s string) string {
+	out := []byte(s)
+	for i, b := range out {
+		switch {
+		case b >= 'a' && b <= 'z':
+			out[i] = b - 'a' + 'A'
+		case b >= 'A' && b <= 'Z':
+			out[i] = b - 'A' + 'a'
+		}
+	}
+	return string(out)
 }
 
 // FindProjectRoot resolves the project a command was run in. The nearest
