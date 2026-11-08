@@ -38,7 +38,7 @@ local escape hatches.
 
 - OpenCode's current `permission` key (and the legacy `permissions` key) is
   captured and installed reversibly together with `default_agent`. Unrelated
-  `opencode.json` keys remain user-owned.
+  `opencode.json` keys remain untouched.
 
 ## 1.2.1 (2026-11-08)
 
@@ -49,7 +49,7 @@ local escape hatches.
   package that was actually uninstalled. `FindByID` returns a copy to prevent
   the same class of bug in other callers.
 - OpenCode's `default_agent` is captured by `adopt` and installed reversibly
-  into `opencode.json`; unrelated keys stay user-owned. The adapter allowlist
+  into `opencode.json`; unrelated keys stay untouched. The adapter allowlist
   is documented in `docs/ADAPTERS.md`.
 - `also adopt` accepts `--semver` and `--bump`, so adopting and tagging is one
   publish instead of a second `push` with different content metadata.
