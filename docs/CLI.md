@@ -134,7 +134,10 @@ instruction-file provenance live in `~/.also/config-origins`, outside state, so
 a same-machine state loss still uninstalls reversibly: `install --frozen`
 re-adopts byte-identical files and then restores the original config base and
 the created-file decision. If you edited a managed config value after state
-loss, the replay asks for `--force` instead of silently replacing it. A fresh machine without that directory can only
+loss, the replay asks for `--force` instead of silently replacing it. A manual
+edit that sets a managed key to exactly the package's current value is
+indistinguishable from the managed value, so uninstall restores the previous
+base; use a distinct value or uninstall before editing if that matters. A fresh machine without that directory can only
 adopt the current values; keep the directory or uninstall before moving if
 exact reversal matters.
 

@@ -14,7 +14,8 @@
   package value.
 - `stale-infra` also catches a tracked config file for a harness that is not
   installed, even after uninstall/origin cleanup, and no longer duplicates the
-  finding for a file a current install owns.
+  finding for a file a current install owns. A same-harness install in a
+  subdirectory no longer hides a stale config at the audit root.
 
 ## 1.4.1 (2026-11-08)
 

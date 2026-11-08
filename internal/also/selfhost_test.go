@@ -325,6 +325,50 @@ func TestAuditDoesNotFlagUserOwnedConfig(t *testing.T) {
 	}
 }
 
+func TestAuditStaleRootConfigIgnoresNestedHarness(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	oc := filepath.Join(tmp, "oc")
+	writeFile(t, filepath.Join(oc, ".opencode", "skills", "s", "SKILL.md"), "---\nname: s\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(oc, PushOptions{Name: "o", Harness: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	cl := filepath.Join(tmp, "cl")
+	writeFile(t, filepath.Join(cl, "CLAUDE.md"), "rules\n")
+	if _, err := repo.Push(cl, PushOptions{Name: "c", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(tmp, "mono")
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runGit(root, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "o", Harness: "opencode", Project: root}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "c", Harness: "claude", Project: sub}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, ".mcp.json"), `{"mcpServers":{"x":{"command":"/bin/echo"}}}`)
+	if out, err := runGit(root, "add", "-f", ".mcp.json"); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	st, _ := LoadState()
+	report, err := Audit(st, root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Code == "stale-infra" && strings.HasSuffix(f.Path, ".mcp.json") {
+			return
+		}
+	}
+	t.Fatalf("nested same-harness install hid a root stale config: %+v", report.Findings)
+}
+
 func TestAuditFindsStaleConfigAfterUninstall(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)

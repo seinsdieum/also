@@ -216,8 +216,9 @@ func staleInfraFindings(st *State, root string, tracked map[string]bool, require
 	for idx := range st.Installs {
 		in := &st.Installs[idx]
 		for _, base := range bases {
-			rel, err := filepath.Rel(base, in.Project)
-			if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+			// A harness config at the root belongs to an install in that
+			// exact project, not to a same-harness install in a subdirectory.
+			if PathKey(in.Project) == PathKey(base) {
 				installedByBase[base][in.Harness] = true
 			}
 		}
