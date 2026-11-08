@@ -129,12 +129,13 @@ parts, exclusions and whether configuration was installed. Commit it.
   with the same package name from different namespaces.
 
 The file is local desired state, not a replacement for `~/.also/state.json`,
-which records what was actually written on this machine. After a state loss,
-`install --frozen` can re-adopt byte-identical files and the current config
-values, but it cannot recover the user's pre-install config base: a later
-`uninstall` leaves the adopted package config values (and a possibly empty
-instruction file) in place. Uninstall before deleting state if exact config
-reversal matters.
+which records what was actually written on this machine. Config origins and
+instruction-file provenance live in `~/.also/config-origins`, outside state, so
+a same-machine state loss still uninstalls reversibly: `install --frozen`
+re-adopts byte-identical files and then restores the original config base and
+the created-file decision. A fresh machine without that directory can only
+adopt the current values; keep the directory or uninstall before moving if
+exact reversal matters.
 
 ## Installs
 
@@ -168,9 +169,10 @@ project-owned `AGENTS.md` and `opencode.json` untouched. `also upgrade` upgrades
 the packages installed in the current directory, not packages elsewhere;
 `--major` is required to cross a major version. `also reshape` is scoped to the
 current project, updates `also.lock`, and `--all` is the explicit machine-wide
-form. Reshape preflights every package before writing; an apply-time I/O failure
-can still leave earlier packages migrated, and a rerun completes the rest. `also uninstall` defaults to the current directory; use `--dir <dir>` to
-choose another one. If a project directory was deleted manually, `also prune`
+form. Reshape preflights every package before writing and rolls already moved
+packages back if a later write fails; a rollback is best-effort if the
+filesystem itself is unwritable. `also uninstall` defaults to the current
+directory; use `--dir <dir>` to choose another one. If a project directory was deleted manually, `also prune`
 removes its stale state records; it never touches existing projects with
 missing files.
 

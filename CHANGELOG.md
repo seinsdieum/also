@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1 (2026-11-08)
+
+### Fixed
+
+- Config origins and instruction-file provenance are stored outside state in
+  `~/.also/config-origins`; after deleting `state.json`, `install --frozen`
+  still restores the user's original config and removes an instruction file
+  also created.
+- `reshape` rolls back packages it already moved when a later apply fails, so
+  the state, lock and files do not end in a mixed harness.
+- Frozen replay restores a pre-existing adopted file and an existing slot it
+  upgraded when a later lock entry fails.
+
 ## 1.4.0 (2026-11-08)
 
 This release closes the self-hosting gaps found by running `also` against

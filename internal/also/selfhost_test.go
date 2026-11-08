@@ -492,6 +492,48 @@ func TestConvertAgentMapsModelsAndPermissions(t *testing.T) {
 	}
 }
 
+func TestStateLossKeepsConfigOrigins(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle")
+	openCodeBundle(t, bundle, "go-developer")
+	if _, err := repo.Push(bundle, PushOptions{Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, "opencode.json"), `{"theme":"x"}`)
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate state loss; config origins live outside state.
+	if err := SaveState(&State{Schema: SchemaState}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallPackage(cfg, InstallRequest{Package: "p", Harness: "opencode", Project: project, WithConfig: true}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState()
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseJSONC(mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.RawAt("default_agent"); ok {
+		t.Fatalf("state-loss uninstall left default_agent: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	}
+	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"x"` {
+		t.Fatalf("user value was lost: %s", mustReadTestFile(t, filepath.Join(project, "opencode.json")))
+	}
+	if _, err := os.Stat(filepath.Join(project, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("state-loss uninstall left the created instruction file: %v", err)
+	}
+}
+
 func TestUpgradeKeepsAbsentBaseForCreatedConfig(t *testing.T) {
 	tmp, _, _, cfg := setup(t)
 	repo := openRepo(t, cfg)
@@ -598,6 +640,55 @@ func TestReshapePreflightLeavesNothingHalfMigrated(t *testing.T) {
 	for _, in := range st.Installs {
 		if in.Project != "" && in.Harness == "claude" {
 			t.Fatalf("state was mutated by a failed preflight: %+v", in)
+		}
+	}
+}
+
+func TestReshapeRollsBackAppliedPackagesOnWriteFailure(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	repo := openRepo(t, cfg)
+	p1 := filepath.Join(tmp, "p1")
+	writeFile(t, filepath.Join(p1, ".opencode", "agents", "a1.md"), "---\ndescription: d\nmode: primary\n---\nbody\n")
+	if _, err := repo.Push(p1, PushOptions{Name: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	p2 := filepath.Join(tmp, "p2")
+	writeFile(t, filepath.Join(p2, ".opencode", "commands", "c2.md"), "---\ndescription: d\n---\nbody\n")
+	if _, err := repo.Push(p2, PushOptions{Name: "p2"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"p1", "p2"} {
+		if _, _, err := InstallPackage(cfg, InstallRequest{Package: name, Harness: "opencode", Project: project}, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commands := filepath.Join(project, ".claude", "commands")
+	if err := os.MkdirAll(commands, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(commands, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(commands, 0o755) })
+	st, _ := LoadState()
+	_, err := Reshape(cfg, st, "claude", project, false, nil, false)
+	if err == nil {
+		t.Fatal("expected an apply-time reshape failure")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".opencode", "agents", "a1.md")); err != nil {
+		t.Fatalf("rollback did not restore the opencode agent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "agents", "a1.md")); !os.IsNotExist(err) {
+		t.Fatalf("rollback left the claude agent: %v", err)
+	}
+	st, _ = LoadState()
+	for _, in := range st.Installs {
+		if in.Project != "" && in.Harness == "claude" {
+			t.Fatalf("state was not rolled back: %+v", in)
 		}
 	}
 }

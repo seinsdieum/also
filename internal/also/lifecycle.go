@@ -114,7 +114,13 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 		}
 		return nil, set, fmt.Errorf("package %s has no components installable for %s", pkg.Meta.Name, req.Harness)
 	}
+	if err := ApplyConfigOrigins(project, plan.Edits, plan.Block); err != nil {
+		return nil, set, err
+	}
 	if err := ApplyPlan(st, plan, opts); err != nil {
+		return nil, set, err
+	}
+	if err := MergeConfigOrigins(project, plan.Edits, plan.Block); err != nil {
 		return nil, set, err
 	}
 	return plan, set, nil
@@ -543,8 +549,16 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 			failed = true
 			continue
 		}
+		if err := ApplyConfigOrigins(in.Project, plan.Edits, plan.Block); err != nil {
+			res.Err = err
+			out = append(out, res)
+			failed = true
+			continue
+		}
 		res.Warnings = plan.Warnings
-		steps = append(steps, reshapeStep{in: in, plan: plan, opts: opts})
+		steps = append(steps, reshapeStep{
+			in: in, plan: plan, opts: opts, repo: repo, pkg: pkg, version: version,
+		})
 	}
 	if failed {
 		return out, fmt.Errorf("reshape preflight failed; no packages were changed")
@@ -552,23 +566,51 @@ func Reshape(cfg *Config, st *State, to, project string, all bool, pkgs []string
 	if err := reshapePlansConflict(steps, force); err != nil {
 		return out, err
 	}
+	var applied []reshapeStep
 	for _, s := range steps {
 		res := ReshapeResult{Install: s.in, To: target.ID, Warnings: s.plan.Warnings}
 		if err := ApplyPlan(st, s.plan, s.opts); err != nil {
 			res.Err = err
 			out = append(out, res)
-			continue
+			// Restore every package already moved in this run.
+			for i := len(applied) - 1; i >= 0; i-- {
+				a := applied[i]
+				backOpts := a.opts
+				backOpts.Force = true
+				backOpts.OldHarness = target.ID
+				backPlan, berr := BuildPlan(st, a.repo, a.pkg, a.version, a.in.Harness, a.in.Scope, a.in.Project, backOpts)
+				if berr == nil && planHasChanges(backPlan) {
+					if cerr := ApplyConfigOrigins(a.in.Project, backPlan.Edits, backPlan.Block); cerr == nil {
+						if aerr := ApplyPlan(st, backPlan, backOpts); aerr == nil {
+							_ = MergeConfigOrigins(a.in.Project, backPlan.Edits, backPlan.Block)
+						}
+					}
+				}
+				for j := range out {
+					if out[j].Install.Package == a.in.Package && out[j].Status == "reshaped" &&
+						PathKey(out[j].Install.Project) == PathKey(a.in.Project) {
+						out[j].Status = "rolled back"
+						out[j].Err = fmt.Errorf("rolled back after a later reshape failure")
+						break
+					}
+				}
+			}
+			return out, fmt.Errorf("reshape failed; applied packages were rolled back: %w", err)
 		}
 		res.Status = "reshaped"
 		out = append(out, res)
+		applied = append(applied, s)
 	}
 	return out, nil
 }
 
 type reshapeStep struct {
-	in   Install
-	plan *Plan
-	opts InstallOptions
+	in      Install
+	plan    *Plan
+	opts    InstallOptions
+	repo    *SetRepo
+	pkg     *Package
+	version VersionInfo
 }
 
 func reshapePlansConflict(steps []reshapeStep, force bool) error {
