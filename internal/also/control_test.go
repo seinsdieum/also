@@ -243,7 +243,7 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	repo := openRepo(t, cfg)
 	bundle := filepath.Join(tmp, "bundle")
 	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
-	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"game-developer","theme":"dark"}`)
+	writeFile(t, filepath.Join(bundle, "opencode.json"), `{"default_agent":"game-developer","permission":{"edit":"ask"},"theme":"dark"}`)
 	res, err := repo.Push(bundle, PushOptions{Name: "p", Harness: "opencode"})
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +270,9 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	if raw, ok := doc.RawAt("default_agent"); !ok || string(raw) != `"game-developer"` {
 		t.Fatalf("default_agent was not installed: %s", data)
 	}
+	if raw, ok := doc.RawAt("permission", "edit"); !ok || string(raw) != `"ask"` {
+		t.Fatalf("permission block was not installed: %s", data)
+	}
 	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
 		t.Fatalf("unrelated config was lost: %s", data)
 	}
@@ -294,6 +297,9 @@ func TestOpenCodeDefaultAgentRoundTrip(t *testing.T) {
 	}
 	if _, ok := doc.RawAt("default_agent"); ok {
 		t.Fatalf("default_agent was not reversed: %s", data)
+	}
+	if _, ok := doc.RawAt("permission", "edit"); ok {
+		t.Fatalf("permission block was not reversed: %s", data)
 	}
 	if raw, ok := doc.RawAt("theme"); !ok || string(raw) != `"dark"` {
 		t.Fatalf("unrelated config was removed: %s", data)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.2 (2026-11-08)
+
+### Fixed
+
+- OpenCode's current `permission` key (and the legacy `permissions` key) is
+  captured and installed reversibly together with `default_agent`. Unrelated
+  `opencode.json` keys remain user-owned.
+
 ## 1.2.1 (2026-11-08)
 
 ### Fixed

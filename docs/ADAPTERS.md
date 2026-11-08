@@ -34,8 +34,8 @@ Reusable native encodings live in `MCPFormat`: `claude-json`, `qwen-json`,
 dialects are `claude`/`opencode`. A new harness usually reuses one of these.
 
 `Settings.Keys` is an allowlist of reversible top-level config keys, not a
-whole-file install. For OpenCode it is `default_agent` and `permissions`; MCP
-and hooks are merged separately. Other top-level keys in `opencode.json`
+whole-file install. For OpenCode it is `default_agent`, `permission` and the
+legacy `permissions`; MCP and hooks are merged separately. Other top-level keys in `opencode.json`
 (`theme`, `model`, `keybinds`, ...) stay user-owned and are never overwritten,
 which is why `adopt` does not capture them. Add a key to the adapter only when
 the value is part of the infrastructure contract rather than a local
