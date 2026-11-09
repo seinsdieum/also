@@ -655,7 +655,7 @@ func TestFrozenDryRunReportsEntryDetails(t *testing.T) {
 		t.Fatalf("first line = %q", got)
 	}
 	for _, want := range []string{
-		"files: 2", "skills/review/SKILL.md", "skills/deploy/SKILL.md",
+		"files: 2", filepath.Join("skills", "review", "SKILL.md"), filepath.Join("skills", "deploy", "SKILL.md"),
 		"instructions:", "config changes: 1", ".mcp.json", "gitignore: would update",
 	} {
 		if !strings.Contains(out, want) {
