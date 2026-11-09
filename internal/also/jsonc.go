@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"reflect"
 	"strings"
 )
@@ -346,7 +347,80 @@ func indentAt(src []byte, i int) string {
 	return string(src[ls:i])
 }
 
-func reindent(raw []byte, indent string) []byte {
+// childIndent returns the indentation of an object's closing brace and the
+// indent unit its members use. An empty object has no member to copy, so the
+// unit falls back to two spaces.
+func childIndent(src []byte, n *jNode) (string, string) {
+	closeIndent := indentAt(src, n.closeStart)
+	for _, m := range n.members {
+		ls := lineStart(src, m.keyStart)
+		if !onlySpace(src[ls:m.keyStart]) {
+			continue
+		}
+		keyIndent := string(src[ls:m.keyStart])
+		if !strings.HasPrefix(keyIndent, closeIndent) || len(keyIndent) <= len(closeIndent) {
+			continue
+		}
+		unit := keyIndent[len(closeIndent):]
+		if onlySpace([]byte(unit)) {
+			return closeIndent, unit
+		}
+	}
+	return closeIndent, "  "
+}
+
+// memberIndent returns the indentation that a member's value should use for
+// continuation lines. It is the key's line indentation, or the parent's child
+// indentation when the key shares a line with other content.
+func memberIndent(src []byte, n *jNode, m *jMember) string {
+	ls := lineStart(src, m.keyStart)
+	if onlySpace(src[ls:m.keyStart]) {
+		return string(src[ls:m.keyStart])
+	}
+	closeIndent, unit := childIndent(src, n)
+	return closeIndent + unit
+}
+
+// arrayIndent returns the indentation of the array's closing bracket and the
+// unit its element lines use. It prefers the existing elements, then the
+// parent object's members when the array is empty, and only falls back to two
+// spaces when neither exists.
+func (d *JSONC) arrayIndent(path []string) (string, string) {
+	n := d.nodeAt(path)
+	closeIndent := indentAt(d.src, n.closeStart)
+	for _, el := range n.elems {
+		ls := lineStart(d.src, el.start)
+		if !onlySpace(d.src[ls:el.start]) {
+			continue
+		}
+		elemIndent := string(d.src[ls:el.start])
+		if !strings.HasPrefix(elemIndent, closeIndent) || len(elemIndent) <= len(closeIndent) {
+			continue
+		}
+		unit := elemIndent[len(closeIndent):]
+		if onlySpace([]byte(unit)) {
+			return closeIndent, unit
+		}
+	}
+	if len(path) > 0 {
+		parent := d.nodeAt(path[:len(path)-1])
+		if parent != nil && parent.kind == jObject {
+			_, unit := childIndent(d.src, parent)
+			if m := d.member(parent, path[len(path)-1]); m != nil && closeIndent == "" {
+				// The array shares its member's line; expand it at the key's
+				// indentation instead of at column zero.
+				ls := lineStart(d.src, m.keyStart)
+				if onlySpace(d.src[ls:m.keyStart]) {
+					closeIndent = string(d.src[ls:m.keyStart])
+				}
+			}
+			return closeIndent, unit
+		}
+	}
+	return closeIndent, "  "
+}
+
+func reindent(raw []byte, indent, unit string) []byte {
 	lines := bytes.Split(raw, []byte("\n"))
 	if len(lines) == 1 {
 		return raw
@@ -356,17 +430,24 @@ func reindent(raw []byte, indent string) []byte {
 	for _, l := range lines[1:] {
 		out.WriteByte('\n')
 		out.WriteString(indent)
-		out.Write(l)
+		depth := 0
+		for depth < len(l) && l[depth] == ' ' {
+			depth++
+		}
+		for i := 0; i < depth/2; i++ {
+			out.WriteString(unit)
+		}
+		out.Write(l[depth:])
 	}
 	return out.Bytes()
 }
 
-func encodeValue(v any, indent string) ([]byte, error) {
+func encodeValue(v any, indent, unit string) ([]byte, error) {
 	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return nil, err
 	}
-	return reindent(raw, indent), nil
+	return reindent(raw, indent, unit), nil
 }
 
 func encodeNested(rest []string, v any) (any, error) {
@@ -386,7 +467,7 @@ func mustNested(rest []string, v any) any {
 // Set inserts or replaces path. Intermediate objects are created.
 func (d *JSONC) Set(value any, path ...string) ([]byte, error) {
 	if len(path) == 0 {
-		raw, err := encodeValue(value, "")
+		raw, err := encodeValue(value, "", "  ")
 		if err != nil {
 			return nil, err
 		}
@@ -410,8 +491,18 @@ func (d *JSONC) Set(value any, path ...string) ([]byte, error) {
 			return validateJSONC(out)
 		}
 		if i == len(path)-1 {
-			indent := indentAt(d.src, m.val.start)
-			raw, err := encodeValue(value, indent)
+			want, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			if jsonEqual(d.src[m.val.start:m.val.end], want) {
+				// Already the requested value. Leave the bytes untouched so a
+				// repeated install cannot reformat the user's file.
+				return d.src, nil
+			}
+			indent := memberIndent(d.src, n, m)
+			_, unit := childIndent(d.src, n)
+			raw, err := encodeValue(value, indent, unit)
 			if err != nil {
 				return nil, err
 			}
@@ -424,10 +515,10 @@ func (d *JSONC) Set(value any, path ...string) ([]byte, error) {
 
 func (d *JSONC) insertMember(n *jNode, key string, value any) ([]byte, error) {
 	keyJSON, _ := json.Marshal(key)
+	closeIndent, unit := childIndent(d.src, n)
 	if len(n.members) == 0 {
-		closeIndent := indentAt(d.src, n.closeStart)
-		keyIndent := closeIndent + "  "
-		raw, err := encodeValue(value, keyIndent)
+		keyIndent := closeIndent + unit
+		raw, err := encodeValue(value, keyIndent, unit)
 		if err != nil {
 			return nil, err
 		}
@@ -454,9 +545,8 @@ func (d *JSONC) insertMember(n *jNode, key string, value any) ([]byte, error) {
 		}
 		break
 	}
-	closeIndent := indentAt(d.src, n.closeStart)
-	keyIndent := closeIndent + "  "
-	raw, err := encodeValue(value, keyIndent)
+	keyIndent := closeIndent + unit
+	raw, err := encodeValue(value, keyIndent, unit)
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +648,13 @@ func (d *JSONC) removeMember(n *jNode, m *jMember) ([]byte, error) {
 			break
 		}
 	}
+	// Removing the only member empties the object. Collapse its interior so a
+	// file that was exactly `{}` is restored byte-for-byte.
+	if len(n.members) == 1 &&
+		len(bytes.TrimSpace(d.src[n.openEnd:start])) == 0 &&
+		len(bytes.TrimSpace(d.src[end:n.closeStart])) == 0 {
+		return splice(d.src, n.openEnd, n.closeStart, nil), nil
+	}
 	return splice(d.src, start, end, nil), nil
 }
 
@@ -570,9 +667,9 @@ func (d *JSONC) Append(value any, path ...string) ([]byte, error) {
 	if n.kind != jArray {
 		return nil, fmt.Errorf("%s is not an array", strings.Join(path, "."))
 	}
-	closeIndent := indentAt(d.src, n.closeStart)
-	elemIndent := closeIndent + "  "
-	raw, err := encodeValue(value, elemIndent)
+	closeIndent, unit := d.arrayIndent(path)
+	elemIndent := closeIndent + unit
+	raw, err := encodeValue(value, elemIndent, unit)
 	if err != nil {
 		return nil, err
 	}
@@ -614,16 +711,11 @@ func (d *JSONC) RemoveEqual(raw json.RawMessage, path ...string) ([]byte, bool, 
 	if n == nil || n.kind != jArray {
 		return d.src, false, nil
 	}
-	var want any
-	if err := json.Unmarshal(raw, &want); err != nil {
+	if _, err := decodeJSONValue(raw); err != nil {
 		return nil, false, err
 	}
 	for idx, el := range n.elems {
-		var got any
-		if err := json.Unmarshal(d.src[el.start:el.end], &got); err != nil {
-			continue
-		}
-		if !reflect.DeepEqual(want, got) {
+		if !jsonEqual(raw, d.src[el.start:el.end]) {
 			continue
 		}
 		start := el.start
@@ -669,10 +761,74 @@ func (d *JSONC) RemoveEqual(raw json.RawMessage, path ...string) ([]byte, bool, 
 	return d.src, false, nil
 }
 
+// jsonEqual compares two raw JSON values. Numbers compare by value, so 1 and
+// 1.0 stay equal while large integers stay distinct.
 func jsonEqual(a, b json.RawMessage) bool {
-	var x, y any
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+	av, aerr := decodeJSONValue(a)
+	bv, berr := decodeJSONValue(b)
+	if aerr != nil || berr != nil {
 		return false
 	}
-	return reflect.DeepEqual(x, y)
+	return jsonValueEqual(av, bv)
+}
+
+// decodeJSONValue decodes raw JSON while keeping numbers as json.Number, so a
+// value that is decoded and marshaled again cannot round large integers
+// through float64.
+func decodeJSONValue(raw []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(raw[dec.InputOffset():])) != 0 {
+		return nil, fmt.Errorf("unexpected trailing content after JSON value")
+	}
+	return v, nil
+}
+
+// jsonValueEqual compares decoded JSON values. Numbers compare by value, so
+// 1 and 1.0 stay equal without losing large-integer precision.
+func jsonValueEqual(a, b any) bool {
+	switch av := a.(type) {
+	case json.Number:
+		bv, ok := b.(json.Number)
+		if !ok {
+			return false
+		}
+		ar, ok := new(big.Rat).SetString(av.String())
+		if !ok {
+			return av == bv
+		}
+		br, ok := new(big.Rat).SetString(bv.String())
+		if !ok {
+			return av == bv
+		}
+		return ar.Cmp(br) == 0
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for k, x := range av {
+			y, ok := bv[k]
+			if !ok || !jsonValueEqual(x, y) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !jsonValueEqual(av[i], bv[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }

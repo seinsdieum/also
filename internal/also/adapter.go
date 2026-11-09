@@ -66,11 +66,22 @@ type MCPAdapter struct {
 // SettingsAdapter describes the native config keys that can be merged safely
 // on same-harness installs. Target selects the file that holds those keys.
 type SettingsAdapter struct {
-	Keys    []string
-	Configs []string
-	Target  func(Target) string
+	// Keys are extracted and installed on same-harness installs. CrossKeys are
+	// additionally extracted for cross-harness translation only.
+	Keys      []string
+	CrossKeys []string
+	Configs   []string
+	Target    func(Target) string
 	// Extract overrides the default JSONC key extraction for a new format.
 	Extract func(keys, configs []string, files map[string]*SnapshotFile, roots []string) (map[string]any, []string, error)
+	// Translate converts source settings into this harness's settings on a
+	// cross-harness install. Nil means the target cannot express them
+	// cross-harness, so they stay in the package.
+	Translate func(settings map[string]any, target *Harness) (map[string]any, []string)
+	// Reconcile filters translated settings against the target's actual config
+	// before planning. It returns only values that are safe to write. Nil means
+	// the target needs no target-specific filtering.
+	Reconcile func(file string, settings map[string]any) (map[string]any, []string, error)
 }
 
 // CommandAdapter declares the command placeholder dialect.
@@ -332,7 +343,7 @@ func validateAdapter(h *Harness) error {
 			}
 		}
 	}
-	if len(h.Settings.Keys) > 0 {
+	if len(h.Settings.Keys) > 0 || len(h.Settings.CrossKeys) > 0 {
 		if h.Bundle.Settings == "" && h.Bundle.MCP == "" {
 			return fmt.Errorf("settings keys require bundle.settings or bundle.mcp")
 		}
@@ -344,7 +355,7 @@ func validateAdapter(h *Harness) error {
 				return err
 			}
 		}
-		for _, k := range h.Settings.Keys {
+		for _, k := range append(append([]string{}, h.Settings.Keys...), h.Settings.CrossKeys...) {
 			if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "/\\") {
 				return fmt.Errorf("invalid settings key %q", k)
 			}

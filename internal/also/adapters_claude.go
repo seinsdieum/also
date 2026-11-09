@@ -27,8 +27,16 @@ func claudeAdapter() *Harness {
 			Events:  claudeHookEvents,
 			Target:  func(t Target) (string, string) { return t.Settings, "hooks" },
 		},
-		MCP:       MCPAdapter{Format: MCPClaudeJSON, Configs: []string{".mcp.json", "settings.json"}},
-		Settings:  SettingsAdapter{Keys: []string{"permissions", "statusLine"}, Configs: []string{"settings.json"}, Target: func(t Target) string { return t.Settings }},
+		MCP: MCPAdapter{Format: MCPClaudeJSON, Configs: []string{".mcp.json", "settings.json"}},
+		Settings: SettingsAdapter{
+			Keys: []string{"permissions", "statusLine"}, CrossKeys: []string{"theme"},
+			Configs: []string{"settings.json"},
+			Target:  func(t Target) string { return t.Settings },
+			Translate: func(settings map[string]any, target *Harness) (map[string]any, []string) {
+				return translateClaudeLikeSettings(settings, target, true)
+			},
+			Reconcile: reconcileClaudeSettings,
+		},
 		Commands:  CommandAdapter{Format: CommandClaude},
 		Agents:    AgentAdapter{Format: AgentClaude},
 		ExtraDirs: []string{"status_lines", "output-styles", "themes"},

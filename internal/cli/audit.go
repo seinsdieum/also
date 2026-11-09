@@ -24,17 +24,18 @@ func auditProject(dir string) (string, error) {
 
 func newAuditCmd() *cobra.Command {
 	var (
-		all        bool
-		jsonOut    bool
-		ci         bool
-		strict     bool
-		sbom       string
-		dir        string
-		namespace  string
-		drift      bool
-		verify     bool
-		showPolicy bool
-		refresh    bool
+		all           bool
+		jsonOut       bool
+		ci            bool
+		strict        bool
+		sbom          string
+		dir           string
+		namespace     string
+		drift         bool
+		verify        bool
+		showPolicy    bool
+		refresh       bool
+		requirePolicy bool
 	)
 	c := newCmd("audit", "Show what is installed, where it came from and what changed")
 	c.Long = `Reports what is installed in this directory (or everywhere with --all):
@@ -50,7 +51,9 @@ Three focused modes use the same command:
 The default report exits 0 unless --ci is set and the report contains a
 failure. --drift and --verify are focused gates and exit 1 on any failure
 without requiring --ci. A modified user file is a warning; a missing file,
-block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.`
+block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.
+--require-policy fails unless an also.policy.yml applies to the project; it only
+asserts that a policy exists and does not replace normal policy enforcement.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return fmt.Errorf("usage: also audit [--all] [--json] [--ci] [--strict] [--drift|--verify|--policy] [--sbom <path>]")
@@ -72,6 +75,11 @@ block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.`
 			if err := printPolicy(project, jsonOut); err != nil {
 				return err
 			}
+			if requirePolicy {
+				if err := requirePolicyExists(project); err != nil {
+					return err
+				}
+			}
 			if ci {
 				status, err := also.VerifyPolicy(project)
 				if err != nil {
@@ -85,6 +93,11 @@ block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.`
 				}
 			}
 			return nil
+		}
+		if requirePolicy {
+			if err := requirePolicyExists(project); err != nil {
+				return err
+			}
 		}
 		st, err := also.LoadState()
 		if err != nil {
@@ -157,6 +170,7 @@ block or config entry is a failure. --sbom writes a CycloneDX 1.5 JSON SBOM.`
 	c.Flags().BoolVar(&showPolicy, "policy", false, "show the effective also.policy.yml")
 	c.Flags().StringVar(&namespace, "namespace", "", "namespace to verify (with --verify)")
 	c.Flags().BoolVar(&refresh, "refresh", false, "fetch namespaces before verifying")
+	c.Flags().BoolVar(&requirePolicy, "require-policy", false, "fail when no also.policy.yml applies")
 	c.Flags().StringVar(&sbom, "sbom", "", "write a CycloneDX SBOM to this path (- for stdout)")
 	c.Flags().StringVarP(&dir, "dir", "p", "", "directory to audit (default: current directory)")
 	return c

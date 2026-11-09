@@ -14,20 +14,22 @@ import (
 
 func newInstallCmd() *cobra.Command {
 	var (
-		setFlag     string
-		from        string
-		harness     string
-		project     string
-		force       bool
-		offline     bool
-		noConfig    bool
-		jsonOut     bool
-		frozen      bool
-		update      bool
-		except      []string
-		only        bool
-		latest      bool
-		noGitignore bool
+		setFlag       string
+		from          string
+		harness       string
+		project       string
+		force         bool
+		offline       bool
+		noConfig      bool
+		jsonOut       bool
+		frozen        bool
+		update        bool
+		except        []string
+		only          bool
+		latest        bool
+		noGitignore   bool
+		dryRun        bool
+		requirePolicy bool
 	)
 	c := newCmd("install <package> [for <harness>] [from <namespace>]", "Materialize a package or one part for a harness")
 	c.Long = `Decodes a package into the native layout of the target harness. The natural form
@@ -37,7 +39,14 @@ Installs target the nearest project root. Instructions are installed as a
 managed block; skills, commands and agents as files; MCP and hooks are merged
 into native config with reversible bookkeeping. By default the managed harness
 paths are added to the project .gitignore, so generated files do not enter the
-product history.`
+product history.
+
+--dry-run resolves, fetches, verifies policy and builds the plan, then reports
+what would change without writing project files, also.lock, state or backup
+copies. It may create the empty ~/.also directory structure, populate the
+package cache and take the run lock. --require-policy fails unless an
+also.policy.yml applies to the project; it only asserts that a policy exists and
+does not replace normal policy enforcement.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -47,7 +56,10 @@ product history.`
 			if !frozen {
 				return fmt.Errorf("usage: also install <package> [for <harness>] [from <namespace>], or also install --frozen with no package to replay also.lock")
 			}
-			return installFromLock(cfg, project, force, offline, jsonOut, noGitignore)
+			return installFromLock(cfg, lockInstallOptions{
+				dir: project, force: force, offline: offline, jsonOut: jsonOut,
+				noGitignore: noGitignore, dryRun: dryRun, requirePolicy: requirePolicy,
+			})
 		}
 		spec, err := parseInstallArgs(args, cfg)
 		if err != nil {
@@ -58,6 +70,11 @@ product history.`
 		proj, err := installProject(project)
 		if err != nil {
 			return err
+		}
+		if requirePolicy {
+			if err := requirePolicyExists(proj); err != nil {
+				return err
+			}
 		}
 		requestedHarness := harness
 		if spec.HarnessRequested {
@@ -154,7 +171,7 @@ product history.`
 				Package: spec.Ref.spec(), Harness: harnessID, Scope: "project", Project: proj,
 				Parts: spec.Parts, Exclude: spec.Exclude, OnlyParts: spec.OnlyParts,
 				Force: force, WithConfig: !noConfig, Offline: offline,
-				ExpectedDigest: expectedDigest,
+				ExpectedDigest: expectedDigest, DryRun: dryRun,
 			}, installSet, from)
 			if err != nil {
 				return err
@@ -163,7 +180,9 @@ product history.`
 				if err := entry.VerifyInstall(&plan.Install); err != nil {
 					return err
 				}
-			} else {
+			}
+			var lockChange bool
+			if !frozen {
 				lockConstraint := constraint
 				if lockConstraint == "" && entry != nil {
 					lockConstraint = entry.Constraint
@@ -178,15 +197,40 @@ product history.`
 				if current, lerr := also.LoadLock(proj); lerr == nil {
 					lock = current
 				}
-				lock.Upsert(also.LockEntryFromInstall(&plan.Install, lockConstraint))
-				if err := also.SaveLock(proj, lock); err != nil {
+				candidate := also.LockEntryFromInstall(&plan.Install, lockConstraint)
+				if dryRun {
+					var err error
+					lockChange, err = also.LockWouldChange(proj, lock, candidate)
+					if err != nil {
+						return err
+					}
+				} else {
+					lock.Upsert(candidate)
+					if err := also.SaveLock(proj, lock); err != nil {
+						return err
+					}
+				}
+			}
+			var ignoreChange bool
+			if !noGitignore {
+				if dryRun {
+					var err error
+					ignoreChange, err = managedIgnoresWouldChange(proj, harnessID)
+					if err != nil {
+						return err
+					}
+				} else if err := ensureManagedIgnores(proj, harnessID); err != nil {
 					return err
 				}
 			}
-			if !noGitignore {
-				if err := ensureManagedIgnores(proj, harnessID); err != nil {
-					return err
+			if dryRun {
+				if jsonOut {
+					return printJSON(dryRunOutput(plan, lockChange, ignoreChange))
 				}
+				printPlanBody(plan, "would install", true)
+				printRemoved(plan)
+				printDryRunTail(lockChange, ignoreChange, plan.Install.Root, proj)
+				return nil
 			}
 			if jsonOut {
 				return printJSON(planOutput(plan))
@@ -209,6 +253,8 @@ product history.`
 	c.Flags().BoolVar(&only, "only", false, "replace the existing part selection instead of adding to it")
 	c.Flags().BoolVar(&latest, "latest", false, "do not pin the resolved semantic version to ^major.minor.patch")
 	c.Flags().BoolVar(&noGitignore, "no-gitignore", false, "do not add the managed harness block to .gitignore")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "show the plan without writing project files, also.lock, state or backups")
+	c.Flags().BoolVar(&requirePolicy, "require-policy", false, "fail when no also.policy.yml applies")
 	return c
 }
 
@@ -232,20 +278,25 @@ type configChange struct {
 }
 
 type installOutput struct {
-	Package       string         `json:"package"`
-	Version       string         `json:"version"`
-	Label         string         `json:"label,omitempty"`
-	Harness       string         `json:"harness"`
-	Project       string         `json:"dir,omitempty"`
-	Root          string         `json:"root"`
-	Namespace     string         `json:"namespace"`
-	Parts         []string       `json:"parts,omitempty"`
-	Exclude       []string       `json:"exclude,omitempty"`
-	Files         int            `json:"files"`
-	Instructions  string         `json:"instructions,omitempty"`
-	ConfigChanges []configChange `json:"config_changes,omitempty"`
-	Warnings      []string       `json:"warnings,omitempty"`
-	Skipped       []string       `json:"skipped,omitempty"`
+	Package         string         `json:"package"`
+	Version         string         `json:"version"`
+	Label           string         `json:"label,omitempty"`
+	Harness         string         `json:"harness"`
+	Project         string         `json:"dir,omitempty"`
+	Root            string         `json:"root"`
+	Namespace       string         `json:"namespace"`
+	Parts           []string       `json:"parts,omitempty"`
+	Exclude         []string       `json:"exclude,omitempty"`
+	Files           int            `json:"files"`
+	Instructions    string         `json:"instructions,omitempty"`
+	ConfigChanges   []configChange `json:"config_changes,omitempty"`
+	Warnings        []string       `json:"warnings,omitempty"`
+	Skipped         []string       `json:"skipped,omitempty"`
+	DryRun          bool           `json:"dry_run,omitempty"`
+	Paths           []string       `json:"paths,omitempty"`
+	Removed         []string       `json:"removed,omitempty"`
+	LockChange      bool           `json:"lock_change,omitempty"`
+	GitignoreChange bool           `json:"gitignore_change,omitempty"`
 }
 
 func planOutput(plan *also.Plan) installOutput {
@@ -263,6 +314,55 @@ func planOutput(plan *also.Plan) installOutput {
 		out.ConfigChanges = append(out.ConfigChanges, configChange{File: e.File, Kind: e.Kind, Path: e.Path, Marker: e.Marker})
 	}
 	return out
+}
+
+// dryRunOutput is the flat install shape plus the paths and bookkeeping a real
+// run would change.
+func dryRunOutput(plan *also.Plan, lockChange, gitignoreChange bool) installOutput {
+	out := planOutput(plan)
+	out.DryRun = true
+	out.Paths = planPaths(plan)
+	out.Removed = planRemoved(plan)
+	out.LockChange = lockChange
+	out.GitignoreChange = gitignoreChange
+	return out
+}
+
+func planPaths(plan *also.Plan) []string {
+	paths := make([]string, 0, len(plan.NewFiles))
+	for _, f := range plan.NewFiles {
+		paths = append(paths, f.Dest)
+	}
+	return paths
+}
+
+func planRemoved(plan *also.Plan) []string {
+	paths := make([]string, 0, len(plan.RemoveFiles))
+	for _, f := range plan.RemoveFiles {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+// requirePolicyExists is the --require-policy gate. It asserts only that a
+// policy file applies; signature and content checks stay where they already are.
+func requirePolicyExists(project string) error {
+	if len(also.PolicyFiles(project)) > 0 {
+		return nil
+	}
+	return fmt.Errorf("policy: no also.policy.yml applies to %s (searched it and every parent up to the git root); create one or drop --require-policy", project)
+}
+
+// lockInstallOptions carries the install --frozen flags. Named fields keep the
+// six booleans from being transposed at the call site.
+type lockInstallOptions struct {
+	dir           string
+	force         bool
+	offline       bool
+	jsonOut       bool
+	noGitignore   bool
+	dryRun        bool
+	requirePolicy bool
 }
 
 // installFromLock replays every entry in also.lock. It is the CI path:
@@ -336,8 +436,8 @@ func addStateNamespaces(cfg *also.Config, st *also.State, project string) *also.
 	return cfg
 }
 
-func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGitignore bool) error {
-	project, err := installProject(dir)
+func installFromLock(cfg *also.Config, opts lockInstallOptions) error {
+	project, err := installProject(opts.dir)
 	if err != nil {
 		return err
 	}
@@ -347,6 +447,11 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 	}
 	if len(lock.Packages) == 0 {
 		return fmt.Errorf("also.lock is missing or empty in %s; run also install <package> first", project)
+	}
+	if opts.requirePolicy {
+		if err := requirePolicyExists(project); err != nil {
+			return err
+		}
 	}
 	return withLock(func() error {
 		lock, err = also.LoadLock(project)
@@ -369,7 +474,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			if _, ok := entryCfg.Namespaces[entry.Namespace]; !ok {
 				return fmt.Errorf("lockfile namespace %q is not configured and the lock has no remote", entry.Namespace)
 			}
-			set, err := also.ResolveSetForInstall(entryCfg, entry.Namespace, "", offline)
+			set, err := also.ResolveSetForInstall(entryCfg, entry.Namespace, "", opts.offline)
 			if err != nil {
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
 			}
@@ -393,7 +498,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			}
 			also.PrepareKnownConfigOrigins(st, project)
 			plan, perr := also.BuildPlan(st, set, pkg, version, entry.Harness, "project", project, also.InstallOptions{
-				Force: force, WithConfig: entry.WithConfig, Parts: entry.Parts, Exclude: entry.Exclude,
+				Force: opts.force, WithConfig: entry.WithConfig, Parts: entry.Parts, Exclude: entry.Exclude,
 			})
 			if perr != nil {
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, perr)
@@ -403,7 +508,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			}
 			plans = append(plans, plan)
 		}
-		if err := checkLockConflicts(plans, force); err != nil {
+		if err := checkLockConflicts(plans, opts.force); err != nil {
 			return err
 		}
 		beforeState, _ := also.LoadState()
@@ -456,6 +561,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			}
 		}
 		out := make([]installOutput, 0, len(lock.Packages))
+		var dryPlans []*also.Plan
 		for idx, entry := range lock.Packages {
 			if err := entry.CheckEntry(); err != nil {
 				return err
@@ -465,7 +571,7 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 				return fmt.Errorf("lockfile namespace %q is not configured and the lock has no remote; run: also connect %s <git-url>", entry.Namespace, entry.Namespace)
 			}
 			snap := map[string]fileSnap{}
-			if idx < len(plans) {
+			if !opts.dryRun && idx < len(plans) {
 				for _, f := range plans[idx].NewFiles {
 					fi, serr := os.Stat(f.Dest)
 					if serr != nil || !fi.Mode().IsRegular() {
@@ -478,12 +584,16 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			}
 			plan, _, err := also.InstallPackage(entryCfg, also.InstallRequest{
 				Package: entry.Package + "@" + entry.Version, Harness: entry.Harness,
-				Scope: "project", Project: project, Parts: entry.Parts, Exclude: entry.Exclude, Force: force,
-				WithConfig: entry.WithConfig, Offline: offline, ExpectedDigest: entry.Digest,
+				Scope: "project", Project: project, Parts: entry.Parts, Exclude: entry.Exclude, Force: opts.force,
+				WithConfig: entry.WithConfig, Offline: opts.offline, ExpectedDigest: entry.Digest, DryRun: opts.dryRun,
 			}, entry.Namespace, "")
 			if err != nil {
 				rollback()
 				return fmt.Errorf("%s/%s: %w", entry.Namespace, entry.Package, err)
+			}
+			if opts.dryRun {
+				dryPlans = append(dryPlans, plan)
+				continue
 			}
 			old, existed := before[plan.Install.ID]
 			if !existed {
@@ -493,10 +603,40 @@ func installFromLock(cfg *also.Config, dir string, force, offline, jsonOut, noGi
 			}
 			out = append(out, planOutput(plan))
 		}
-		if jsonOut {
+		if opts.dryRun {
+			ignoreChange := false
+			if !opts.noGitignore {
+				harnesses := make([]string, 0, len(dryPlans))
+				for _, p := range dryPlans {
+					harnesses = append(harnesses, p.Install.Harness)
+				}
+				var err error
+				ignoreChange, err = managedIgnoresWouldChange(project, harnesses...)
+				if err != nil {
+					return err
+				}
+			}
+			items := make([]installOutput, 0, len(dryPlans))
+			for _, p := range dryPlans {
+				items = append(items, dryRunOutput(p, false, ignoreChange))
+			}
+			if opts.jsonOut {
+				return printJSON(items)
+			}
+			fmt.Printf("would install %d package(s) from also.lock\n", len(dryPlans))
+			for _, p := range dryPlans {
+				printPlanBody(p, "would install", true)
+				printRemoved(p)
+			}
+			if len(dryPlans) > 0 {
+				printDryRunTail(false, ignoreChange, dryPlans[0].Install.Root, project)
+			}
+			return nil
+		}
+		if opts.jsonOut {
 			return printJSON(out)
 		}
-		if !noGitignore {
+		if !opts.noGitignore {
 			if err := ensureManagedIgnores(project, ""); err != nil {
 				return err
 			}
@@ -538,8 +678,10 @@ func resolveHarnessWord(cfg *also.Config, requested string, sawFor bool) (string
 	return id, nil
 }
 
-func printPlan(plan *also.Plan) {
-	fmt.Printf("installed %s@%s", plan.Install.Package, short(plan.Install.Version))
+// printPlanBody renders the header and plan fields shared by the real and
+// dry-run reports. listPaths adds the per-file list only for a preview.
+func printPlanBody(plan *also.Plan, verb string, listPaths bool) {
+	fmt.Printf("%s %s@%s", verb, plan.Install.Package, short(plan.Install.Version))
 	if plan.Install.Label != "" {
 		fmt.Printf(" (%s)", plan.Install.Label)
 	}
@@ -549,6 +691,11 @@ func printPlan(plan *also.Plan) {
 		fmt.Printf("parts: %s\n", strings.Join(plan.Install.Parts, ", "))
 	}
 	fmt.Printf("files: %d\n", len(plan.NewFiles))
+	if listPaths {
+		for _, f := range plan.NewFiles {
+			fmt.Printf("  %s\n", displayPlanPath(plan.Install.Root, plan.Install.Project, f.Dest))
+		}
+	}
 	if plan.Block != nil {
 		fmt.Printf("instructions: %s\n", plan.Block.File)
 	}
@@ -569,16 +716,62 @@ func printPlan(plan *also.Plan) {
 	printWarnings("warnings", plan.Warnings)
 }
 
+func printRemoved(plan *also.Plan) {
+	fmt.Printf("remove: %d\n", len(plan.RemoveFiles))
+	for _, f := range plan.RemoveFiles {
+		fmt.Printf("  %s\n", displayPlanPath(plan.Install.Root, plan.Install.Project, f.Path))
+	}
+}
+
+func printDryRunTail(lockChange, ignoreChange bool, root, project string) {
+	if lockChange {
+		fmt.Printf("lock: would update %s\n", also.LockFile)
+	}
+	if ignoreChange {
+		ignoreRoot := managedIgnoreRoot(project)
+		fmt.Printf("gitignore: would update %s\n", displayPlanPath(root, project, filepath.Join(ignoreRoot, ".gitignore")))
+	}
+	fmt.Println("no changes written; re-run without --dry-run to apply")
+}
+
+// displayPlanPath keeps a path relative to the harness root when it lives
+// there, then to the project, so the report stays readable in a checkout.
+func displayPlanPath(root, project, path string) string {
+	for _, base := range []string{root, project} {
+		if base == "" {
+			continue
+		}
+		rel, err := filepath.Rel(base, path)
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return rel
+		}
+	}
+	return path
+}
+
+func printPlan(plan *also.Plan) {
+	printPlanBody(plan, "installed", false)
+}
+
 func newUpgradeCmd() *cobra.Command {
 	var (
-		check        bool
-		force        bool
-		jsonOut      bool
-		legacyGlobal bool
-		major        bool
+		check         bool
+		force         bool
+		jsonOut       bool
+		legacyGlobal  bool
+		major         bool
+		requirePolicy bool
 	)
 	c := newCmd("upgrade [package...]", "Upgrade packages installed in this directory")
-	c.Long = "Upgrades packages installed in the current directory for the harness each one\nwas installed for. Content is content-addressed: 'up to date' means the installed\ndigest is still the newest."
+	c.Long = `Upgrades packages installed in the current directory for the harness each one
+was installed for. Content is content-addressed: 'up to date' means the installed
+digest is still the newest.
+
+--require-policy fails unless an also.policy.yml applies to the project. It only
+asserts that a policy exists and does not replace normal policy enforcement.`
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		cfg, err := also.LoadConfig()
 		if err != nil {
@@ -587,6 +780,11 @@ func newUpgradeCmd() *cobra.Command {
 		cwd, err := installProject("")
 		if err != nil {
 			return err
+		}
+		if requirePolicy {
+			if err := requirePolicyExists(cwd); err != nil {
+				return err
+			}
 		}
 		var infra *also.Infra
 		if _, in, ferr := also.FindInfra(cwd); ferr == nil {
@@ -663,6 +861,7 @@ func newUpgradeCmd() *cobra.Command {
 	c.Flags().BoolVar(&force, "force", false, "overwrite locally modified files")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print JSON")
 	c.Flags().BoolVar(&major, "major", false, "allow an upgrade to a new major version")
+	c.Flags().BoolVar(&requirePolicy, "require-policy", false, "fail when no also.policy.yml applies")
 	c.Flags().BoolVar(&legacyGlobal, "legacy-global", false, "report old global installs")
 	_ = c.Flags().MarkHidden("legacy-global")
 	return c

@@ -61,7 +61,7 @@ a namespace for commands that take one.
 
 ```sh
 also install <package> [for <harness>] [from <namespace>] [flags]
-also install --frozen
+also install --frozen [--dry-run] [--require-policy]
 also install <part> <kind>... from <package> [for <harness>] [from <namespace>]
 ```
 
@@ -89,6 +89,39 @@ Useful flags:
   managed harness block, so generated files stay out of the product history.
 - `--frozen` replays `also.lock` exactly. If the namespace is not configured,
   the remote recorded in the lock is used, so CI needs no separate setup.
+- `--dry-run` resolves the package, fetches the namespace, verifies the policy
+  and builds the plan, then stops. It writes no project files, no `also.lock`,
+  no state and no backup copies. It may create the empty `~/.also` directory
+  structure, populate `~/.also/cache` and take the run lock. It fails on the
+  same plan-time errors, with the same exit code, as the real run, including a
+  symlinked or unreadable `.gitignore`.
+  Human output starts `would install ...` and prints the plan body: `files:`
+  with each path, plus `instructions:`, `config changes:`, `skipped:` and
+  `warnings:` when present, then `remove:`. It prints `lock:` and
+  `gitignore:` only when they would change, and ends `no changes written;
+  re-run without --dry-run to apply`. In the frozen replay (`--frozen` with no
+  package), the header is `would install <n> package(s) from also.lock`,
+  followed by the same per-entry body for every lock entry and, when the
+  managed block would change, one `gitignore:` line. There is no `lock:` line:
+  a frozen run never rewrites `also.lock`.
+  `--json` keeps the flat install shape and adds `dry_run`, `paths`, `removed`,
+  `lock_change` and `gitignore_change`. `paths` and `removed` are omitted when
+  empty. `lock_change` is true when the real run would rewrite `also.lock`;
+  `gitignore_change` is true when the managed `.gitignore` block would change.
+  Both are omitted when false, so a false value is absent rather than reported.
+  `--no-gitignore` also leaves `gitignore_change` out. A normal preview is one
+  object; the frozen replay is an array of the same objects. In frozen replay
+  entries `lock_change` is always absent, and when the managed block would
+  change the run-level `gitignore_change` is repeated on every entry because
+  the write is run-level.
+- `--require-policy` fails unless at least one `also.policy.yml` applies from
+  the project up to the git root. A missing policy exits 1 with `policy: no
+  also.policy.yml applies to <project> (searched it and every parent up to the
+  git root); create one or drop --require-policy` before anything is written.
+  The flag only asserts that a policy exists: it does not verify a signature,
+  does not replace normal enforcement and adds no output when a policy exists.
+  It works with `--frozen` and is also accepted by `upgrade` and `audit`. There
+  is no bypass flag.
 
 Selection is additive by default: `also install agents from p` keeps the skills
 already installed. A plain `also install <package>` installs the whole package
@@ -114,10 +147,10 @@ later on the first cross-harness install. Quote values that contain `: `.
 ### Audit
 
 ```sh
-also audit [--all] [--json] [--ci] [--strict] [--sbom <path>]
-also audit --drift [--all] [--json] [--dir <path>]
-also audit --verify [--namespace N] [--refresh] [--json]
-also audit --policy [--json] [--dir <path>]
+also audit [--all] [--json] [--ci] [--strict] [--require-policy] [--sbom <path>]
+also audit --drift [--all] [--json] [--require-policy] [--dir <path>]
+also audit --verify [--namespace N] [--refresh] [--json] [--require-policy]
+also audit --policy [--json] [--require-policy] [--dir <path>]
 ```
 
 The default report is the inventory: namespace, content version, full digest,
@@ -129,6 +162,15 @@ servers, hooks, plugins and commands). It never downloads a package.
 `--verify` checks namespace manifests, digests, version tags and install
 references. `--policy` prints the effective `also.policy.yml` and its signature
 status. Choose one mode at a time.
+
+`--require-policy` fails unless at least one `also.policy.yml` applies from the
+project up to the git root; the flag itself adds no output when a policy
+exists. It is checked before the inventory is built, so a missing policy is
+exit 1 with no report. The one exception is `--policy`, which prints its result
+first: `also audit --policy --json --require-policy` writes
+`{"file": ..., "exists": false}` to stdout, then the `--require-policy` error
+to stderr, and exits 1. Signature and content checks are unchanged and still
+run when a policy exists.
 
 A modified file is a warning, because the edit may be intentional. A missing
 file, managed instruction block or configuration entry is a failure. `--drift`
@@ -164,15 +206,18 @@ also setup [--yes] [--harness H] [--namespace N=URL] [--default-namespace N]
 also init <name> [for <harness>] [--json]
 also connect <name> [<git-url>] [--default] [--force] [--migrate] [--yes]
 also adopt [directory] [for <harness>] [--name N] [--semver V] [--into <dir>]
-also upgrade [package...] [--check] [--major] [--json]
+also upgrade [package...] [--check] [--major] [--json] [--require-policy]
 also tag <package> <semver> [version] [--move]
 ```
 
 `init` writes `also.json` into the current directory. `adopt` captures a live
 installation, including preserved native layers, and can push the result.
 `upgrade` upgrades the packages installed in the current project; a major move
-requires `--major`, and a downgrade is refused. `tag` creates an immutable
-semantic alias over a content version; `--move` is the explicit retarget path.
+requires `--major`, and a downgrade is refused. `--require-policy` asserts that
+a policy applies before anything is resolved and exits 1 with the same message
+when none does; with `--check` it checks presence only. `tag` creates an
+immutable semantic alias over a content version; `--move` is the explicit
+retarget path.
 
 ## Inspect
 
@@ -255,7 +300,7 @@ Mutating commands accept `--json` and print one JSON value on stdout:
 | Command | Shape |
 |---|---|
 | `init` | name, harness, file |
-| `install` | package, version, harness, root, namespace, parts, exclude, files, config changes |
+| `install` | package, version, harness, root, namespace, parts, exclude, files, config changes; with `--dry-run`, also `dry_run`, `paths`, `removed`, and `lock_change`/`gitignore_change` when true |
 | `push` / `adopt` | package, version, digest, harness, files, warnings, namespace |
 | `upgrade` | array of package, harness, old, new, status, error |
 | `reshape` | array of package, from, to, status, warnings, error |

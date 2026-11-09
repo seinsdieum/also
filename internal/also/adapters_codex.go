@@ -26,7 +26,10 @@ func codexAdapter() *Harness {
 			Events:  codexHookEvents,
 			Target:  func(t Target) (string, string) { return t.HooksJSON, "hooks" },
 		},
-		MCP:       MCPAdapter{Format: MCPCodexTOML, Configs: []string{"config.toml"}},
+		MCP: MCPAdapter{Format: MCPCodexTOML, Configs: []string{"config.toml"}},
+		Settings: SettingsAdapter{
+			Translate: translateCodexSettings,
+		},
 		ExtraDirs: []string{"themes"},
 		ExtraBase: ".codex",
 		Detect: []DetectRule{

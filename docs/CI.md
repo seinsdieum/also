@@ -33,10 +33,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: reproduce the lock
-        run: also install --frozen
+        run: also install --frozen --require-policy
 
       - name: fail on drift, tracked infrastructure or a policy violation
-        run: also audit --ci
+        run: also audit --ci --require-policy
 
       - name: fail on any local edit
         run: also audit --strict
@@ -58,6 +58,12 @@ Notes:
   different version, or if a digest differs. It never silently updates the
   lock; use `also upgrade` locally and commit the new lock. The lock records
   the remote, so a fresh checkout needs no namespace setup.
+- `--require-policy` closes the gap that `--frozen` and `audit --ci` leave
+  open: `also.policy.yml` is optional by default, so deleting it would
+  otherwise remove the gate without failing the job. With the flag, a missing
+  policy exits 1 before anything is written. Run it on both steps so neither
+  can proceed without a policy. The flag only proves that a policy exists; the
+  signature, role and content checks are the ones below.
 - `audit --ci` fails on a missing file, managed block or config entry, on a
   version or digest mismatch against `also.lock`, on a missing or untracked
   lock, on an install that is missing from the lock, on an unsigned or invalid
@@ -81,4 +87,6 @@ Notes:
 - The namespace URL is a secret only if the repository is private. Prefer the
   platform's git credential or a read-only deploy key; `also` does not store
   tokens in its config.
-- There is no policy bypass flag. A policy change is a reviewed file change.
+- There is no flag that bypasses the rules of an existing policy. A policy
+  change is a reviewed, signed file change; keep `--require-policy` in CI so
+  deleting the file cannot quietly remove the gate.

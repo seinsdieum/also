@@ -25,8 +25,14 @@ func qwenAdapter() *Harness {
 			Events:  events,
 			Target:  func(t Target) (string, string) { return t.Settings, "hooks" },
 		},
-		MCP:       MCPAdapter{Format: MCPQwenJSON, Configs: []string{".mcp.json", "settings.json"}},
-		Settings:  SettingsAdapter{Keys: []string{"permissions"}, Configs: []string{"settings.json"}, Target: func(t Target) string { return t.Settings }},
+		MCP: MCPAdapter{Format: MCPQwenJSON, Configs: []string{".mcp.json", "settings.json"}},
+		Settings: SettingsAdapter{
+			Keys: []string{"permissions"}, Configs: []string{"settings.json"},
+			Target: func(t Target) string { return t.Settings },
+			Translate: func(settings map[string]any, target *Harness) (map[string]any, []string) {
+				return translateClaudeLikeSettings(settings, target, false)
+			},
+		},
 		Commands:  CommandAdapter{Format: CommandQwen},
 		Agents:    AgentAdapter{Format: AgentClaude},
 		ExtraDirs: []string{"status_lines", "extensions", "themes"},

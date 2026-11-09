@@ -35,8 +35,12 @@ type Plan struct {
 	BlockBody   []byte
 	RemoveBlock *BlockEdit
 	Edits       []ConfigEdit
-	Warnings    []string
-	Skipped     []string
+	// RetainedEdits are old config edits that Reconcile deliberately kept.
+	// They are not applied again, but they stay owned by the new install so an
+	// upgrade does not delete a value the warning reported as kept.
+	RetainedEdits []ConfigEdit
+	Warnings      []string
+	Skipped       []string
 	// OldInstallID is removed when a legacy slot id or a reshape changes the
 	// install id.
 	OldInstallID string
@@ -315,7 +319,11 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				}
 			}
 		}
-		if len(render.Settings) > 0 && (source.ID == targetH.ID || render.SettingsNative) {
+		declared := render.SettingsDeclared
+		declaredPermissions := declared["permission"] || declared["permissions"]
+		translatedAttempted := source.ID != targetH.ID && targetH.Settings.Translate != nil
+		retainOnly := translatedAttempted && declaredPermissions && len(render.Settings) == 0
+		if len(render.Settings) > 0 || retainOnly {
 			file := SettingsTargetFile(target)
 			if file == "" {
 				plan.Warnings = append(plan.Warnings, "settings keys were preserved in the package but this harness has no mergeable settings file")
@@ -323,18 +331,77 @@ func BuildPlan(st *State, set *SetRepo, pkg *Package, version VersionInfo, harne
 				if !configPathAllowed(file, target) {
 					return nil, fmt.Errorf("adapter %s points settings outside the project root: %s", targetH.ID, file)
 				}
-				keys := make([]string, 0, len(render.Settings))
-				for k := range render.Settings {
-					keys = append(keys, k)
+				settings := render.Settings
+				translated := render.SettingsTranslated
+				reconciled := len(translated) > 0 && targetH.Settings.Reconcile != nil
+				if reconciled {
+					subset := map[string]any{}
+					for key := range translated {
+						if value, ok := settings[key]; ok {
+							subset[key] = value
+						}
+					}
+					filtered, warns, err := targetH.Settings.Reconcile(file, subset)
+					if err != nil {
+						return nil, fmt.Errorf("reconcile settings for %s: %w", targetH.ID, err)
+					}
+					plan.Warnings = append(plan.Warnings, warns...)
+					merged := map[string]any{}
+					for key, value := range settings {
+						if !translated[key] {
+							merged[key] = value
+						}
+					}
+					for key, value := range filtered {
+						merged[key] = value
+					}
+					settings = merged
 				}
-				sort.Strings(keys)
-				for _, key := range keys {
-					edits, warns, err := planSettingsValue(st, old, file, []string{key}, render.Settings[key], opts.Force)
+				for _, key := range sortedKeys(settings) {
+					force := opts.Force
+					if reconciled && translated[key] {
+						// Reconcile already kept or strengthened every value,
+						// so the remaining translated keys are safe to own.
+						force = true
+					}
+					path := []string{key}
+					var edits []ConfigEdit
+					var warns []string
+					var err error
+					if reconciled && translated[key] && isPermissionName(key) {
+						edits, warns, err = planTranslatedPermission(st, old, file, path, settings[key], force)
+					} else {
+						edits, warns, err = planSettingsValue(st, old, file, path, settings[key], force)
+					}
 					if err != nil {
 						return nil, err
 					}
 					plan.Warnings = append(plan.Warnings, warns...)
 					plan.Edits = append(plan.Edits, edits...)
+				}
+				oldSettingsEdits := 0
+				if old != nil && translatedAttempted {
+					keys := settingsRetentionKeys(translated, declared)
+					if len(keys) > 0 {
+						for _, e := range old.Edits {
+							if e.File == file && len(e.Path) > 0 && keys[e.Path[0]] {
+								oldSettingsEdits++
+							}
+						}
+						plan.RetainedEdits = retainUnplannedSettings(plan.Edits, old, file, keys)
+					}
+				}
+				if retainOnly {
+					warning := fmt.Sprintf("declared permission rules produced no translatable output for %s", targetH.Display)
+					switch {
+					case len(plan.RetainedEdits) > 0:
+						warning += "; previous permission edits were retained"
+					case oldSettingsEdits > 0:
+						warning += "; previous permission edits were removed"
+					default:
+						warning += "; no previous permission edits existed"
+					}
+					plan.Warnings = append(plan.Warnings, warning)
 				}
 			}
 		}
@@ -557,6 +624,55 @@ func readConfigFile(path string) ([]byte, os.FileMode, error) {
 	return data, mode, nil
 }
 
+// mergeJSONValue folds a package's desired value into the value already at the
+// path. Wanted object keys are added, nested object keys are merged, and
+// unrelated keys survive. It reports whether a wanted leaf held a different
+// value, which the caller may treat as a conflict unless --force was given.
+func mergeJSONValue(existing, desired json.RawMessage) (json.RawMessage, bool) {
+	got, gotErr := decodeJSONValue(existing)
+	want, wantErr := decodeJSONValue(desired)
+	if gotErr != nil || wantErr != nil {
+		return desired, !jsonEqual(existing, desired)
+	}
+	gotObj, gotIsObj := got.(map[string]any)
+	wantObj, wantIsObj := want.(map[string]any)
+	if !gotIsObj || !wantIsObj {
+		return desired, !jsonValueEqual(got, want)
+	}
+	conflict := mergeJSONObjects(gotObj, wantObj)
+	out, err := json.Marshal(gotObj)
+	if err != nil {
+		return desired, conflict
+	}
+	return out, conflict
+}
+
+// mergeJSONObjects merges want into got in place and reports whether a
+// conflicting leaf was replaced.
+func mergeJSONObjects(got, want map[string]any) bool {
+	conflict := false
+	for k, wv := range want {
+		gv, ok := got[k]
+		if !ok {
+			got[k] = wv
+			continue
+		}
+		gotObj, gotIsObj := gv.(map[string]any)
+		wantObj, wantIsObj := wv.(map[string]any)
+		if gotIsObj && wantIsObj {
+			if mergeJSONObjects(gotObj, wantObj) {
+				conflict = true
+			}
+			continue
+		}
+		if !jsonValueEqual(gv, wv) {
+			conflict = true
+			got[k] = wv
+		}
+	}
+	return conflict
+}
+
 func planJSONSet(st *State, old *Install, file string, path []string, value any, force bool) (*ConfigEdit, string, error) {
 	if file == "" {
 		return nil, "MCP config path is unknown for this harness; skipped", nil
@@ -600,8 +716,28 @@ func planJSONSet(st *State, old *Install, file string, path []string, value any,
 				(origin.BaseSet && !origin.Absent && jsonEqual(existing, origin.Value))
 		}
 	}
-	if exists && oldEdit == nil && !force && !knownOrigin {
-		return nil, "", fmt.Errorf("%s is already configured differently in %s; use --force to replace it (a backup is kept)", strings.Join(path, "."), file)
+	switch {
+	case oldEdit != nil:
+		// Merge into the pre-install value, not the current one: keys that
+		// the previous package version added but this one no longer declares
+		// must disappear, while keys the user had before the first install
+		// stay.
+		var pre json.RawMessage
+		switch {
+		case oldEdit.BaseSet:
+			pre = oldEdit.Base
+		case oldEdit.HadPrev:
+			pre = oldEdit.Previous
+		}
+		if len(pre) > 0 && !jsonEqual(pre, raw) {
+			raw, _ = mergeJSONValue(pre, raw)
+		}
+	case exists && !jsonEqual(existing, raw):
+		merged, conflict := mergeJSONValue(existing, raw)
+		if conflict && !force && !knownOrigin {
+			return nil, "", fmt.Errorf("%s is already configured differently in %s; use --force to replace it (a backup is kept)", strings.Join(path, "."), file)
+		}
+		raw = merged
 	}
 	e := &ConfigEdit{File: file, Kind: "json-set", Path: path, Value: raw, CreatedFile: !fileExists(file)}
 	if oldEdit != nil {
@@ -682,9 +818,194 @@ func planOpenCodeMCP(st *State, old *Install, file, name string, value any, forc
 	return edit, w, err
 }
 
+func isPermissionName(key string) bool {
+	return key == "permission" || key == "permissions"
+}
+
+// planTranslatedPermission keeps a translated permission object under one
+// owner. If the previous install wrote the whole object, it plans one whole
+// object again instead of splitting it into per-leaf edits.
+func planTranslatedPermission(st *State, old *Install, file string, path []string, value any, force bool) ([]ConfigEdit, []string, error) {
+	if current, ok := value.(map[string]any); ok {
+		if edits, warns, handled, err := planWholeMapUpgrade(st, old, file, path, current, force); handled || err != nil {
+			return edits, warns, err
+		}
+	}
+	return planSettingsValue(st, old, file, path, value, force)
+}
+
+// planWholeMapUpgrade merges a new permission map over the previous package map
+// while preserving user keys. It returns handled=false when the old install did
+// not own the whole value.
+func planWholeMapUpgrade(st *State, old *Install, file string, path []string, value map[string]any, force bool) ([]ConfigEdit, []string, bool, error) {
+	if old == nil {
+		return nil, nil, false, nil
+	}
+	oldEdit := findOldEdit(old, file, path)
+	if oldEdit == nil || oldEdit.Kind != "json-set" {
+		return nil, nil, false, nil
+	}
+	var oldMap map[string]any
+	if err := json.Unmarshal(oldEdit.Value, &oldMap); err != nil || oldMap == nil {
+		return nil, nil, false, nil
+	}
+	current, ok := readSettingsMap(file, path)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	effective := map[string]any{}
+	for key, value := range current {
+		effective[key] = value
+	}
+	var warns []string
+	for _, key := range sortedKeys(value) {
+		desired := value[key]
+		got, present := current[key]
+		previous, owned := oldMap[key]
+		if !present {
+			effective[key] = desired
+			continue
+		}
+		if !owned {
+			// A user key that the new package now also declares.
+			if !jsonValueEqual(got, desired) && !force {
+				warns = append(warns, fmt.Sprintf("permission key %q in %s is user-owned; the existing value was kept", key, file))
+				continue
+			}
+			effective[key] = desired
+			continue
+		}
+		if !jsonValueEqual(got, previous) && !force {
+			warns = append(warns, fmt.Sprintf("permission key %q in %s was changed by you; the existing value was kept", key, file))
+			continue
+		}
+		effective[key] = desired
+	}
+	_, userStar := jsonStringValue(oldEdit.Base)
+	// Package keys the new translation no longer declares are stale, but a
+	// user change or a restriction is not stale.
+	for _, key := range sortedKeys(oldMap) {
+		if _, ok := value[key]; ok {
+			continue
+		}
+		if key == "*" && userStar {
+			// The target started as a global string; its wildcard belongs to
+			// the user unless the new package declares "*" itself.
+			continue
+		}
+		got, present := current[key]
+		if !present {
+			delete(effective, key)
+			continue
+		}
+		previous := oldMap[key]
+		if !jsonValueEqual(got, previous) {
+			warns = append(warns, fmt.Sprintf("permission key %q in %s was changed by you; the existing value was kept", key, file))
+			continue
+		}
+		if stalePermissionAllowed(got) {
+			delete(effective, key)
+			continue
+		}
+		if !stalePermissionRestricts(got) {
+			if _, scoped := got.(map[string]any); scoped {
+				warns = append(warns, fmt.Sprintf("permission key %q in %s keeps a scoped permission map; the existing policy was kept", key, file))
+			} else {
+				warns = append(warns, fmt.Sprintf("permission key %q in %s has an unsupported shape; the existing value was kept", key, file))
+			}
+		}
+	}
+	e, warn, err := planJSONSet(st, old, file, path, effective, true)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if warn != "" {
+		warns = append(warns, warn)
+	}
+	if e == nil {
+		return nil, warns, true, nil
+	}
+	return []ConfigEdit{*e}, warns, true, nil
+}
+
+// stalePermissionAllowed reports whether a stale package value is an allow
+// grant that should be removed.
+func stalePermissionAllowed(value any) bool {
+	effect, ok := value.(string)
+	if !ok {
+		return false
+	}
+	normalized, ok := normalizeEffect(effect)
+	return ok && normalized == "allow"
+}
+
+// stalePermissionRestricts reports whether a stale package value is a known
+// deny/ask restriction that must not be deleted.
+func stalePermissionRestricts(value any) bool {
+	effect, ok := value.(string)
+	if !ok {
+		return false
+	}
+	normalized, ok := normalizeEffect(effect)
+	return ok && (normalized == "deny" || normalized == "ask")
+}
+
+// readSettingsMap returns the current object at path. An absent path is an
+// empty object; a different shape is reported as not readable so the caller
+// falls back to the normal planner.
+func readSettingsMap(file string, path []string) (map[string]any, bool) {
+	data, _, err := readConfigFile(file)
+	if err != nil {
+		return nil, false
+	}
+	doc, err := ParseJSONC(data)
+	if err != nil {
+		return nil, false
+	}
+	raw, ok := doc.RawAt(path...)
+	if !ok {
+		return map[string]any{}, true
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// configPathIsObject reports whether merging map keys into path is possible.
+// An absent path is treated as an object because the planner creates it.
+func configPathIsObject(file string, path []string) bool {
+	data, _, err := readConfigFile(file)
+	if err != nil {
+		return true
+	}
+	doc, err := ParseJSONC(data)
+	if err != nil {
+		return true
+	}
+	kind, ok := doc.TypeAt(path...)
+	return !ok || kind == "object"
+}
+
 func planSettingsValue(st *State, old *Install, file string, path []string, value any, force bool) ([]ConfigEdit, []string, error) {
 	switch v := value.(type) {
 	case map[string]any:
+		if !configPathIsObject(file, path) {
+			// A scalar or array currently occupies the path; nested keys
+			// cannot be merged into it, so replace the whole value.
+			e, warn, err := planJSONSet(st, old, file, path, v, force)
+			if err != nil {
+				return nil, nil, err
+			}
+			if e == nil {
+				if warn != "" {
+					return nil, []string{warn}, nil
+				}
+				return nil, nil, nil
+			}
+			return []ConfigEdit{*e}, nil, nil
+		}
 		keys := make([]string, 0, len(v))
 		for k := range v {
 			keys = append(keys, k)
@@ -962,10 +1283,17 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 		oldID = plan.OldInstallID
 	}
 	old := st.FindByID(oldID)
+	retained := make(map[string]bool, len(plan.RetainedEdits))
+	for _, e := range plan.RetainedEdits {
+		retained[configEditKey(e)] = true
+	}
 
-	// 1. Remove previous config edits.
+	// 1. Remove previous config edits, except those Reconcile kept.
 	if old != nil {
 		for _, e := range old.Edits {
+			if retained[configEditKey(e)] {
+				continue
+			}
 			check, warn, err := removeConfigEdit(t, st, old, e)
 			if err != nil {
 				return err
@@ -1026,7 +1354,7 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 	}
 	inst := plan.Install
 	inst.Block = plan.Block
-	inst.Edits = plan.Edits
+	inst.Edits = append(append([]ConfigEdit{}, plan.Edits...), plan.RetainedEdits...)
 	inst.Warnings = UniqueStrings(plan.Warnings)
 	inst.Skipped = UniqueStrings(plan.Skipped)
 	// 7. Save state last, atomically.
@@ -1053,6 +1381,129 @@ func applyPlanTx(t *tx, st *State, plan *Plan, opts InstallOptions) error {
 		_ = CleanupConfigOrigins(plan.Install.Project, st)
 	}
 	return nil
+}
+
+// settingsRetentionKeys is the union of translated and declared settings keys.
+// A permission declaration covers both target spellings because the source and
+// target harnesses name the key differently.
+func settingsRetentionKeys(translated, declared map[string]bool) map[string]bool {
+	keys := map[string]bool{}
+	for key := range translated {
+		keys[key] = true
+	}
+	permissions := false
+	for key := range declared {
+		keys[key] = true
+		if key == "permission" || key == "permissions" {
+			permissions = true
+		}
+	}
+	if permissions {
+		keys["permission"] = true
+		keys["permissions"] = true
+	}
+	return keys
+}
+
+// keepOldSettingEdit drops stale allow grants from retained state. An upgrade
+// that removes or narrows an allow must not leave the target more permissive;
+// deny/ask restrictions and unsupported shapes are kept.
+func keepOldSettingEdit(e ConfigEdit) bool {
+	if len(e.Path) == 0 {
+		return true
+	}
+	switch e.Path[0] {
+	case "permissions":
+		if len(e.Path) > 1 && e.Path[1] == "allow" {
+			return false
+		}
+	case "permission":
+		var effect string
+		if err := json.Unmarshal(e.Value, &effect); err == nil {
+			if normalized, ok := normalizeEffect(effect); ok && normalized == "allow" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// retainUnplannedSettings keeps an old settings edit the new plan does not
+// cover, so an upgrade cannot delete a restriction that is still in force.
+// Only translated top-level keys are considered; a key the new package no
+// longer declares is a normal package removal.
+func retainUnplannedSettings(planned []ConfigEdit, old *Install, file string, translated map[string]bool) []ConfigEdit {
+	var retained []ConfigEdit
+	seen := map[string]bool{}
+	for _, e := range old.Edits {
+		if e.File != file || len(e.Path) == 0 || !translated[e.Path[0]] {
+			continue
+		}
+		if settingsEditCovered(planned, e) {
+			continue
+		}
+		if !keepOldSettingEdit(e) {
+			continue
+		}
+		key := configEditKey(e)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		retained = append(retained, e)
+	}
+	return retained
+}
+
+// settingsEditCovered reports whether the new plan owns the old edit. Array
+// elements are identified by path and value; other edits by path and kind.
+func settingsEditCovered(planned []ConfigEdit, old ConfigEdit) bool {
+	for _, n := range planned {
+		if n.File != old.File {
+			continue
+		}
+		if n.Kind == "json-set" && pathStartsWith(old.Path, n.Path) {
+			// A whole-value set owns every leaf below it.
+			return true
+		}
+		if !stringSliceEqual(n.Path, old.Path) {
+			continue
+		}
+		switch old.Kind {
+		case "json-append":
+			if n.Kind == "json-append" && jsonEqual(n.Value, old.Value) {
+				return true
+			}
+		case "toml-block":
+			if n.Kind == "toml-block" && n.Marker == old.Marker {
+				return true
+			}
+		default:
+			if n.Kind == old.Kind {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pathStartsWith(path, prefix []string) bool {
+	if len(path) < len(prefix) {
+		return false
+	}
+	for i := range prefix {
+		if path[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// configEditKey identifies one edit across plan and state. The value and TOML
+// block are part of the identity because two appends can share one path.
+func configEditKey(e ConfigEdit) string {
+	return e.File + "\x00" + e.Kind + "\x00" + strings.Join(e.Path, "\x00") + "\x00" +
+		e.Marker + "\x00" + string(e.Value) + "\x00" + e.Block
 }
 
 func writeBlockTx(t *tx, b *BlockEdit, body []byte) error {
@@ -1121,8 +1572,8 @@ func applyConfigEdit(t *tx, e ConfigEdit) error {
 		if err != nil {
 			return err
 		}
-		var v any
-		if err := json.Unmarshal(e.Value, &v); err != nil {
+		v, err := decodeJSONValue(e.Value)
+		if err != nil {
 			return err
 		}
 		out, err := doc.Set(v, e.Path...)
@@ -1151,8 +1602,8 @@ func applyConfigEdit(t *tx, e ConfigEdit) error {
 				}
 			}
 		}
-		var v any
-		if err := json.Unmarshal(e.Value, &v); err != nil {
+		v, err := decodeJSONValue(e.Value)
+		if err != nil {
 			return err
 		}
 		out, err := doc.Append(v, e.Path...)
@@ -1270,8 +1721,8 @@ func removeConfigEdit(t *tx, st *State, in *Install, e ConfigEdit) (bool, string
 			if jsonEqual(cur, other.Value) {
 				return true, "", nil
 			}
-			var v any
-			if err := json.Unmarshal(other.Value, &v); err != nil {
+			v, err := decodeJSONValue(other.Value)
+			if err != nil {
 				return false, "", err
 			}
 			out, err := doc.Set(v, e.Path...)
@@ -1279,6 +1730,11 @@ func removeConfigEdit(t *tx, st *State, in *Install, e ConfigEdit) (bool, string
 				return false, "", err
 			}
 			return true, "", t.write(e.File, out, mode)
+		}
+		// The edit did not add anything to the user's value: leave the bytes
+		// untouched instead of rewriting an equivalent base.
+		if e.BaseSet && len(e.Base) > 0 && jsonEqual(cur, e.Base) {
+			return true, "", nil
 		}
 		var out []byte
 		switch {
@@ -1288,14 +1744,14 @@ func removeConfigEdit(t *tx, st *State, in *Install, e ConfigEdit) (bool, string
 				out = pruneEmptyJSONParents(out, e.Path)
 			}
 		case e.BaseSet:
-			var v any
-			if err := json.Unmarshal(e.Base, &v); err != nil {
+			v, err := decodeJSONValue(e.Base)
+			if err != nil {
 				return false, "", err
 			}
 			out, err = doc.Set(v, e.Path...)
 		case e.HadPrev:
-			var v any
-			if err := json.Unmarshal(e.Previous, &v); err != nil {
+			v, err := decodeJSONValue(e.Previous)
+			if err != nil {
 				return false, "", err
 			}
 			out, err = doc.Set(v, e.Path...)

@@ -8,15 +8,22 @@ import (
 	"strings"
 )
 
+// settingsExtractKeys is the union of same-harness and cross-harness keys.
+func settingsExtractKeys(h *Harness) []string {
+	return UniqueStrings(append(append([]string{}, h.Settings.Keys...), h.Settings.CrossKeys...))
+}
+
 // ExtractBundleSettings reads the harness-native settings keys that can be
-// merged safely on same-harness installs (permissions, statusLine, ...).
+// merged safely on same-harness installs plus the keys reserved for
+// cross-harness translation (permissions, statusLine, theme, ...).
 func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []string) (map[string]any, []string, error) {
 	out := map[string]any{}
-	if len(h.Settings.Keys) == 0 {
+	keys := settingsExtractKeys(h)
+	if len(keys) == 0 {
 		return out, nil, nil
 	}
 	if h.Settings.Extract != nil {
-		return h.Settings.Extract(h.Settings.Keys, h.Settings.Configs, files, roots)
+		return h.Settings.Extract(keys, h.Settings.Configs, files, roots)
 	}
 	data, _, found := findBundleConfig(files, roots, h.Settings.Configs)
 	if !found {
@@ -27,7 +34,6 @@ func ExtractBundleSettings(h *Harness, files map[string]*SnapshotFile, roots []s
 		return nil, nil, fmt.Errorf("parse settings: %w", err)
 	}
 	var warnings []string
-	keys := append([]string{}, h.Settings.Keys...)
 	sort.Strings(keys)
 	for _, key := range keys {
 		raw, ok := doc.RawAt(key)

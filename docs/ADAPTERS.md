@@ -36,26 +36,74 @@ dialects are `claude`/`opencode`. A new harness usually reuses one of these.
 Agent conversion never carries an incompatible model id across harnesses. An
 OpenCode `provider/model` id is dropped for Claude and a Claude alias such as
 `sonnet` is dropped for OpenCode; both emit a warning and the harness uses its
-own default. OpenCode `permission` deny and ask rules become a Claude tools
-allowlist removal: neither has a Claude equivalent, and dropping an `ask` rule
-would silently turn it into `allow`. The V2 `permissions` array is handled the
-same way, including `action: subagent`; a resource-scoped rule removes the whole
-tool with a warning. `permissionMode: plan` becomes disabled edit tools in
-OpenCode. `.also-layers/<harness>/` is an authoritative native override and its
-config is merged with the main package.
+own default. For agent frontmatter, OpenCode `permission` deny and ask rules
+become a Claude tools allowlist removal: neither has a Claude equivalent, and
+dropping an `ask` rule would silently turn it into `allow`. The V2
+`permissions` array is handled the same way, including `action: subagent`; a
+resource-scoped rule removes the whole tool with a warning.
+`permissionMode: plan` becomes disabled edit tools in OpenCode.
+`.also-layers/<harness>/` inside the package is an authoritative native override
+and its config is merged with the main package.
+
+## Cross-harness settings
+
+The target adapter owns what a cross-harness install can express:
+`Settings.Translate` converts source settings into the target dialect, and
+`Settings.Reconcile` filters the result against the target's actual config.
+Same-harness installs do not call either; they merge `Settings.Keys` as before.
+
+Permissions translate between Claude Code, OpenCode and Qwen Code:
+
+- Source shapes: Claude and Qwen `permissions` with `allow`/`ask`/`deny`
+  string arrays; OpenCode v2 `permissions` entries with `action`, `resource`
+  and `effect`; OpenCode v1 `permission`, either one global effect string or a
+  per-action map.
+- Target shapes: Claude and Qwen write `permissions` arrays. OpenCode writes
+  the v1 `permission` map with `bash`, `task`, `edit`, `read`, `grep`, `glob`,
+  `webfetch`, `websearch`, `list`, `todowrite` and `*`; v2 `shell` and
+  `subagent` become `bash` and `task`.
+- Fail closed: a scoped deny or ask is broadened to the whole tool with a
+  warning; a scoped allow is dropped with a warning; an unknown rule is dropped
+  with a warning. deny outranks ask, and ask outranks allow. A translated rule
+  never replaces a target deny or ask with allow, and `--force` does not weaken
+  a scoped target map or a stronger existing effect.
+- OpenCode v2 target: a non-empty target `permissions` array is left untouched;
+  translated rules are not applied and stay in the package with a warning. A
+  target scoped `permission.<action>` map is kept and warned about. A target
+  global string becomes a map only when a translated specific rule is stronger.
+- Codex has no mergeable per-tool settings or permission model: it returns no
+  settings and warns that they remain in the package.
+
+`theme` transfers to Claude Code and OpenCode with a warning that the name may
+not exist there. `model`, `statusLine`, `small_model`, `default_agent`,
+`keybinds` and `experimental` have no cross-harness equivalent: when the source
+adapter declares them, they remain in the package with one warning per key. A
+same-harness Claude install still does not install a package `theme`, because
+translation runs only when source and target differ.
+
+An upgrade keeps previously installed deny/ask and scoped restrictions and
+drops stale allow grants. A translated permission map that replaced a global
+string is owned as one whole value, so uninstall restores the original string.
+An adapter with no `Settings.Translate` keeps all settings in the package with
+the generic `settings <keys> are preserved in the package but not installed
+cross-harness` warning.
 
 `Settings.Keys` is an allowlist of reversible top-level config keys, not a
 whole-file install. For OpenCode it covers `default_agent`, `experimental`,
 `theme`, `model`, `small_model`, `keybinds`, `permission` and the V2
-`permissions`; MCP and hooks are merged separately.
+`permissions`; MCP and hooks are merged separately. `Settings.CrossKeys`
+(for example Claude's `theme`) are extracted for cross-harness translation only
+and are not installed on a same-harness install.
 
 An OpenCode package whose agents already use the native V2 `permissions` array
-is copied verbatim on an OpenCode install, so `action: subagent` and
-`external_directory` work as written. Only a cross-harness install rewrites the
-array. OpenCode v2 accepts V1 `permission`, `tools` and `temperature` through
-its compatibility layer; `temperature` is stored but not sent by v2. Each key is written and reversed independently, so
-a package can carry the intended agent and model defaults without replacing the
-whole file. Add a key to the adapter when the value is part of the
+is copied verbatim into agent frontmatter on an OpenCode install, so
+`action: subagent` and `external_directory` work as written. Only cross-harness
+agent conversion rewrites that array. OpenCode v2 accepts V1 `permission`,
+`tools` and `temperature` through its compatibility layer; `temperature` is
+stored but not sent by v2. Each settings key is written and reversed
+independently, so a package can carry the intended agent and model defaults
+without replacing the whole file; the one exception is the whole-map permission
+owner described above. Add a key to the adapter when the value is part of the
 infrastructure contract.
 
 ## Adding a harness
@@ -206,7 +254,10 @@ Runtime safety is enforced independently of adapter declarations:
 - rendered files must stay under the target root (`fileAllowedRoot`);
 - adapter-chosen MCP/hooks/settings destinations must stay inside the project
   (`configPathAllowed`);
-- cross-harness permissions are never translated automatically;
+- cross-harness settings are written only through the target adapter's
+  `Translate`/`Reconcile`; everything else stays in the package with a warning,
+  and a target's V2 permission array or scoped permission map is never
+  overwritten;
 - native layers preserve what the target cannot represent;
 - hook command bodies are copied verbatim with a warning.
 

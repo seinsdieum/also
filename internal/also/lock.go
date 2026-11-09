@@ -1,6 +1,7 @@
 package also
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -65,14 +66,47 @@ func LoadLockFile(path string) (*Lockfile, error) {
 }
 
 func SaveLock(project string, lock *Lockfile) error {
+	data, err := marshalLock(lock)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(LockfilePath(project), data, 0o644)
+}
+
+// marshalLock is the canonical lock encoding: schema, sort order, indentation
+// and trailing newline defined once for both writing and byte comparison.
+func marshalLock(lock *Lockfile) ([]byte, error) {
 	lock.Schema = SchemaLock
 	lock.Sort()
 	data, err := json.MarshalIndent(lock, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	data = append(data, '\n')
-	return atomicWrite(LockfilePath(project), data, 0o644)
+	return append(data, '\n'), nil
+}
+
+// LockWouldChange reports whether SaveLock would write different bytes after
+// applying entry. It copies the lock, so the caller's value is not mutated.
+func LockWouldChange(project string, lock *Lockfile, entry LockEntry) (bool, error) {
+	next := &Lockfile{Schema: lock.Schema, Packages: make([]LockEntry, len(lock.Packages))}
+	for i, e := range lock.Packages {
+		e.Parts = append([]string(nil), e.Parts...)
+		e.Exclude = append([]string(nil), e.Exclude...)
+		next.Packages[i] = e
+	}
+	next.Upsert(entry)
+	wanted, err := marshalLock(next)
+	if err != nil {
+		return false, err
+	}
+	current, err := os.ReadFile(LockfilePath(project))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("read %s: %w", LockfilePath(project), err)
+	}
+	return !bytes.Equal(current, wanted), nil
 }
 
 func (l *Lockfile) Sort() {

@@ -6,7 +6,7 @@
   <strong>Version once. Run anywhere.</strong>
 </p>
 
-`also` is the control plane for AI agent configuration. The project is at `0.1.1`: the command surface is deliberately small and still pre-1.0, while package, state and lock schemas are versioned independently. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
+`also` is the control plane for AI agent configuration. The project is at `0.2.0`: the command surface is deliberately small and still pre-1.0, while package, state and lock schemas are versioned independently. One Go binary installs, versions, audits and reverses instructions, skills, commands, agents, hooks, Model Context Protocol servers and settings across harnesses. A cross-harness install translates permissions between Claude Code, OpenCode and Qwen Code, carries a theme where the target has one, and keeps settings it cannot express in the package with a warning. It does not just generate files: it remembers what it owns, proves what is installed, reports what drifted, and refuses to act outside your policy.
 
 ## 1. The Problem
 
@@ -74,6 +74,14 @@ cd ../my-project
 also install code-review for opencode
 also audit
 ```
+
+Preview an install before it touches the project:
+
+```sh
+also install code-review for opencode --dry-run
+```
+
+`--dry-run` resolves the package, fetches the namespace, verifies the policy and builds the plan, then stops. It writes no project files, no `also.lock`, no state and no backup copies. It may create the empty `~/.also` directory structure, populate `~/.also/cache` and take the run lock. Human output starts `would install ...` and ends `no changes written; re-run without --dry-run to apply`; `lock:` and `gitignore:` appear only when they would change. Plan-time errors, including a symlinked or unreadable `.gitignore`, fail the preview with the same exit code a real install would return.
 
 `also install` writes `also.lock` next to the project. Commit it. Another machine or a continuous-integration job can then install exactly the same content:
 
@@ -247,7 +255,16 @@ governance:
 
 `also audit --policy` shows the effective policy. Every `also.policy.yml` from the project up to the git root is enforced, so a nested policy can add restrictions but cannot disable a root deny or signature requirement. `also policy keygen`, `also policy trust`, `also policy sign` and `also policy verify --ci` manage the detached Ed25519 signature in `also.policy.sig`; they remain available as advanced commands. The trusted public keys live outside the policy (`~/.also/trusted-policy-keys` or `ALSO_TRUSTED_POLICY_KEYS`), so a changed policy or approver list cannot make itself trusted. `docs/GOVERNANCE.md` has the full workflow.
 
-`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory and fails when a policy exists but is unsigned, when a signature is invalid or untrusted, when a required role or approval is missing, and when an installed package violates the rules. There is no bypass flag: changing the policy is a reviewed, signed file change.
+The policy file is optional. When no `also.policy.yml` applies, `also install`, `also upgrade` and `also audit` run without policy rules, so deleting the file removes the gate entirely. Content is enforced strictly; presence is not assumed. Where a policy must exist, make its absence a failure:
+
+```sh
+also install --frozen --require-policy
+also audit --ci --require-policy
+```
+
+`--require-policy` asserts only that at least one policy file applies from the project up to the git root. It adds no output when a policy exists, does not verify a signature and does not replace the normal checks. Missing policy exits 1 with `policy: no also.policy.yml applies to <project> (searched it and every parent up to the git root); create one or drop --require-policy` and makes no changes. `also upgrade --check --require-policy` checks existence only.
+
+`also install` and `also upgrade` enforce the file before writing anything. `also audit --ci` re-checks the inventory and fails when a policy exists but is unsigned, when a signature is invalid or untrusted, when a required role or approval is missing, and when an installed package violates the rules. There is no flag that bypasses an existing policy: changing its content is a reviewed, signed file change.
 
 ### Adapters and cross-harness architecture
 
@@ -256,11 +273,19 @@ An adapter describes where a harness keeps each component and how it encodes con
 | Adapter | Instructions | Skills | Commands and agents | Hooks and settings | Model Context Protocol |
 |---|---|---|---|---|---|
 | Claude Code | `CLAUDE.md` | `.claude/skills` | yes | yes | yes |
-| Codex CLI | `AGENTS.md` | `.agents/skills` | not supported by the harness | project layers require a trusted project | yes |
+| Codex CLI | `AGENTS.md` | `.agents/skills` | not supported by the harness | hooks only (project must be trusted); settings stay in the package | yes |
 | OpenCode | `AGENTS.md` | `.opencode/skills` | yes | yes | yes |
 | Qwen Code | `QWEN.md` | `.qwen/skills` | yes | yes | yes |
 
-Cross-harness translation is deliberately honest. A component that has no equivalent in the target harness is skipped with a warning instead of being written into a file the harness ignores. Native data that cannot be translated is preserved in `.also-layers/` so a later round trip can restore it.
+The hooks and settings column describes a same-harness install. Cross-harness translation is deliberately honest. A component that has no equivalent in the target harness is skipped with a warning instead of being written into a file the harness ignores.
+
+`.also-layers/` lives inside the package, not in the project. `also adopt` writes it to preserve native harness data that the package cannot express portably, and `install` merges it back into the harness it belongs to: a native instruction file overrides the portable one, and MCP, hooks and settings are merged. A plain install never creates `.also-layers/` in the project directory.
+
+Settings and permissions are translated, not silently dropped. Permissions move between Claude Code, OpenCode and Qwen Code. Claude and Qwen use `permissions.allow`, `permissions.ask` and `permissions.deny` arrays; OpenCode writes its v1 `permission` map with `bash`, `task`, `edit`, `read`, `grep`, `glob`, `webfetch`, `websearch`, `list`, `todowrite` and `*`. Translation fails closed: a scoped deny or ask is broadened to the whole tool with a warning, a scoped allow is dropped with a warning, unknown rules are dropped with a warning, and deny beats ask beats allow. A translated rule never turns an existing target deny or ask into allow, and `--force` does not weaken a scoped target map or a stronger existing effect.
+
+Codex has no mergeable per-tool settings or permission model, so every setting stays in the package with a warning. A cross-harness install for Claude Code or OpenCode also carries a `theme`, with a warning that the name may not exist there. When the source declares them, `model`, `statusLine`, `small_model`, `default_agent`, `keybinds` and `experimental` stay in the package with a per-key warning. An OpenCode v2 target with a non-empty `permissions` array is left untouched, and the translated rules stay in the package with a warning; a scoped target `permission.<action>` map is kept and warned about. A target whose `permission` is one global string becomes a map only when a translated specific rule is stronger.
+
+Upgrades keep previously installed deny/ask and scoped restrictions and drop stale allow grants. A global string that became a map is owned as one whole value, so uninstall restores the original string. [docs/ADAPTERS.md](docs/ADAPTERS.md) has the full rules.
 
 Add a community adapter without recompiling (advanced command):
 
@@ -290,9 +315,9 @@ Core workflow:
 
 | Command | Purpose |
 |---|---|
-| `also install <package> [for <harness>] [from <namespace>]` | Materialize a package into a project and update `also.lock`. |
+| `also install <package> [for <harness>] [from <namespace>] [--dry-run] [--require-policy]` | Materialize a package into a project and update `also.lock`. |
 | `also push [directory] [--semver V] [--bump kind]` | Publish the initialized infrastructure. |
-| `also audit [--drift\|--verify\|--policy]` | Inventory, differences, namespace verification or the effective policy. |
+| `also audit [--drift\|--verify\|--policy] [--require-policy]` | Inventory, differences, namespace verification or the effective policy. |
 | `also uninstall <package> [--namespace N]` | Remove an installation and reverse its configuration edits. |
 
 Setup and inspection:
@@ -303,7 +328,7 @@ Setup and inspection:
 | `also init <name> [for <harness>]` | Mark the current directory as portable infrastructure. |
 | `also connect <name> [<git-url>]` | Connect a namespace, or choose an existing one as default. |
 | `also adopt [directory] [for <harness>]` | Capture the initialized infrastructure and publish a new version. |
-| `also upgrade [--major]` | Upgrade packages installed in the current project. |
+| `also upgrade [--major] [--require-policy]` | Upgrade packages installed in the current project. |
 | `also tag <package> <semver> [version]` | Point a semantic alias at a content version. |
 | `also list [query] [--versions\|--installs\|--tree\|--harnesses]` | List packages, search, show installs, the installed tree or adapters. |
 | `also show <package>[@version] [from <namespace>]` | Show a package manifest and its components. |
@@ -326,7 +351,7 @@ live in [docs/CLI.md](docs/CLI.md).
 
 **One binary, no service.** Namespaces are ordinary git repositories. There is no control plane to host, no account to create, and no telemetry. A lockfile and a policy file are the only project artifacts.
 
-**Honest translation.** If a component has no equivalent in the target harness, it is skipped with a warning instead of being written somewhere the harness ignores. Native data that cannot be translated is preserved in `.also-layers/` for a later round trip.
+**Honest translation.** If a component has no equivalent in the target harness, it is skipped with a warning instead of being written somewhere the harness ignores. Native data that cannot be translated is stored in `.also-layers/` inside the package, never in the project, and merged back on install.
 
 **Explicit scope.** `also` ships four built-in harnesses: Claude Code, Codex CLI, OpenCode and Qwen Code. It does not try to be a public package catalog, and it does not sandbox what a hook or command does when the harness later runs it. Adapters are declarative so the set can grow without weakening the ownership model.
 
@@ -342,7 +367,7 @@ make build          # build bin/also
 make smoke          # exercise the real harness command-line interfaces, if installed
 ```
 
-`make check` runs `gofmt`, `go vet` and the full test suite with the race detector in continuous integration. The four-by-four harness matrix in `test/e2e/matrix_test.go` runs on every platform, and the release workflow runs the test suite before publishing. The `make smoke` target is optional locally because it needs the real harness binaries; it never calls a model.
+`make check` runs `gofmt`, `go vet` and `go test ./...`; it does not enable the race detector. CI runs `go test -count=1 -race ./...`, and `make release-check` adds `go mod verify`, the race suite and the control-plane E2E scripts. The four-by-four harness matrix in `test/e2e/matrix_test.go` runs on every platform, and the release workflow runs the test suite before publishing. The `make smoke` target is optional locally because it needs the real harness binaries; it never calls a model.
 
 Useful documents:
 

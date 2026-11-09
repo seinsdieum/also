@@ -124,42 +124,62 @@ func UpdateGitIgnore(project string, kind IgnoreKind, add bool, entries []string
 	return UpdateGitIgnoreAt(filepath.Join(root, ".gitignore"), kind, add, entries)
 }
 
-// UpdateGitIgnoreAt updates a specific .gitignore file. It is used for
-// archive checkouts that have no .git yet but still carry a managed block.
-func UpdateGitIgnoreAt(path string, kind IgnoreKind, add bool, entries []string) (bool, error) {
+// transformGitIgnore is the single precondition and transform path for the
+// managed block. UpdateGitIgnoreAt writes its result; GitIgnoreWouldChange only
+// inspects it, so both reject the same paths and agree on what changed.
+func transformGitIgnore(path string, kind IgnoreKind, add bool, entries []string) (next string, changed bool, mode os.FileMode, exists bool, err error) {
 	if kind != IgnoreInfra && kind != IgnoreAlso {
-		return false, fmt.Errorf("unknown ignore scope %q; use infra or you", kind)
+		return "", false, 0, false, fmt.Errorf("unknown ignore scope %q; use infra or you", kind)
 	}
-	mode := os.FileMode(0o644)
-	if info, err := os.Lstat(path); err == nil {
+	mode = 0o644
+	if info, lerr := os.Lstat(path); lerr == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("refusing to replace symlink %s; make it a regular file first", path)
+			return "", false, 0, false, fmt.Errorf("refusing to replace symlink %s; make it a regular file first", path)
 		}
 		mode = info.Mode().Perm()
-	} else if !os.IsNotExist(err) {
-		return false, err
+		exists = true
+	} else if !os.IsNotExist(lerr) {
+		return "", false, 0, false, lerr
 	}
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return false, err
+	data, rerr := os.ReadFile(path)
+	if rerr != nil && !os.IsNotExist(rerr) {
+		return "", false, 0, false, rerr
 	}
 	content := string(data)
-	next, changed := content, false
 	if add {
 		next, changed = setIgnoreBlock(content, kind, entries)
 	} else {
 		next, changed = removeIgnoreBlock(content, kind)
 	}
+	return next, changed, mode, exists, nil
+}
+
+// UpdateGitIgnoreAt updates a specific .gitignore file. It is used for
+// archive checkouts that have no .git yet but still carry a managed block.
+func UpdateGitIgnoreAt(path string, kind IgnoreKind, add bool, entries []string) (bool, error) {
+	next, changed, mode, exists, err := transformGitIgnore(path, kind, add, entries)
+	if err != nil {
+		return false, err
+	}
 	if !changed {
 		return false, nil
 	}
 	if strings.TrimSpace(next) == "" {
-		if _, err := os.Stat(path); err == nil {
+		if exists {
 			return true, os.Remove(path)
 		}
 		return true, nil
 	}
 	return true, atomicWrite(path, []byte(next), mode)
+}
+
+// GitIgnoreWouldChange reports whether UpdateGitIgnoreAt would change the file.
+// It reads the same bytes and applies the same managed-block transform without
+// writing, so formatting inside the block counts exactly as the writer's byte
+// comparison does.
+func GitIgnoreWouldChange(path string, kind IgnoreKind, add bool, entries []string) (bool, error) {
+	_, changed, _, _, err := transformGitIgnore(path, kind, add, entries)
+	return changed, err
 }
 
 // IgnoreBlockEntries reads the entries of the managed block, so a scoped

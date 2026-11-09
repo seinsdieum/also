@@ -17,6 +17,68 @@ var toolNames = map[string]string{
 	"list": "List", "patch": "Patch",
 }
 
+// permissionAction is the single source of truth for the OpenCode permission
+// action <-> Claude tool mapping. V1 is the OpenCode v1 permission-map key; the
+// aliases cover v2 and source spellings. Every alias and tool must round-trip,
+// which init verifies because this is compiled-in policy.
+type permissionAction struct {
+	V1      string
+	Aliases []string
+	Tools   []string
+}
+
+var permissionActions = []permissionAction{
+	{V1: "edit", Aliases: []string{"edit", "write", "patch"}, Tools: []string{"Edit", "Write", "NotebookEdit"}},
+	{V1: "bash", Aliases: []string{"bash", "shell"}, Tools: []string{"Bash"}},
+	{V1: "webfetch", Aliases: []string{"webfetch"}, Tools: []string{"WebFetch"}},
+	{V1: "websearch", Aliases: []string{"websearch"}, Tools: []string{"WebSearch"}},
+	{V1: "task", Aliases: []string{"task", "subagent"}, Tools: []string{"Task"}},
+	{V1: "read", Aliases: []string{"read"}, Tools: []string{"Read"}},
+	{V1: "grep", Aliases: []string{"grep"}, Tools: []string{"Grep"}},
+	{V1: "glob", Aliases: []string{"glob"}, Tools: []string{"Glob"}},
+	{V1: "list", Aliases: []string{"list"}, Tools: []string{"List"}},
+	{V1: "todowrite", Aliases: []string{"todowrite", "todo"}, Tools: []string{"TodoWrite"}},
+}
+
+func init() {
+	if err := validatePermissionActions(); err != nil {
+		panic(err)
+	}
+}
+
+func validatePermissionActions() error {
+	aliases := map[string]string{}
+	tools := map[string]string{}
+	for _, a := range permissionActions {
+		if a.V1 == "" || len(a.Aliases) == 0 || len(a.Tools) == 0 {
+			return fmt.Errorf("permission action %q is incomplete", a.V1)
+		}
+		for _, alias := range a.Aliases {
+			if prev, ok := aliases[alias]; ok && prev != a.V1 {
+				return fmt.Errorf("permission alias %q maps to both %q and %q", alias, prev, a.V1)
+			}
+			aliases[alias] = a.V1
+			if got, ok := openCodeV1Action(alias); !ok || got != a.V1 {
+				return fmt.Errorf("permission alias %q does not round-trip to %q", alias, a.V1)
+			}
+		}
+		for _, tool := range a.Tools {
+			name, ok := canonicalTool(tool)
+			if !ok || name != tool {
+				return fmt.Errorf("permission action %q uses unknown Claude tool %q", a.V1, tool)
+			}
+			if prev, ok := tools[name]; ok && prev != a.V1 {
+				return fmt.Errorf("Claude tool %q maps to both %q and %q", name, prev, a.V1)
+			}
+			tools[name] = a.V1
+			if got, ok := actionForClaudeTool(name); !ok || got != a.V1 {
+				return fmt.Errorf("Claude tool %q does not round-trip to %q", name, a.V1)
+			}
+		}
+	}
+	return nil
+}
+
 func canonicalTool(name string) (string, bool) {
 	l := strings.ToLower(strings.TrimSpace(name))
 	if c, ok := toolNames[l]; ok {
@@ -203,38 +265,63 @@ func permissionRestricts(v any) bool {
 	return false
 }
 
-// claudeToolsForAction maps one OpenCode V2 permission action to the Claude
-// tools it must remove. An unknown action is reported to the caller.
+// claudeToolsForAction maps one OpenCode permission action, v1 or v2, to the
+// Claude tools it covers. An unknown action is reported to the caller.
 func claudeToolsForAction(action string) []string {
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "edit", "write", "patch":
-		return []string{"Edit", "Write", "NotebookEdit"}
-	case "shell", "bash":
-		return []string{"Bash"}
-	case "webfetch":
-		return []string{"WebFetch"}
-	case "websearch":
-		return []string{"WebSearch"}
-	case "subagent", "task":
-		return []string{"Task"}
-	case "read":
-		return []string{"Read"}
-	case "grep":
-		return []string{"Grep"}
-	case "glob":
-		return []string{"Glob"}
-	case "list":
-		return []string{"List"}
-	case "todowrite", "todo":
-		return []string{"TodoWrite"}
-	case "*":
-		var all []string
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "*" {
+		all := make([]string, 0, len(toolNames))
 		for _, name := range toolNames {
 			all = append(all, name)
 		}
 		return all
 	}
+	for _, a := range permissionActions {
+		for _, alias := range a.Aliases {
+			if alias == action {
+				return a.Tools
+			}
+		}
+	}
 	return nil
+}
+
+// actionForClaudeTool is the inverse mapping: a canonical Claude tool becomes
+// the OpenCode v1 permission-map key.
+func actionForClaudeTool(tool string) (string, bool) {
+	tool = strings.TrimSpace(tool)
+	if tool == "*" {
+		return "*", true
+	}
+	c, ok := canonicalTool(tool)
+	if !ok {
+		return "", false
+	}
+	for _, a := range permissionActions {
+		for _, name := range a.Tools {
+			if name == c {
+				return a.V1, true
+			}
+		}
+	}
+	return "", false
+}
+
+// openCodeV1Action canonicalizes an OpenCode action to the v1 permission-map
+// key. A v2 source uses shell/subagent, which v1 spells bash/task.
+func openCodeV1Action(action string) (string, bool) {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "*" {
+		return "*", true
+	}
+	for _, a := range permissionActions {
+		for _, alias := range a.Aliases {
+			if alias == action {
+				return a.V1, true
+			}
+		}
+	}
+	return "", false
 }
 
 func toolSet(v any) map[string]bool {

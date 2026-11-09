@@ -38,6 +38,10 @@ type InstallRequest struct {
 	WithConfig     bool
 	Offline        bool
 	ExpectedDigest string
+	// DryRun stops after the plan is complete and proven installable. It
+	// returns the plan without touching project files, state, config origins
+	// or backups.
+	DryRun bool
 }
 
 func ResolveSetForInstall(cfg *Config, setName, remote string, offline bool) (*SetRepo, error) {
@@ -114,6 +118,9 @@ func InstallPackage(cfg *Config, req InstallRequest, setName, remote string) (*P
 				pkg.Meta.Name, strings.Join(req.Parts, ", "), strings.Join(available, ", "))
 		}
 		return nil, set, fmt.Errorf("package %s has no components installable for %s", pkg.Meta.Name, req.Harness)
+	}
+	if req.DryRun {
+		return plan, set, nil
 	}
 	if err := ApplyConfigOrigins(st, project, plan.Edits, plan.Block); err != nil {
 		return nil, set, err

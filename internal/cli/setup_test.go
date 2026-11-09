@@ -39,7 +39,51 @@ func setupHome(t *testing.T) string {
 	if err := os.MkdirAll(os.Getenv("HOME"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Commands resolve the project by walking up from the working directory.
+	// Start every test inside its temp project so the checkout's own also.lock
+	// or also.json cannot be mistaken for the project under test.
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
 	return tmp
+}
+
+// samePath reports whether two paths point at the same directory, resolving
+// symlinks such as /var -> /private/var on macOS.
+func samePath(t *testing.T, a, b string) bool {
+	t.Helper()
+	ar, aerr := filepath.EvalSymlinks(a)
+	br, berr := filepath.EvalSymlinks(b)
+	if aerr != nil || berr != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ar == br
+}
+
+// A lock or also.json in a parent directory must not decide the project for a
+// test. The repository root carries a real also.lock, so a test that starts in
+// the package directory would discover the checkout instead of its fixture.
+func TestSetupHomeIsolatesProjectRoot(t *testing.T) {
+	tmp := setupHome(t)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePath(t, wd, tmp) {
+		t.Fatalf("working directory = %q, want the temp project %q", wd, tmp)
+	}
+	root, err := also.FindProjectRoot(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePath(t, root, tmp) {
+		t.Fatalf("project root = %q, want %q: a lock or also.json above the temp project leaked in", root, tmp)
+	}
 }
 
 func TestSetupNonInteractiveAndIdempotent(t *testing.T) {

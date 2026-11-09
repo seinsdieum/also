@@ -1,11 +1,39 @@
 package also
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// publishOpenCodeMCP publishes a package whose only installable surface is an
+// OpenCode MCP config, and returns a fresh project directory.
+func publishOpenCodeMCP(t *testing.T, cfg *Config, tmp, name, config string) string {
+	t.Helper()
+	repo := openRepo(t, cfg)
+	bundle := filepath.Join(tmp, "bundle-"+name)
+	writeFile(t, filepath.Join(bundle, "AGENTS.md"), "rules\n")
+	writeFile(t, filepath.Join(bundle, "opencode.json"), config)
+	if _, err := repo.Push(bundle, PushOptions{Name: name, Harness: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return project
+}
+
+func installOpenCodeWithConfig(t *testing.T, cfg *Config, project, pkg string) {
+	t.Helper()
+	if _, _, err := InstallPackage(cfg, InstallRequest{
+		Package: pkg, Harness: "opencode", Scope: "project", Project: project, WithConfig: true,
+	}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func commitAll(t *testing.T, dir, message string) {
 	t.Helper()
@@ -409,5 +437,183 @@ func TestVerifyReportsOrphanTag(t *testing.T) {
 	checks := Verify(cfg, nil, "personal", false)
 	if !HasFailures(checks) {
 		t.Fatalf("orphan tag was not reported: %+v", checks)
+	}
+}
+
+func TestEmptyConfigObjectSurvivesInstallAndUninstall(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	project := publishOpenCodeMCP(t, cfg, tmp, "p", `{"mcp":{"servers":{"x":{"command":["x"]}}}}`)
+	configPath := filepath.Join(project, "opencode.json")
+	writeFile(t, configPath, "{}")
+
+	installOpenCodeWithConfig(t, cfg, project, "p")
+	if data := string(mustReadTestFile(t, configPath)); data == "{}" {
+		t.Fatalf("install did not write the MCP entry: %s", data)
+	}
+
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	if data := string(mustReadTestFile(t, configPath)); data != "{}" {
+		t.Fatalf("uninstall left the empty config object changed: %q", data)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("config file was removed after uninstall: %v", err)
+	}
+}
+
+func TestReinstallKeepsConfigBytesAndIndentation(t *testing.T) {
+	cases := []struct {
+		name     string
+		original string
+		tab      bool
+	}{
+		{"two-space", "{\n  \"theme\": \"dark\"\n}\n", false},
+		{"tab", "{\n\t\"theme\": \"dark\"\n}\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp, _, _, cfg := setup(t)
+			project := publishOpenCodeMCP(t, cfg, tmp, "p", `{"mcp":{"servers":{"x":{"command":["x"]}}}}`)
+			configPath := filepath.Join(project, "opencode.json")
+			writeFile(t, configPath, tc.original)
+
+			install := func() []byte {
+				t.Helper()
+				installOpenCodeWithConfig(t, cfg, project, "p")
+				return mustReadTestFile(t, configPath)
+			}
+			first := install()
+			s := string(first)
+			if !strings.Contains(s, `"mcp":`) || strings.Count(s, `"mcp":`) != 1 {
+				t.Fatalf("expected exactly one MCP key:\n%s", s)
+			}
+			if strings.Count(s, `"x":`) != 1 {
+				t.Fatalf("expected exactly one server entry:\n%s", s)
+			}
+			for _, line := range strings.Split(s, "\n") {
+				trimmed := strings.TrimLeft(line, " \t")
+				if trimmed == "" {
+					continue
+				}
+				leading := line[:len(line)-len(trimmed)]
+				if tc.tab && strings.Contains(leading, " ") {
+					t.Fatalf("tab-indented config gained space indentation on %q:\n%s", line, s)
+				}
+				if !tc.tab && strings.Contains(leading, "\t") {
+					t.Fatalf("space-indented config gained tab indentation on %q:\n%s", line, s)
+				}
+			}
+
+			second := install()
+			if string(second) != string(first) {
+				t.Fatalf("reinstall changed the config file\nfirst:\n%s\nsecond:\n%s", first, second)
+			}
+		})
+	}
+}
+
+func TestInstallMergesCompatibleMCPEntry(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	project := publishOpenCodeMCP(t, cfg, tmp, "p", `{"mcp":{"servers":{"x":{"command":["x"]}}}}`)
+	configPath := filepath.Join(project, "opencode.json")
+	before := `{
+  "mcp": {
+    "servers": {
+      "x": {"command": ["x"], "enabled": true}
+    }
+  }
+}`
+	writeFile(t, configPath, before)
+
+	installOpenCodeWithConfig(t, cfg, project, "p")
+
+	doc, err := ParseJSONC(mustReadTestFile(t, configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.RawAt("mcp", "servers", "x")
+	if !ok {
+		t.Fatal("MCP entry disappeared after install")
+	}
+	var entry struct {
+		Command []string `json:"command"`
+		Enabled bool     `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if len(entry.Command) != 1 || entry.Command[0] != "x" || !entry.Enabled {
+		t.Fatalf("compatible MCP entry was not merged: %s", raw)
+	}
+
+	st, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(st, st.InstallsOf("p")[0], false); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = ParseJSONC(mustReadTestFile(t, configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, ok = doc.RawAt("mcp", "servers", "x")
+	if !ok || !jsonEqual(raw, json.RawMessage(`{"command":["x"],"enabled":true}`)) {
+		t.Fatalf("uninstall did not restore the pre-install entry: %s", raw)
+	}
+}
+
+func TestInstallRejectsConflictingMCPLeafWithoutForce(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	project := publishOpenCodeMCP(t, cfg, tmp, "p", `{"mcp":{"servers":{"x":{"command":["x"]}}}}`)
+	configPath := filepath.Join(project, "opencode.json")
+	writeFile(t, configPath, `{"mcp":{"servers":{"x":{"command":["y"]}}}}`)
+
+	_, _, err := InstallPackage(cfg, InstallRequest{
+		Package: "p", Harness: "opencode", Scope: "project", Project: project, WithConfig: true,
+	}, "", "")
+	if err == nil {
+		t.Fatal("a conflicting MCP leaf was installed without --force")
+	}
+	for _, want := range []string{"mcp.servers.x", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error does not name %q: %v", want, err)
+		}
+	}
+}
+
+func TestInstallPreservesLargeIntegerInMCPEntry(t *testing.T) {
+	tmp, _, _, cfg := setup(t)
+	project := publishOpenCodeMCP(t, cfg, tmp, "p", `{"mcp":{"servers":{"x":{"command":["x"],"added":true}}}}`)
+	configPath := filepath.Join(project, "opencode.json")
+	writeFile(t, configPath, `{"mcp":{"servers":{"x":{"command":["x"],"port":9007199254740993}}}}`)
+
+	installOpenCodeWithConfig(t, cfg, project, "p")
+
+	doc, err := ParseJSONC(mustReadTestFile(t, configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.RawAt("mcp", "servers", "x")
+	if !ok {
+		t.Fatal("MCP entry disappeared after install")
+	}
+	var entry struct {
+		Port  json.Number `json:"port"`
+		Added bool        `json:"added"`
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Port.String() != "9007199254740993" {
+		t.Fatalf("large integer was rewritten: port = %s", entry.Port)
+	}
+	if !entry.Added {
+		t.Fatalf("sibling managed key was not added: %s", raw)
 	}
 }

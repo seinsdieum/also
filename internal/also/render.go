@@ -23,18 +23,19 @@ type InstructionRender struct {
 }
 
 type RenderPlan struct {
-	Target         Target
-	Source         *Harness
-	Files          []RenderedFile
-	Instr          *InstructionRender
-	MCP            map[string]MCPServer
-	Hooks          HookSet
-	Settings       map[string]any
-	MCPNative      bool
-	SettingsNative bool
-	Warnings       []string
-	Skipped        []string
-	ConfigFiles    []string
+	Target             Target
+	Source             *Harness
+	Files              []RenderedFile
+	Instr              *InstructionRender
+	MCP                map[string]MCPServer
+	Hooks              HookSet
+	Settings           map[string]any
+	SettingsTranslated map[string]bool
+	SettingsDeclared   map[string]bool
+	MCPNative          bool
+	Warnings           []string
+	Skipped            []string
+	ConfigFiles        []string
 }
 
 type skillRef struct {
@@ -397,8 +398,20 @@ func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts,
 	for k, v := range plan.Settings {
 		merged.Settings[k] = v
 	}
+	// A native layer is authored for the target harness, so it must not be
+	// reconciled as translated main-package settings.
+	merged.SettingsTranslated = map[string]bool{}
+	for k := range plan.SettingsTranslated {
+		merged.SettingsTranslated[k] = true
+	}
+	merged.SettingsDeclared = map[string]bool{}
+	for k := range plan.SettingsDeclared {
+		merged.SettingsDeclared[k] = true
+	}
 	for k, v := range layerPlan.Settings {
 		merged.Settings[k] = v
+		delete(merged.SettingsTranslated, k)
+		delete(merged.SettingsDeclared, k)
 	}
 	merged.Hooks = HookSet{}
 	for k, v := range plan.Hooks {
@@ -408,7 +421,6 @@ func RenderPackageSelection(pkg *Package, source *Harness, target Target, parts,
 		merged.Hooks[k] = v
 	}
 	merged.MCPNative = plan.MCPNative || layerPlan.MCPNative || len(layerPlan.ConfigFiles) > 0
-	merged.SettingsNative = plan.SettingsNative || layerPlan.SettingsNative || len(layerPlan.ConfigFiles) > 0
 	have := map[string]int{}
 	for i, f := range merged.Files {
 		have[f.Dest] = i
@@ -624,6 +636,19 @@ func renderPackageMainSel(pkg *Package, source *Harness, target Target, sel *Sel
 		return nil, err
 	}
 	plan.Warnings = append(plan.Warnings, warn...)
+	if source.ID == target.Harness.ID {
+		// CrossKeys are cross-harness only; a same-harness install must not
+		// start writing a key that was previously ignored.
+		same := map[string]bool{}
+		for _, key := range source.Settings.Keys {
+			same[key] = true
+		}
+		for key := range settings {
+			if !same[key] {
+				delete(settings, key)
+			}
+		}
+	}
 	if !sel.IsAll() {
 		for key := range settings {
 			if !sel.Allows("settings", key) {
@@ -632,13 +657,28 @@ func renderPackageMainSel(pkg *Package, source *Harness, target Target, sel *Sel
 		}
 	}
 	plan.Settings = settings
-	if len(settings) > 0 && source.ID != target.Harness.ID {
-		var names []string
-		for k := range settings {
-			names = append(names, k)
+	plan.SettingsDeclared = map[string]bool{}
+	for key := range settings {
+		if key == "permission" || key == "permissions" {
+			plan.SettingsDeclared[key] = true
 		}
-		sort.Strings(names)
-		plan.Warnings = append(plan.Warnings, fmt.Sprintf("settings %s are preserved in the package but not installed cross-harness; review them manually", strings.Join(names, ", ")))
+	}
+	if len(settings) > 0 && source.ID != target.Harness.ID {
+		if translate := target.Harness.Settings.Translate; translate != nil {
+			translated, warn := translate(settings, target.Harness)
+			plan.Warnings = append(plan.Warnings, warn...)
+			if translated == nil {
+				translated = map[string]any{}
+			}
+			plan.Settings = translated
+			plan.SettingsTranslated = map[string]bool{}
+			for key := range translated {
+				plan.SettingsTranslated[key] = true
+			}
+		} else {
+			plan.Settings = map[string]any{}
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("settings %s are preserved in the package but not installed cross-harness; review them manually", strings.Join(sortedKeys(settings), ", ")))
+		}
 	}
 	if target.Harness.MCP.Format == MCPNone || target.MCP == "" {
 		if len(servers) > 0 {
